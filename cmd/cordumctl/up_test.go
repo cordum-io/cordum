@@ -1,6 +1,10 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -258,5 +262,158 @@ func checkAPIKeyDefaults(t *testing.T, env, want string) {
 	}
 	if cfg.APIKey != want {
 		t.Errorf("CORDUM_API_KEY %s: loadEdgeClaudeConfigForRun APIKey = %q, want %q", env, cfg.APIKey, want)
+	}
+}
+
+func TestResolveUpComposeFilesIncludesDevOverrideWhenPresent(t *testing.T) {
+	dir := t.TempDir()
+	mainFile := filepath.Join(dir, "docker-compose.yml")
+	devFile := filepath.Join(dir, "docker-compose.dev.yml")
+	if err := os.WriteFile(mainFile, []byte("services: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(devFile, []byte("services: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := resolveUpComposeFiles(mainFile, true, false)
+	if len(got) != 2 || got[0] != mainFile || got[1] != devFile {
+		t.Fatalf("resolveUpComposeFiles(dev=true, explicit=false) = %v, want [%s %s]", got, mainFile, devFile)
+	}
+	gotExplicit := resolveUpComposeFiles(mainFile, true, true)
+	if len(gotExplicit) != 1 || gotExplicit[0] != mainFile {
+		t.Fatalf("resolveUpComposeFiles(dev=true, explicit=true) = %v, want [%s]", gotExplicit, mainFile)
+	}
+	gotNonDev := resolveUpComposeFiles(mainFile, false, false)
+	if len(gotNonDev) != 1 || gotNonDev[0] != mainFile {
+		t.Fatalf("resolveUpComposeFiles(dev=false) = %v, want [%s]", gotNonDev, mainFile)
+	}
+}
+
+func TestSeedDevMCPConfigSeedsCleanInstallAndPreservesExistingTools(t *testing.T) {
+	var posted map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/config":
+			// Mimics clean install returning empty object from gateway.
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/config":
+			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
+				t.Fatalf("decode posted config: %v", err)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	client := newRestClient(srv.URL, "dev-key", "default", nil)
+	if err := seedDevMCPConfig(context.Background(), client, true); err != nil {
+		t.Fatalf("seedDevMCPConfig clean install error: %v", err)
+	}
+	if posted["scope"] != "system" || posted["scope_id"] != "default" {
+		t.Fatalf("unexpected scope in posted config: %#v", posted)
+	}
+	data, _ := posted["data"].(map[string]any)
+	mcpCfg, _ := data["mcp"].(map[string]any)
+	if mcpCfg["enabled"] != true || mcpCfg["transport"] != "http" || mcpCfg["policy_gate_enabled"] != true {
+		t.Fatalf("unexpected mcp config seeded: %#v", mcpCfg)
+	}
+
+	// Existing tools and explicit policy_gate_enabled:false are preserved.
+	posted = nil
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/config":
+			_, _ = w.Write([]byte(`{"scope":"system","scope_id":"default","data":{"safety":{"pii_detection_enabled":true},"mcp":{"policy_gate_enabled":false,"tools":{"demo.tool":{"enabled":true}}}}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/config":
+			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
+				t.Fatalf("decode posted config: %v", err)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer srv2.Close()
+
+	client2 := newRestClient(srv2.URL, "dev-key", "default", nil)
+	if err := seedDevMCPConfig(context.Background(), client2, true); err != nil {
+		t.Fatalf("seedDevMCPConfig existing error: %v", err)
+	}
+	data2, _ := posted["data"].(map[string]any)
+	if _, ok := data2["safety"]; !ok {
+		t.Fatalf("expected unrelated system/default keys to be preserved: %#v", data2)
+	}
+	mcpCfg2, _ := data2["mcp"].(map[string]any)
+	if mcpCfg2["enabled"] != true || mcpCfg2["transport"] != "http" {
+		t.Fatalf("expected missing enabled/transport filled: %#v", mcpCfg2)
+	}
+	if mcpCfg2["policy_gate_enabled"] != false {
+		t.Fatalf("expected explicit policy_gate_enabled=false to be preserved, got %#v", mcpCfg2["policy_gate_enabled"])
+	}
+	if _, ok := mcpCfg2["tools"]; !ok {
+		t.Fatalf("expected existing mcp.tools to be preserved: %#v", mcpCfg2)
+	}
+}
+
+// CodeRabbit up.go:538 on #591: seeding must not write mcp.enabled over an explicit
+// CORDUM_MCP_ENABLED=false. It seeds mcp.enabled only for a value the gateway reads as true.
+func TestUpDevSeedingKeepsExplicitMCPDisabled(t *testing.T) {
+	cases := []struct {
+		name, env, dotEnv string
+		wantEnabled       bool
+	}{
+		{name: "env_false", env: "false"},
+		{name: "dotenv_false", dotEnv: "CORDUM_MCP_ENABLED=false"},
+		{name: "env_off", env: "off"},
+		{name: "env_unreadable", env: "maybe"},
+		{name: "env_yes", env: "yes", wantEnabled: true},
+		{name: "unset", wantEnabled: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("CORDUM_MCP_ENABLED", tc.env)
+			if tc.dotEnv != "" {
+				if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(tc.dotEnv), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var posted map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodGet && (r.URL.Path == "/api/v1/status" || r.URL.Path == "/api/v1/config"):
+					_, _ = w.Write([]byte(`{}`))
+				case r.Method == http.MethodPost && r.URL.Path == "/api/v1/config":
+					if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
+						t.Errorf("decode posted config: %v", err)
+					}
+					w.WriteHeader(http.StatusNoContent)
+				default:
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+			}))
+			defer srv.Close()
+
+			devBoot, err := ensureDevBootstrapEnv(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			devBoot.Gateway = srv.URL
+			ctx, cancel := context.WithTimeout(context.Background(), defaultDevMCPReadyTimeout)
+			defer cancel()
+			if err := waitAndSeedDevMCP(ctx, devBoot); err != nil {
+				t.Fatalf("waitAndSeedDevMCP: %v", err)
+			}
+			data, _ := posted["data"].(map[string]any)
+			mcpCfg, _ := data["mcp"].(map[string]any)
+			enabled, seeded := mcpCfg["enabled"]
+			if seeded != tc.wantEnabled || seeded && enabled != true {
+				t.Fatalf("CORDUM_MCP_ENABLED env=%q .env=%q: seeded mcp.enabled=%v (%v), want seeded=%v", tc.env, tc.dotEnv, seeded, enabled, tc.wantEnabled)
+			}
+			if mcpCfg["policy_gate_enabled"] != true || mcpCfg["transport"] != "http" {
+				t.Fatalf("policy_gate_enabled and transport must still be seeded: %#v", mcpCfg)
+			}
+		})
 	}
 }
