@@ -29,6 +29,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   their public keys, in development too: a publisher without a key sends
   events the consumer drops.
 
+- Under the production profile, `CORDUM_AUDIT_DEV_SIGNING_SEED` and `CORDUM_POLICY_DEV_SIGNING_SEED` are refused; set a real signing key. (task-b0318ca0)
+
 - Worker ids `cordum-mcp` and `cordum-safety-kernel` are reserved. The handshake
   and bound session tokens refuse these worker ids; rename any worker registered
   under either id before upgrading.
@@ -127,6 +129,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `--allow-unauthenticated-http` is passed (#492, task-ee0dc819).
 
 ### Changed
+
+- Managed API key scopes now cover the `/api/v1/edge` routes. `/api/v1/edge/approvals` maps to
+  the `approvals` resource, `/api/v1/edge/mcp` to `mcp`, `/api/v1/edge/shadow-agents`,
+  `/api/v1/edge/shadow` and `/api/v1/edge/binary-integrity` to `audit`, and every other
+  `/api/v1/edge` path to the new `edge` resource. `edge:read`, `edge:write` and `edge:*` can be
+  minted, so an `edge:write` key can create an Edge session, which records the key id as its
+  principal. The legacy role scopes (`read`/`viewer`, `write`/`operator`, `admin`) now reach the
+  Edge routes at their verb level, as on every other mapped resource. Unscoped managed keys still
+  act as `viewer`.
 
 - With `CORDUM_SDK_HANDSHAKE=enforce`, the workflow engine verifies the
   `cordum-scheduler` service token before applying a result from
@@ -247,6 +258,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Gateway, scheduler and workflow engine: the Safety Kernel clients can present a TLS client certificate from `SAFETY_KERNEL_TLS_CLIENT_CERT` and `SAFETY_KERNEL_TLS_CLIENT_KEY` (both or neither, and only with `SAFETY_KERNEL_TLS_CA`), reloaded when the files change. The bundled Compose files, Helm chart and k8s production overlay point them at the existing client keypair under `/etc/cordum/tls/client/` (task-0102f2cc)
 - Gateway: MCP env defaults (from PR #591). When the stored system config has no
   `mcp.enabled`, `mcp.transport` or `mcp.policy_gate_enabled` key, the gateway reads
   `CORDUM_MCP_ENABLED`, `CORDUM_MCP_TRANSPORT` and `CORDUM_MCP_POLICY_GATE_ENABLED`
@@ -892,6 +904,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - typedoc, typedoc-plugin-coverage and typedoc-plugin-markdown are removed from the install with pnpm `-` overrides. typedoc 0.28 calls `Minimatch#matchOne`, which 11.x removed. orval 8.31.0 loads typedoc only for its `docs` output, which the dashboard does not configure. Until typedoc supports minimatch 11, enabling that output fails at import. orval stays at 8.31.0.
 
 ### Fixed
+
+- In production mode, the scheduler applies the API gateway's cancel and
+  approval-rejection job results, which carry no dispatch fence, and forwards
+  them to the workflow engine. Any other result without a fence is dropped and
+  logged as `no_dispatch_fence`.
 
 - K8s restore runbooks: NATS restores run from a nats-box pod and remove each
   stream first, and `redis-operations.md` has a Redis "Restore From Backup"

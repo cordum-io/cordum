@@ -1215,6 +1215,9 @@ var allowedKeyScopes = map[string]struct{}{
 	"schemas:read":      {},
 	"schemas:write":     {},
 	"schemas:*":         {},
+	"edge:read":         {},
+	"edge:write":        {},
+	"edge:*":            {},
 }
 
 // apiKeyResponse is the JSON shape returned to the frontend, matching the ApiKey type.

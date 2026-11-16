@@ -138,6 +138,13 @@ func TestPathToScope(t *testing.T) {
 			scope:  "",
 			ok:     false,
 		},
+		{name: "edge session create", method: "POST", path: "/api/v1/edge/sessions", scope: "edge:write", ok: true},
+		{name: "edge session list", method: "GET", path: "/api/v1/edge/sessions", scope: "edge:read", ok: true},
+		{name: "edge approve maps to approvals", method: "POST", path: "/api/v1/edge/approvals/x/approve", scope: "approvals:write", ok: true},
+		{name: "edge mcp maps to mcp", method: "GET", path: "/api/v1/edge/mcp/upstreams", scope: "mcp:read", ok: true},
+		{name: "edge shadow agents map to audit", method: "POST", path: "/api/v1/edge/shadow-agents/x/suppress", scope: "audit:write", ok: true},
+		{name: "edge shadow exception maps to audit", method: "POST", path: "/api/v1/edge/shadow/exception", scope: "audit:write", ok: true},
+		{name: "edge prefix needs a segment boundary", method: "GET", path: "/api/v1/edgex", scope: "", ok: false},
 	}
 
 	for _, tt := range tests {
