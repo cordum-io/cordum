@@ -197,27 +197,29 @@ MONITOR
 
 ## NATS Operations
 
+Compose's NATS is TLS-only and requires a client certificate, so these commands pass the dev certificates that `cordumctl generate-certs` writes (see [docs/troubleshooting.md](docs/troubleshooting.md)). For another deployment, point `--server`, `--tlsca`, `--tlscert` and `--tlskey` at that NATS.
+
 ```bash
 # Subscribe to all job topics
-nats sub "job.>" --server=nats://localhost:4222
+nats sub "job.>" --server tls://localhost:4222 --tlsca ./certs/ca/ca.crt --tlscert ./certs/client/tls.crt --tlskey ./certs/client/tls.key
 
 # Subscribe to specific topic
-nats sub "job.echo.*" --server=nats://localhost:4222
+nats sub "job.echo.*" --server tls://localhost:4222 --tlsca ./certs/ca/ca.crt --tlscert ./certs/client/tls.crt --tlskey ./certs/client/tls.key
 
 # Subscribe to system topics
-nats sub "sys.>" --server=nats://localhost:4222
+nats sub "sys.>" --server tls://localhost:4222 --tlsca ./certs/ca/ca.crt --tlscert ./certs/client/tls.crt --tlskey ./certs/client/tls.key
 
 # Publish test message
-nats pub "job.echo.test" "hello" --server=nats://localhost:4222
+nats pub "job.echo.test" "hello" --server tls://localhost:4222 --tlsca ./certs/ca/ca.crt --tlscert ./certs/client/tls.crt --tlskey ./certs/client/tls.key
 
 # View JetStream streams
-nats stream ls --server=nats://localhost:4222
+nats stream ls --server tls://localhost:4222 --tlsca ./certs/ca/ca.crt --tlscert ./certs/client/tls.crt --tlskey ./certs/client/tls.key
 
 # View stream info
-nats stream info JOBS --server=nats://localhost:4222
+nats stream info CORDUM_JOBS --server tls://localhost:4222 --tlsca ./certs/ca/ca.crt --tlscert ./certs/client/tls.crt --tlskey ./certs/client/tls.key
 
 # View consumers
-nats consumer ls JOBS --server=nats://localhost:4222
+nats consumer ls CORDUM_JOBS --server tls://localhost:4222 --tlsca ./certs/ca/ca.crt --tlscert ./certs/client/tls.crt --tlskey ./certs/client/tls.key
 ```
 
 ## Metrics & Monitoring
