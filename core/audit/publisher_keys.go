@@ -5,11 +5,14 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/cordum/cordum/core/auth/servicetoken"
+	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/policysign"
 )
 
@@ -24,6 +27,8 @@ const (
 
 // ErrPublisherKeyNotConfigured leaves the missing-key policy to the caller.
 var ErrPublisherKeyNotConfigured = errors.New("audit: publisher signing key not configured")
+
+var publisherDevSeedWarning sync.Once
 
 // LoadPublisherKeyFromEnv reads an audit publisher key: inline, file, then dev seed.
 func LoadPublisherKeyFromEnv(identity string) (ed25519.PrivateKey, string, error) {
@@ -53,6 +58,10 @@ func LoadPublisherKeyFromEnv(identity string) (ed25519.PrivateKey, string, error
 		return key, keyID, nil
 	}
 	if seed := strings.TrimSpace(os.Getenv(EnvPublisherDevSigningSeed)); seed != "" {
+		if env.IsProduction() {
+			return nil, "", fmt.Errorf("%s is a development seed and is refused under the production profile: %w", EnvPublisherDevSigningSeed, ErrPublisherKeyNotConfigured)
+		}
+		warnPublisherDevSeed()
 		return publisherKeyFromSeed(identity, seed), keyID, nil
 	}
 	return nil, "", ErrPublisherKeyNotConfigured
@@ -72,10 +81,20 @@ func LoadPublisherTrustFromEnv() (map[string]ed25519.PublicKey, error) {
 			}
 			trust[identity] = key
 		} else if seed != "" {
+			if env.IsProduction() {
+				return nil, fmt.Errorf("%s is a development seed and is refused under the production profile", EnvPublisherDevSigningSeed)
+			}
+			warnPublisherDevSeed()
 			trust[identity] = publisherKeyFromSeed(identity, seed).Public().(ed25519.PublicKey)
 		}
 	}
 	return trust, nil
+}
+
+func warnPublisherDevSeed() {
+	publisherDevSeedWarning.Do(func() {
+		slog.Warn("using development signing seed", "variable", EnvPublisherDevSigningSeed)
+	})
 }
 
 func publisherKeyFromSeed(identity, seed string) ed25519.PrivateKey {

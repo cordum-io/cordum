@@ -13,6 +13,7 @@ import (
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/resourceio"
+	"github.com/cordum/cordum/core/infra/tlsreload"
 	"github.com/cordum/cordum/core/policylabels"
 	jobidentity "github.com/cordum/cordum/core/protocol/identity"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -256,6 +257,10 @@ func decisionFromProto(dec pb.DecisionType) SafetyDecision {
 
 func safetyTransportCredentials() (credentials.TransportCredentials, error) {
 	caPath := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_TLS_CA"))
+	clientCertPath, clientKeyPath, err := safetyClientCertificatePaths(caPath)
+	if err != nil {
+		return nil, err
+	}
 	requireTLS := env.IsProduction() || env.Bool("SAFETY_KERNEL_TLS_REQUIRED")
 	insecureAllowed := env.Bool("SAFETY_KERNEL_INSECURE")
 
@@ -284,5 +289,30 @@ func safetyTransportCredentials() (credentials.TransportCredentials, error) {
 	if env.TLSMinVersion() == tls.VersionTLS13 {
 		cfg.MinVersion = tls.VersionTLS13
 	}
+	if clientCertPath != "" {
+		reloader, err := tlsreload.NewCertReloader(clientCertPath, clientKeyPath, "safety-kernel-client")
+		if err != nil {
+			return nil, fmt.Errorf("safety kernel tls client certificate: %w", err)
+		}
+		cfg.GetClientCertificate = reloader.GetClientCertificate
+		go reloader.WatchLoop(context.Background(), 30*time.Second)
+	}
 	return credentials.NewTLS(cfg), nil
+}
+
+// safetyClientCertificatePaths reads the optional client keypair the Safety
+// Kernel clients present. Both paths or neither, and only with a CA.
+func safetyClientCertificatePaths(caPath string) (string, string, error) {
+	clientCertPath := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_TLS_CLIENT_CERT"))
+	clientKeyPath := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_TLS_CLIENT_KEY"))
+	if clientCertPath != "" && clientKeyPath == "" {
+		return "", "", fmt.Errorf("safety kernel client certificate: SAFETY_KERNEL_TLS_CLIENT_KEY is not set")
+	}
+	if clientKeyPath != "" && clientCertPath == "" {
+		return "", "", fmt.Errorf("safety kernel client certificate: SAFETY_KERNEL_TLS_CLIENT_CERT is not set")
+	}
+	if (clientCertPath != "" || clientKeyPath != "") && caPath == "" {
+		return "", "", fmt.Errorf("safety kernel client certificate: SAFETY_KERNEL_TLS_CA is not set")
+	}
+	return clientCertPath, clientKeyPath, nil
 }

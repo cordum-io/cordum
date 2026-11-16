@@ -1187,6 +1187,13 @@ func initAuditPipeline(client redis.UniversalClient, natsBus audit.AuditBus, ent
 
 	transport := strings.ToLower(strings.TrimSpace(os.Getenv("AUDIT_TRANSPORT")))
 	if transport == "nats" && natsBus != nil {
+		publisherAuth, err := auditPublisherAuth()
+		if err != nil {
+			if closeErr := bufExporter.Close(); closeErr != nil {
+				slog.Warn("audit exporter close failed", "error", closeErr)
+			}
+			return nil, nil, err
+		}
 		priv, kid, err := policysign.LoadPrivateKeyFromEnv()
 		var mint func() (string, error)
 		switch {
@@ -1216,6 +1223,7 @@ func initAuditPipeline(client redis.UniversalClient, natsBus audit.AuditBus, ent
 			audit.WithChainer(auditChainer),
 			audit.WithChainFailMode(chainFailMode),
 			audit.WithStepHashSink(workflowStepSink),
+			publisherAuth,
 		); err != nil {
 			slog.Warn("audit NATS consumer failed to start; events will publish to NATS but local chain verification may lag", "error", err)
 		}
@@ -1227,6 +1235,22 @@ func initAuditPipeline(client redis.UniversalClient, natsBus audit.AuditBus, ent
 	// direct-mode gateways only saw chain appends when a NATS consumer
 	// happened to be reading the stream.
 	return newAuditChainSender(auditChainer, bufExporter, workflowStepSink), auditChainer, nil
+}
+
+// auditPublisherAuth loads the keys the NATS audit consumer checks publisher
+// service tokens against: the control-plane trust for api-gateway and
+// cordum-scheduler, and the CORDUM_AUDIT_PUBLIC_KEY_ keys for cordum-mcp and
+// cordum-safety-kernel. A malformed key fails startup and names its variable.
+func auditPublisherAuth() (audit.ConsumerOption, error) {
+	controlPlane, err := policysign.LoadTrustStoreFromEnv()
+	if err != nil {
+		return nil, fmt.Errorf("audit NATS consumer trust: %w", err)
+	}
+	publishers, err := audit.LoadPublisherTrustFromEnv()
+	if err != nil {
+		return nil, fmt.Errorf("audit NATS consumer trust: %w", err)
+	}
+	return audit.WithPublisherAuth(controlPlane, publishers), nil
 }
 
 func newHTTPHandler(s *server) (http.Handler, error) {
