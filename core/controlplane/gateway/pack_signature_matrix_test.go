@@ -65,6 +65,20 @@ func packMatrixRefusal(code, prefix string) packSignatureWant {
 
 func TestPackSignatureMatrix(t *testing.T) {
 	cells := []packSignatureCell{
+		{"production", "upload", "unsigned", packMatrixRefusal("PACK_INSTALL_INVALID", "pack.unsigned: ")},
+		{"production", "marketplace", "unsigned", packMatrixRefusal("PACK_INSTALL_INVALID", "pack.unsigned: ")},
+		{"production", "cordumctl", "unsigned", packMatrixRefusal("PACK_INSTALL_INVALID", "pack.unsigned: ")},
+		{"production", "cordumctl", "unknown-kid", packMatrixRefusal("PACK_INSTALL_INVALID", "pack.unknown_kid: ")},
+		{"production", "cordumctl", "wrong-key", packMatrixRefusal("PACK_INVALID_SIGNATURE", "pack.bad_signature: ")},
+		{"production", "cordumctl", "tampered", packMatrixRefusal("PACK_INSTALL_INVALID", "pack.tampered: ")},
+		{"production", "cordumctl", "malformed", packMatrixRefusal("PACK_INVALID_SIGNATURE", "pack.malformed: ")},
+		{"development", "cordumctl", "unknown-kid", packMatrixRefusal("PACK_INSTALL_INVALID", "pack.unknown_kid: ")},
+		{"development", "cordumctl", "wrong-key", packMatrixRefusal("PACK_INVALID_SIGNATURE", "pack.bad_signature: ")},
+		{"development", "cordumctl", "tampered", packMatrixRefusal("PACK_INSTALL_INVALID", "pack.tampered: ")},
+		{"development", "cordumctl", "malformed", packMatrixRefusal("PACK_INVALID_SIGNATURE", "pack.malformed: ")},
+		{"production", "upload", "signed-fragment", packSignatureWant{status: 200, signed: true, fragment: true}},
+		{"production", "marketplace", "signed-fragment", packSignatureWant{status: 200, signed: true, fragment: true}},
+		{"production", "cordumctl", "signed-fragment", packSignatureWant{status: 200, signed: true, fragment: true}},
 		{"production", "config-api", "signed", packMatrixConfigRefusal()},
 		{"production", "config-api", "unsigned", packMatrixConfigRefusal()},
 		{"production", "config-api", "unknown-kid", packMatrixConfigRefusal()},

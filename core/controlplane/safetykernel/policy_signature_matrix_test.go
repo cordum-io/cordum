@@ -76,6 +76,20 @@ var policySignatureCells = []signatureCell{
 	{"store", "no-value", "development", nil},
 	{"store", "invalid-value", "development", nil},
 	{"store", "signed", "development", nil},
+	{"file", "no-algorithm", "production", ErrBundleSignatureMalformed},
+	{"file", "no-value", "production", ErrBundleSignatureMalformed},
+	{"file", "invalid-value", "production", ErrBundleSignatureMalformed},
+	{"url", "no-algorithm", "production", ErrBundleSignatureMalformed},
+	{"url", "no-value", "production", ErrBundleSignatureMalformed},
+	{"url", "invalid-value", "production", ErrBundleSignatureMalformed},
+	{"store", "unsigned", "production", ErrBundleUnsigned},
+	{"store", "untrusted", "production", ErrUntrustedKeyID},
+	{"store", "other-key", "production", policysign.ErrVerifyFailed},
+	{"store", "different-content", "production", policysign.ErrHashMismatch},
+	{"store", "no-algorithm", "production", ErrBundleSignatureMalformed},
+	{"store", "no-value", "production", ErrBundleSignatureMalformed},
+	{"store", "invalid-value", "production", ErrBundleSignatureMalformed},
+	{"store", "empty-trust", "production", ErrNoTrustStoreConfigured},
 }
 
 func TestPolicySignatureMatrix(t *testing.T) {
