@@ -9,6 +9,9 @@
 | `FIX_PROSE` | `1` (dev), `2` (prod) | No | prose default |
 | `FIX_PLAIN` | `y` | No | read with os.Getenv only |
 | `FIX_TWO` | `p` | No | two code defaults |
+| `FIX_ENV` | — | No | flag default is not an env default |
+| `FIX_ENV_VAR` | — | No | flag variable default is not an env default |
+| `FIX_HELPER` | `h` | No | helper default stays recognized |
 
 Read one thing with `GET /api/v1/things/{id}`.
 
