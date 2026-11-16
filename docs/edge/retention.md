@@ -57,7 +57,7 @@ of silently weakening retention.
 The sweeper:
 
 - Uses Redis `SCAN Count=100` over `edge:session:*`.
-- Delegates deletion to `DeleteSession`, so it inherits the same ZSCAN,
+- Deletes through `DeleteSession`'s cleanup, so it inherits the same ZSCAN,
   batched-DEL, and deadline behavior.
 - Respects context cancellation during Gateway shutdown.
 - Checks the tenant's audit legal hold before each deletion. It keeps the
@@ -65,6 +65,15 @@ The sweeper:
   active hold and of a tenant whose hold check fails. Without a legal hold
   store it deletes nothing (see
   [audit-operations.md](../audit-operations.md#legal-hold-integration)).
+- Commits each cleanup page, including the pages of a background continuation,
+  in one Redis `MULTI`/`EXEC` after it `WATCH`es and reads the tenant's hold
+  index and records, so once `CreateHold` has succeeded no more of that
+  tenant's sessions are deleted. A page with an active, unreadable or newly
+  written hold is kept, with the rest of its session, until a later sweep.
+  Unverifiable or changed holds are counted in
+  `cordum_edge_fail_closed_total{reason_code="retention_hold_unverifiable"|"retention_hold_changed"}`.
+- On Redis Cluster the transaction cannot span hash slots, so Edge session
+  retention is paused there.
 - Emits `cordum_edge_session_swept_total` once for each session it removes.
 
 ## Operational notes
