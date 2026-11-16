@@ -1,6 +1,7 @@
 # Enforcement support matrix: one row per entry point, one column per control or
 # PolicyConstraints field. Each cell is enforced, advisory, ignored or not_applicable,
 # with the code line it was read from. Statuses and refs were read at reviewed_at.
+# Exception: the budgets.max_concurrent_jobs refs were read when task-8bab7c41 landed.
 schema_version: 1
 reviewed_at: 549772371995b9eb5a95a2c6c8685551e0231724
 columns:
@@ -69,7 +70,7 @@ rows:
       - {status: enforced, ref: core/controlplane/scheduler/engine.go:1696, cols: [throttle]}
       - {status: enforced, ref: core/controlplane/scheduler/engine.go:2590, finding: R08, cols: [output_scanning]}
       - {status: enforced, ref: core/controlplane/scheduler/engine.go:1791, cols: [budgets.max_retries]}
-      - {status: advisory, ref: core/controlplane/scheduler/engine.go:1823, cols: [budgets.max_concurrent_jobs]}  # best-effort: count-then-dispatch, so concurrent admissions can exceed the cap (task-8bab7c41)
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1855, cols: [budgets.max_concurrent_jobs]}  # atomic slot reservation; tests TestReserveTenantSlotConcurrentReservationsAdmitExactlyCap, TestProcessJobTenantConcurrencyCapAdmitsOneOfTwoConcurrent
       - {status: advisory, ref: core/controlplane/scheduler/engine.go:3116, finding: R01, cols: [budgets.max_runtime_ms]}
       - {status: advisory, ref: core/controlplane/scheduler/engine.go:3120, finding: R01, cols: [budgets.max_artifact_bytes]}
       - {status: advisory, ref: core/controlplane/scheduler/engine.go:3099, finding: R01, cols: [sandbox.isolated, sandbox.network_allowlist, sandbox.fs_read_only, sandbox.fs_read_write, toolchain.allowed_tools, toolchain.allowed_commands, diff.max_files, diff.max_lines, diff.deny_path_globs]}
@@ -81,7 +82,7 @@ rows:
       - {status: enforced, ref: core/controlplane/scheduler/engine.go:2287, cols: [require_approval]}
       - {status: enforced, ref: core/controlplane/scheduler/engine.go:2590, finding: R08, cols: [output_scanning]}
       - {status: enforced, ref: core/controlplane/scheduler/engine.go:1791, cols: [budgets.max_retries]}
-      - {status: advisory, ref: core/controlplane/scheduler/engine.go:1823, cols: [budgets.max_concurrent_jobs]}  # best-effort: count-then-dispatch, so concurrent admissions can exceed the cap (task-8bab7c41)
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1855, cols: [budgets.max_concurrent_jobs]}  # atomic slot reservation; tests TestReserveTenantSlotConcurrentReservationsAdmitExactlyCap, TestProcessJobTenantConcurrencyCapAdmitsOneOfTwoConcurrent
       - {status: advisory, ref: core/controlplane/scheduler/engine.go:3116, finding: R01, cols: [budgets.max_runtime_ms]}
       - {status: advisory, ref: core/controlplane/scheduler/engine.go:3120, finding: R01, cols: [budgets.max_artifact_bytes]}
       - {status: advisory, ref: core/controlplane/scheduler/engine.go:3099, finding: R01, cols: [sandbox.isolated, sandbox.network_allowlist, sandbox.fs_read_only, sandbox.fs_read_write, toolchain.allowed_tools, toolchain.allowed_commands, diff.max_files, diff.max_lines, diff.deny_path_globs]}
@@ -94,7 +95,7 @@ rows:
       - {status: enforced, ref: core/controlplane/scheduler/engine.go:1696, cols: [throttle]}
       - {status: enforced, ref: core/controlplane/scheduler/engine.go:2590, finding: R08, cols: [output_scanning]}
       - {status: enforced, ref: core/controlplane/scheduler/engine.go:1791, cols: [budgets.max_retries]}
-      - {status: advisory, ref: core/controlplane/scheduler/engine.go:1823, cols: [budgets.max_concurrent_jobs]}  # best-effort: count-then-dispatch, so concurrent admissions can exceed the cap (task-8bab7c41)
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1855, cols: [budgets.max_concurrent_jobs]}  # atomic slot reservation; tests TestReserveTenantSlotConcurrentReservationsAdmitExactlyCap, TestProcessJobTenantConcurrencyCapAdmitsOneOfTwoConcurrent
       - {status: advisory, ref: core/controlplane/scheduler/engine.go:3116, finding: R01, cols: [budgets.max_runtime_ms]}
       - {status: advisory, ref: core/controlplane/scheduler/engine.go:3120, finding: R01, cols: [budgets.max_artifact_bytes]}
       - {status: advisory, ref: core/controlplane/scheduler/engine.go:3099, finding: R01, cols: [sandbox.isolated, sandbox.network_allowlist, sandbox.fs_read_only, sandbox.fs_read_write, toolchain.allowed_tools, toolchain.allowed_commands, diff.max_files, diff.max_lines, diff.deny_path_globs]}
@@ -107,7 +108,7 @@ rows:
       - {status: enforced, ref: core/controlplane/scheduler/engine.go:1696, cols: [throttle]}
       - {status: enforced, ref: core/controlplane/scheduler/engine.go:2590, finding: R08, cols: [output_scanning]}
       - {status: enforced, ref: core/controlplane/scheduler/engine.go:1791, cols: [budgets.max_retries]}
-      - {status: advisory, ref: core/controlplane/scheduler/engine.go:1823, cols: [budgets.max_concurrent_jobs]}  # best-effort: count-then-dispatch, so concurrent admissions can exceed the cap (task-8bab7c41)
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1855, cols: [budgets.max_concurrent_jobs]}  # atomic slot reservation; tests TestReserveTenantSlotConcurrentReservationsAdmitExactlyCap, TestProcessJobTenantConcurrencyCapAdmitsOneOfTwoConcurrent
       - {status: advisory, ref: core/controlplane/scheduler/engine.go:3116, finding: R01, cols: [budgets.max_runtime_ms]}
       - {status: advisory, ref: core/controlplane/scheduler/engine.go:3120, finding: R01, cols: [budgets.max_artifact_bytes]}
       - {status: advisory, ref: core/controlplane/scheduler/engine.go:3099, finding: R01, cols: [sandbox.isolated, sandbox.network_allowlist, sandbox.fs_read_only, sandbox.fs_read_write, toolchain.allowed_tools, toolchain.allowed_commands, diff.max_files, diff.max_lines, diff.deny_path_globs]}
@@ -120,7 +121,7 @@ rows:
       - {status: enforced, ref: core/controlplane/scheduler/engine.go:1696, cols: [throttle]}
       - {status: enforced, ref: core/controlplane/scheduler/engine.go:2590, finding: R08, cols: [output_scanning]}
       - {status: enforced, ref: core/controlplane/scheduler/engine.go:1791, cols: [budgets.max_retries]}
-      - {status: advisory, ref: core/controlplane/scheduler/engine.go:1823, cols: [budgets.max_concurrent_jobs]}  # best-effort: count-then-dispatch, so concurrent admissions can exceed the cap (task-8bab7c41)
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1855, cols: [budgets.max_concurrent_jobs]}  # atomic slot reservation; tests TestReserveTenantSlotConcurrentReservationsAdmitExactlyCap, TestProcessJobTenantConcurrencyCapAdmitsOneOfTwoConcurrent
       - {status: advisory, ref: core/controlplane/scheduler/engine.go:3116, finding: R01, cols: [budgets.max_runtime_ms]}
       - {status: advisory, ref: core/controlplane/scheduler/engine.go:3120, finding: R01, cols: [budgets.max_artifact_bytes]}
       - {status: advisory, ref: core/controlplane/scheduler/engine.go:3099, finding: R01, cols: [sandbox.isolated, sandbox.network_allowlist, sandbox.fs_read_only, sandbox.fs_read_write, toolchain.allowed_tools, toolchain.allowed_commands, diff.max_files, diff.max_lines, diff.deny_path_globs]}
@@ -132,7 +133,7 @@ rows:
       - {status: enforced, ref: core/controlplane/scheduler/engine.go:2287, cols: [require_approval]}
       - {status: enforced, ref: core/controlplane/scheduler/engine.go:2590, finding: R08, cols: [output_scanning]}
       - {status: enforced, ref: core/controlplane/scheduler/engine.go:1791, cols: [budgets.max_retries]}
-      - {status: advisory, ref: core/controlplane/scheduler/engine.go:1823, cols: [budgets.max_concurrent_jobs]}  # best-effort: count-then-dispatch, so concurrent admissions can exceed the cap (task-8bab7c41)
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1855, cols: [budgets.max_concurrent_jobs]}  # atomic slot reservation; tests TestReserveTenantSlotConcurrentReservationsAdmitExactlyCap, TestProcessJobTenantConcurrencyCapAdmitsOneOfTwoConcurrent
       - {status: advisory, ref: core/controlplane/scheduler/engine.go:3116, finding: R01, cols: [budgets.max_runtime_ms]}
       - {status: advisory, ref: core/controlplane/scheduler/engine.go:3120, finding: R01, cols: [budgets.max_artifact_bytes]}
       - {status: advisory, ref: core/controlplane/scheduler/engine.go:3099, finding: R01, cols: [sandbox.isolated, sandbox.network_allowlist, sandbox.fs_read_only, sandbox.fs_read_write, toolchain.allowed_tools, toolchain.allowed_commands, diff.max_files, diff.max_lines, diff.deny_path_globs]}
@@ -145,7 +146,7 @@ rows:
       - {status: enforced, ref: core/controlplane/scheduler/engine.go:1696, cols: [throttle]}
       - {status: enforced, ref: core/controlplane/scheduler/engine.go:2590, finding: R08, cols: [output_scanning]}
       - {status: enforced, ref: core/controlplane/scheduler/engine.go:1791, cols: [budgets.max_retries]}
-      - {status: advisory, ref: core/controlplane/scheduler/engine.go:1823, cols: [budgets.max_concurrent_jobs]}  # best-effort: count-then-dispatch, so concurrent admissions can exceed the cap (task-8bab7c41)
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1855, cols: [budgets.max_concurrent_jobs]}  # atomic slot reservation; tests TestReserveTenantSlotConcurrentReservationsAdmitExactlyCap, TestProcessJobTenantConcurrencyCapAdmitsOneOfTwoConcurrent
       - {status: advisory, ref: core/controlplane/scheduler/engine.go:3116, finding: R01, cols: [budgets.max_runtime_ms]}
       - {status: advisory, ref: core/controlplane/scheduler/engine.go:3120, finding: R01, cols: [budgets.max_artifact_bytes]}
       - {status: advisory, ref: core/controlplane/scheduler/engine.go:3099, finding: R01, cols: [sandbox.isolated, sandbox.network_allowlist, sandbox.fs_read_only, sandbox.fs_read_write, toolchain.allowed_tools, toolchain.allowed_commands, diff.max_files, diff.max_lines, diff.deny_path_globs]}
@@ -158,7 +159,7 @@ rows:
       - {status: enforced, ref: core/controlplane/scheduler/engine.go:1696, cols: [throttle]}
       - {status: enforced, ref: core/controlplane/scheduler/engine.go:2590, finding: R08, cols: [output_scanning]}
       - {status: enforced, ref: core/controlplane/scheduler/engine.go:1791, cols: [budgets.max_retries]}
-      - {status: advisory, ref: core/controlplane/scheduler/engine.go:1823, cols: [budgets.max_concurrent_jobs]}  # best-effort: count-then-dispatch, so concurrent admissions can exceed the cap (task-8bab7c41)
+      - {status: enforced, ref: core/controlplane/scheduler/engine.go:1855, cols: [budgets.max_concurrent_jobs]}  # atomic slot reservation; tests TestReserveTenantSlotConcurrentReservationsAdmitExactlyCap, TestProcessJobTenantConcurrencyCapAdmitsOneOfTwoConcurrent
       - {status: advisory, ref: core/controlplane/scheduler/engine.go:3116, finding: R01, cols: [budgets.max_runtime_ms]}
       - {status: advisory, ref: core/controlplane/scheduler/engine.go:3120, finding: R01, cols: [budgets.max_artifact_bytes]}
       - {status: advisory, ref: core/controlplane/scheduler/engine.go:3099, finding: R01, cols: [sandbox.isolated, sandbox.network_allowlist, sandbox.fs_read_only, sandbox.fs_read_write, toolchain.allowed_tools, toolchain.allowed_commands, diff.max_files, diff.max_lines, diff.deny_path_globs]}

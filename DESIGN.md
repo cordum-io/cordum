@@ -77,9 +77,12 @@ The Safety Kernel returns `PolicyCheckResponse` with `PolicyConstraints`:
 - `DiffConstraints`: max files/lines + path filters
 - `remediations`: optional safer alternatives with replacement topic/capability
 
-The scheduler enforces the retry limit (`max_retries`). It also checks the
-concurrency cap (`max_concurrent_jobs`) before dispatch, but only best-effort:
-jobs of one tenant admitted at the same time can exceed it. The other
+The scheduler enforces the retry limit (`max_retries`) and the concurrency cap
+(`max_concurrent_jobs`). Before dispatch, `Engine.reserveTenantSlot` claims the
+job's slot in one atomic job-store operation (`RedisJobStore.ReserveTenantSlot`),
+so jobs of one tenant admitted at the same time cannot exceed the cap (tests
+`TestReserveTenantSlotConcurrentReservationsAdmitExactlyCap` and
+`TestProcessJobTenantConcurrencyCapAdmitsOneOfTwoConcurrent`). The other
 constraint fields are advisory; see the
 [enforcement support matrix](docs/contract/enforcement-matrix.yaml).
 

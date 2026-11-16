@@ -820,6 +820,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Scheduler: the tenant concurrency cap (`max_concurrent_jobs`) and the
+  license tier's concurrent-job limit now hold when jobs of one tenant are
+  admitted at the same time, on one scheduler or several. The check and the
+  claim on a slot are one atomic Redis operation, and a slot goes back when
+  the dispatch fails. A job no longer counts against itself and holds no slot
+  once refused, which had kept workflow steps and DLQ retries from starting at
+  a cap of 1 (task-8bab7c41).
+
 - K8s: the production NATS backup CronJob failed on every run: natscli has no
   `--tlscacert`. It passes `--tlsca` (#492, task-81fe0880).
 
