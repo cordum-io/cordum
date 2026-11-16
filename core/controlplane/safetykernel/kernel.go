@@ -451,10 +451,15 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	// Phase-2 shadow dual-evaluation: constructs the shadow loader +
 	// evaluator and attaches them to srv via SetShadowEvaluator so
 	// evaluate() can Submit active decisions without a nil-panic. When
-	// configsvc or NATS is unavailable setupShadowEvaluation returns
-	// (nil, nil) and the kernel still boots with shadow eval as a no-op
-	// — see shadow_eval.go for the fallback chain.
-	shadowLoader, shadowEvaluator := setupShadowEvaluation(srv, loader, natsBus)
+	// shadow eval is disabled or configsvc is unavailable it returns nils
+	// and the kernel still boots with shadow eval as a no-op. With NATS,
+	// a malformed audit publisher key, or none under the production
+	// profile, is an error and the kernel refuses to start — see
+	// shadow_eval.go for the fallback chain.
+	shadowLoader, shadowEvaluator, err := setupShadowEvaluation(srv, loader, natsBus)
+	if err != nil {
+		return fmt.Errorf("safety-kernel: shadow evaluation: %w", err)
+	}
 	if shadowEvaluator != nil {
 		defer shadowEvaluator.Close()
 	}

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"io"
@@ -14,7 +15,10 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/auth/servicetoken"
+	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/logging"
+	"github.com/cordum/cordum/core/policysign"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -183,4 +187,119 @@ func TestAuditShutdownExportsQueuedFallbackEvent(t *testing.T) {
 			t.Fatalf("exit code %d with %d exported when os.Exit ran, want code 1 with 1 exported", code, exportedAtExit)
 		}
 	})
+}
+
+// recordingAuditBus accepts every publish and keeps the packets.
+type recordingAuditBus struct {
+	mu      sync.Mutex
+	packets []*pb.BusPacket
+}
+
+func (b *recordingAuditBus) Publish(_ string, packet *pb.BusPacket) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.packets = append(b.packets, packet)
+	return nil
+}
+
+func (*recordingAuditBus) Subscribe(string, string, func(*pb.BusPacket) error) error { return nil }
+
+func (b *recordingAuditBus) published() []*pb.BusPacket {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]*pb.BusPacket(nil), b.packets...)
+}
+
+// blankAuditPublisherEnv clears the audit publisher key variables and the
+// production profile, so each case sets only what it tests.
+func blankAuditPublisherEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{
+		audit.EnvPublisherSigningKey, audit.EnvPublisherSigningKeyPath, audit.EnvPublisherSigningKeyID,
+		audit.EnvPublisherDevSigningSeed, audit.EnvPublisherPublicKeyPrefix + "CORDUM_MCP",
+		env.EnvMode, env.EnvProduction,
+	} {
+		t.Setenv(name, "")
+	}
+}
+
+// TestNATSAuditSenderAttachesMCPServiceToken pins that a published packet
+// carries a service token that verifies as cordum-mcp against the audit
+// publisher trust.
+func TestNATSAuditSenderAttachesMCPServiceToken(t *testing.T) {
+	blankAuditPublisherEnv(t)
+	t.Setenv(audit.EnvPublisherDevSigningSeed, "pr1-22d-test-seed")
+	rec := &recordingAuditBus{}
+	sender, err := newNATSAuditSender(rec, func() *audit.BufferedExporter { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	sender.Send(audit.SIEMEvent{EventType: "test.mcp.token"})
+	packets := rec.published()
+	if len(packets) != 1 {
+		t.Fatalf("published packets = %d, want 1", len(packets))
+	}
+	trust, err := audit.LoadPublisherTrustFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub := trust[servicetoken.IdentityMCP]
+	lookup := func(string) (ed25519.PublicKey, bool) { return pub, pub != nil }
+	claims, typ, err := servicetoken.Verify(packets[0].GetAuthToken(), lookup, time.Now())
+	if err != nil || typ != servicetoken.TypService || claims.Subject != servicetoken.IdentityMCP {
+		t.Fatalf("token subject %q typ %q err %v, want subject %q typ %q",
+			claims.Subject, typ, err, servicetoken.IdentityMCP, servicetoken.TypService)
+	}
+}
+
+// TestNATSAuditSenderWithoutUsableKey pins the outcomes without a usable key.
+// Production and a malformed key build no publisher and publish nothing;
+// other profiles publish without a token and name the variable.
+func TestNATSAuditSenderWithoutUsableKey(t *testing.T) {
+	cases := []struct {
+		name, mode, key string
+		wantErr         error
+	}{
+		{"production without key", "production", "", audit.ErrPublisherKeyNotConfigured},
+		{"malformed key", "", "not-a-key", policysign.ErrInvalidPrivateKey},
+		{"dev without key", "", "", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			blankAuditPublisherEnv(t)
+			t.Setenv(env.EnvMode, tc.mode)
+			t.Setenv(audit.EnvPublisherSigningKey, tc.key)
+			stop := captureStderrAtWarn(t, "text")
+			rec := &recordingAuditBus{}
+			fallbacks := 0
+			sender, err := newNATSAuditSender(rec, func() *audit.BufferedExporter { fallbacks++; return nil })
+			if sender != nil {
+				sender.Send(audit.SIEMEvent{EventType: "test.mcp.nokey"})
+			}
+			out, packets := stop(), rec.published()
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) || !strings.Contains(err.Error(), audit.EnvPublisherSigningKey) ||
+					sender != nil || fallbacks != 0 || len(packets) != 0 {
+					t.Fatalf("err %v sender %T fallbacks %d packets %d; want %v naming %s, no sender, no fallback, nothing published",
+						err, sender, fallbacks, len(packets), tc.wantErr, audit.EnvPublisherSigningKey)
+				}
+				return
+			}
+			if err != nil || len(packets) != 1 || packets[0].GetAuthToken() != "" || !strings.Contains(out, audit.EnvPublisherSigningKey) {
+				t.Fatalf("err %v packets %d stderr %q; want one token-less packet and a warning naming %s",
+					err, len(packets), out, audit.EnvPublisherSigningKey)
+			}
+		})
+	}
+}
+
+// TestResolveAuditSenderWithoutNATSStartsInProduction pins that the key is
+// required only where a NATS publisher is built.
+func TestResolveAuditSenderWithoutNATSStartsInProduction(t *testing.T) {
+	blankAuditPublisherEnv(t)
+	t.Setenv(env.EnvMode, "production")
+	sender, err := resolveAuditSender("")
+	if _, ok := sender.(stderrAuditSender); err != nil || !ok {
+		t.Fatalf("resolveAuditSender(\"\") = %T, %v; want stderrAuditSender, nil", sender, err)
+	}
 }

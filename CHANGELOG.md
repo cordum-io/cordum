@@ -34,6 +34,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   (`cordum-safety-kernel`, `cordum-mcp`) for the gateway are optional.
   `docker-compose.release.yml` requires `CORDUM_AUDIT_SIGNING_KEY`.
 
+- cordum-mcp and the safety kernel attach a service token, with subject
+  `cordum-mcp` or `cordum-safety-kernel`, to the audit events they publish on
+  `sys.audit.export`. The token is minted with `CORDUM_AUDIT_SIGNING_KEY`,
+  `CORDUM_AUDIT_SIGNING_KEY_PATH` or `CORDUM_AUDIT_DEV_SIGNING_SEED`, with the
+  key id in `CORDUM_AUDIT_SIGNING_KEY_ID`. Under the production profile each
+  refuses to start without that key: cordum-mcp once `CORDUM_NATS_URL` dials,
+  and the safety kernel with NATS and shadow evaluation on. Provision the key
+  before upgrading.
+
 - Edge managed settings: managed-settings verification fails closed on
   unsupported conditional or background hook modifiers, and command hooks
   must have the correct type and tool-event coverage (#492, task-99f50a3d).
