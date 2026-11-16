@@ -97,6 +97,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Guardrails demo: `tools/scripts/demo_guardrails_run.sh` reads `CORDUM_API_KEY`
+  (then `API_KEY`) and `REDIS_PASSWORD` from the repository's `.env` when the
+  environment does not set them, taking a key's last definition as Docker
+  Compose does. CONTRIBUTING.md gains maintainer notes on the smoke and E2E
+  scripts, and docs/configuration-reference.md lists `CORDUM_MCP_ENABLED`,
+  `CORDUM_MCP_TRANSPORT` and `CORDUM_MCP_POLICY_GATE_ENABLED` (#591,
+  task-6fbc97b4).
 - Docs: the gRPC services and Safety Kernel pages give the output metadata check's timeout as
   its `500ms` default, which `CORDUM_OUTPUT_META_TIMEOUT_MS` overrides, instead of `100ms`
   (task-5295965c).
