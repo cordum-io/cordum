@@ -16,6 +16,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Production recovery now requires a completed backup checksum manifest and
+  its digest from a trusted external catalog before deleting data. Redis
+  recovery also requires complete shard topology evidence and stable primary
+  identities throughout restoration. Older backups need separate validation
+  and shard-coverage evidence before use (#593).
+
 - K8s production overlay: the Redis cluster bus runs over TLS. A running
   cluster needs [Runbook H](docs/redis-operations.md#runbook-h-turn-on-tls-for-the-cluster-bus)'s
   runtime switch on every node before any Redis pod restarts (task-2a7ba91e).
@@ -874,6 +880,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- The Python SDK's mypy target is now 3.10, the SDK's supported minimum. mypy
+  no longer prints its "Python 3.9 is not supported" configuration warning
+  (task-ec93b7c3).
+
 - Policy output-rule toggles with no usable policy signing key (warn or off
   mode) now drop the bundle's previous signature instead of retaining one
   that no longer matches the changed content. The audit entry records that
@@ -1243,7 +1253,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - The workflow credential scanner no longer reports `SOURCE_OVERSIZE` for a locally built native binary that a workflow runs, such as the `bin/cordumctl` that three demo workflows run for `generate-certs`, so a clean checkout and a built one scan the same. A file over the 256 KiB source bound counts as a program on an exec edge only when it starts with an ELF, PE or Mach-O header and has a NUL byte in its first line. An oversized script, and a `source` or `bash` edge to any oversized file, still report `SOURCE_OVERSIZE` (task-13b4b48c).
 - Added `docs/contract/threat-model.md`, the platform threat model for the M0 security contract: assets, adversaries, trust boundaries, a trusted-component inventory covering every `cmd/` service, reference-monitor properties with their current status, five explicit non-promises and the deployment boundary. Documentation only; no behavior changes.
 - Qualified three platform security-posture statements against `docs/contract/threat-model.md` (task-d056042e): ADR-001's "Zero-trust guarantee" bullet is now marked as design intent with a dated status note, and `docs/mcp/scope-filtering.md` no longer labels the MCP controls a "zero-trust stack" or "zero-trust controls". The threat model rates these mechanisms `supported`, not `enforced` or `verified`. Clarified that qualification requires protected transport on every Gateway client/proxy hop; deployment remains unverified.
-- Corrected three Edge doc statements that overclaimed (task-91ca9904). `docs/edge/llm-proxy-governance.md` states that the LLM adapter scans only the first 16 KiB of each `content` or `messages[i].content` value, so a secret found only past that bound gets `decision=record` with `truncated=true` and reaches the provider if the proxy forwards `record` unchanged. It states that only accepted submissions are recorded, lists the rejections that record nothing, and tells operators to monitor them. `docs/edge/managed-settings-deploy.md` states that `verify` rejects only URL userinfo, not a credential in the query string, and that `generate`'s secret-pattern check is a heuristic. CLM-028's boundary names both limits. Documentation only; no behavior changes.
+- Corrected three Edge doc statements that overclaimed (task-91ca9904). `docs/edge/llm-proxy-governance.md` states that the LLM adapter scans only the first 16 KiB of each `content` or `messages[i].content` value, so a secret found only past that bound gets `decision=record` with `truncated=true` and reaches the provider if the proxy forwards `record` unchanged. It distinguishes pre-append rejections, which add no events, from append errors, which may already have committed and require reconciliation. `docs/edge/managed-settings-deploy.md` describes the shared `generate` and `verify` checks: both reject URL userinfo and query-string credentials detected by the secret-pattern heuristic. CLM-028's boundary names the ingestion limits. Documentation only; no behavior changes.
 - Nightly soak bounds (task-a7c48ad2): compare post-warm-up memory medians over first/last K snapshots (default 5, minimum 3), retaining the 50% relative limit and 32 MiB floor. Missing/malformed metrics, insufficient samples, missing containers and zero load now fail explicitly. Helm reports drift/restarts as not evaluated rather than passing. Results include evaluation/window/baseline fields; the wiki documents the 20-minute example and metrics-source controls. All 83 contract assertions are retained.
 - Nightly soak restart check (task-14c37ef5): restart counts now come from `docker inspect` RestartCount instead of the `docker compose ps` Status text, which only shows an exit code, so a container that restarted and is Up again now fails the soak; an unreadable count fails instead of reading as 0.
 - The workflow credential scanner carries options that a file run with `source` or `.` leaves set (tracing on, errexit off) into the shell that ran it, as a `set` at that line would. This includes nested sources, functions a sourced file defines, and an rcfile that sources such a file. The analysis is bounded per job at 1000 distinct sourced-file analyses: past that bound each further sourced file counts as leaving tracing on and errexit off, and a credential job reports `SOURCE_LIMIT` (task-3d6be9e2). The options in force at a `return` that ends the sourced file count, as well as those at its end. A sourced file that turns errexit back on, or tracing off, on every path restores that option in the caller. A `case` arm written with a leading `(` runs in the shell that runs the case (task-92a5adaf).

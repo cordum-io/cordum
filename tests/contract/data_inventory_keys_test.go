@@ -118,7 +118,17 @@ func scanDataFile(fset *token.FileSet, f *ast.File, rel string) []dataFound {
 				at("redis-stream", "XAdd", x)
 			}
 		case *ast.CompositeLit:
-			if sel, ok := x.Type.(*ast.SelectorExpr); ok && sel.Sel.Name == "StreamConfig" {
+			typ := x.Type
+			// Elements of []nats.StreamConfig may omit their type. They still
+			// declare stream names, including inside a range expression.
+			if typ == nil && len(stack) > 1 {
+				if parent, ok := stack[len(stack)-2].(*ast.CompositeLit); ok {
+					if array, ok := parent.Type.(*ast.ArrayType); ok {
+						typ = array.Elt
+					}
+				}
+			}
+			if sel, ok := typ.(*ast.SelectorExpr); ok && sel.Sel.Name == "StreamConfig" {
 				for _, name := range dataStreamNames(f, x, stack, values, funcs) {
 					at("jetstream", name, x)
 				}
@@ -255,23 +265,24 @@ func dataDeclaresLocal(n ast.Node, id *ast.Ident) bool {
 	case *ast.TypeSwitchStmt:
 		stmts = []ast.Stmt{n.Init, n.Assign}
 	case *ast.RangeStmt:
-		return n.Tok == token.DEFINE && (dataIsName(n.Key, id.Name) || dataIsName(n.Value, id.Name))
+		return n.Tok == token.DEFINE && n.Body.Pos() <= id.Pos() && id.Pos() < n.Body.End() &&
+			(dataIsName(n.Key, id.Name) || dataIsName(n.Value, id.Name))
 	}
 	for _, st := range stmts {
-		if st == nil || st.End() > id.Pos() {
+		if st == nil || st.Pos() > id.Pos() {
 			continue
 		}
 		switch st := st.(type) {
 		case *ast.DeclStmt:
 			if gd, ok := st.Decl.(*ast.GenDecl); ok {
 				for _, spec := range gd.Specs {
-					if vs, ok := spec.(*ast.ValueSpec); ok && slices.ContainsFunc(vs.Names, func(x *ast.Ident) bool { return x.Name == id.Name }) {
+					if vs, ok := spec.(*ast.ValueSpec); ok && vs.End() <= id.Pos() && slices.ContainsFunc(vs.Names, func(x *ast.Ident) bool { return x.Name == id.Name }) {
 						return true
 					}
 				}
 			}
 		case *ast.AssignStmt:
-			if st.Tok == token.DEFINE && slices.ContainsFunc(st.Lhs, func(e ast.Expr) bool { return dataIsName(e, id.Name) }) {
+			if st.End() <= id.Pos() && st.Tok == token.DEFINE && slices.ContainsFunc(st.Lhs, func(e ast.Expr) bool { return dataIsName(e, id.Name) }) {
 				return true
 			}
 		}
@@ -466,6 +477,35 @@ func cond(js X) {
 		js.AddStream(&nats.StreamConfig{Name: streamName})
 	}
 }
+
+func rangeExpression() {
+	for streamName := range []nats.StreamConfig{{Name: streamName}} {
+		_ = streamName
+	}
+}
+
+func grouped() {
+	var (
+		streamName = "LOCAL"
+		cfg = nats.StreamConfig{Name: streamName}
+	)
+	_ = cfg
+}
+
+func groupedOwnInitializer() {
+	var (
+		streamName = nats.StreamConfig{Name: streamName}
+	)
+	_ = streamName
+}
+
+func groupedLater() {
+	const (
+		unrelated = "OTHER"
+		streamName = "LOCAL"
+	)
+	_ = nats.StreamConfig{Name: streamName}
+}
 `)
 	found, err := discoverDataKeys(dir, "core")
 	if err != nil {
@@ -473,7 +513,9 @@ func cond(js X) {
 	}
 	const p = "core/pkg/local.go"
 	want := []dataFound{{"jetstream", "ACTUAL", p, 6}, {"jetstream", "<unresolved>", p, 11}, {"jetstream", "<unresolved>", p, 16},
-		{"jetstream", "ACTUAL", p, 20}, {"jetstream", "<unresolved>", p, 27}, {"jetstream", "<unresolved>", p, 33}}
+		{"jetstream", "ACTUAL", p, 20}, {"jetstream", "<unresolved>", p, 27}, {"jetstream", "<unresolved>", p, 33},
+		{"jetstream", "ACTUAL", p, 38}, {"jetstream", "<unresolved>", p, 46}, {"jetstream", "ACTUAL", p, 53},
+		{"jetstream", "<unresolved>", p, 63}}
 	if !slices.Equal(found, want) {
 		t.Errorf("a local declaration must neither override the file-level const nor resolve to it:\n got %q\nwant %q", found, want)
 	}

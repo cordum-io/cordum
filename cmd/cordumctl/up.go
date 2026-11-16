@@ -198,7 +198,7 @@ func composeEnv() []string {
 	for _, kv := range os.Environ() {
 		// Compose prefers the process environment to .env, so a blank credential
 		// exported here would hide the one .env holds (and `up --dev` wrote).
-		if key, val, _ := strings.Cut(kv, "="); (key == "CORDUM_API_KEY" || key == "REDIS_PASSWORD") && strings.TrimSpace(val) == "" {
+		if key, val, _ := strings.Cut(kv, "="); blankComposeCredential(key, val) {
 			continue
 		}
 		env = append(env, kv)
@@ -212,6 +212,20 @@ func composeEnv() []string {
 		env = append(env, "DOCKER_CLIENT_TIMEOUT="+defaultComposeTimeoutSeconds)
 	}
 	return env
+}
+
+func blankComposeCredential(key, value string) bool {
+	return (key == "CORDUM_API_KEY" || key == "REDIS_PASSWORD") && strings.TrimSpace(value) == ""
+}
+
+// composeLookupEnv uses the same environment as the Compose process when
+// resolving .env interpolation, including its blank-credential fallback.
+func composeLookupEnv(key string) (string, bool) {
+	value, ok := os.LookupEnv(key)
+	if blankComposeCredential(key, value) {
+		return "", false
+	}
+	return value, ok
 }
 
 func apiKeySource(composeFile string) string {
@@ -245,7 +259,7 @@ func readEnvFile(path string, keys ...string) string {
 	if err != nil {
 		return ""
 	}
-	vals, err := parseDotEnv(string(data), os.LookupEnv)
+	vals, err := parseDotEnv(string(data), composeLookupEnv)
 	if err != nil {
 		slog.Warn("readEnvFile: parse error", "path", path, "error", err)
 		return ""
@@ -256,16 +270,6 @@ func readEnvFile(path string, keys ...string) string {
 		}
 	}
 	return ""
-}
-
-func trimQuotes(val string) string {
-	if len(val) < 2 {
-		return val
-	}
-	if (val[0] == '"' && val[len(val)-1] == '"') || (val[0] == '\'' && val[len(val)-1] == '\'') {
-		return val[1 : len(val)-1]
-	}
-	return val
 }
 
 // ensureDevCerts generates TLS certificates if they don't already exist.
@@ -350,7 +354,7 @@ func ensureDevBootstrapEnv(composeDir string) (devBootstrapResult, error) {
 				if err != nil {
 					return "", err
 				}
-				return "cordum_admin_" + hexPart, nil
+				return "Cordum_admin_1_" + hexPart, nil
 			},
 		},
 		{
@@ -378,7 +382,10 @@ func ensureDevBootstrapEnv(composeDir string) (devBootstrapResult, error) {
 	if len(missing) > 0 {
 		var b strings.Builder
 		if existing != "" {
-			existing, missing = fillEmptyEnvDefinitions(existing, missing)
+			existing, missing, err = fillEmptyEnvDefinitions(existing, missing)
+			if err != nil {
+				return devBootstrapResult{}, fmt.Errorf("fill %s: %w", envPath, err)
+			}
 			b.WriteString(existing)
 			if len(missing) > 0 {
 				if !strings.HasSuffix(existing, "\n") {
@@ -393,11 +400,23 @@ func ensureDevBootstrapEnv(composeDir string) (devBootstrapResult, error) {
 			b.WriteString(line)
 			b.WriteString("\n")
 		}
+		// Filling an earlier credential can change a later interpolation. Use
+		// the completed file's values for seeding and the returned credentials,
+		// exactly as Compose and subsequent CLI commands will read them.
+		candidate := b.String()
+		existingMap, err = parseEnvContent(candidate)
+		if err != nil {
+			return devBootstrapResult{}, fmt.Errorf("parse generated %s: %w", envPath, err)
+		}
+		apiKey, ok = hasKey("CORDUM_API_KEY")
+		if !ok {
+			return devBootstrapResult{}, fmt.Errorf("generated %s has no effective CORDUM_API_KEY", envPath)
+		}
 		// os.WriteFile keeps an existing file's mode, so restrict .env before it gets credentials.
 		if err := os.Chmod(envPath, 0o600); err != nil && !os.IsNotExist(err) {
 			return devBootstrapResult{}, fmt.Errorf("chmod %s: %w", envPath, err)
 		}
-		if err := os.WriteFile(envPath, []byte(b.String()), 0o600); err != nil {
+		if err := os.WriteFile(envPath, []byte(candidate), 0o600); err != nil {
 			return devBootstrapResult{}, fmt.Errorf("write %s: %w", envPath, err)
 		}
 	}
@@ -425,37 +444,7 @@ func ensureDevBootstrapEnv(composeDir string) (devBootstrapResult, error) {
 
 // parseEnvContent reads .env content with readEnvFile's parser.
 func parseEnvContent(content string) (map[string]string, error) {
-	return parseDotEnv(content, os.LookupEnv)
-}
-
-// fillEmptyEnvDefinitions writes each generated KEY=value line over every empty
-// definition of KEY in content and returns the lines still to append, so .env
-// keeps one definition of KEY (.env.example ships CORDUM_API_KEY=).
-func fillEmptyEnvDefinitions(content string, generated []string) (string, []string) {
-	byKey := make(map[string]string, len(generated))
-	for _, line := range generated {
-		key, _, _ := strings.Cut(line, "=")
-		byKey[key] = line
-	}
-	placed := map[string]bool{}
-	lines := strings.SplitAfter(content, "\n")
-	for i, line := range lines {
-		key, val, ok := strings.Cut(strings.TrimSpace(line), "=")
-		key = strings.TrimSpace(key)
-		gen, isGen := byKey[key]
-		if !ok || !isGen || trimQuotes(strings.TrimSpace(val)) != "" {
-			continue
-		}
-		lines[i] = gen + line[len(strings.TrimRight(line, "\r\n")):]
-		placed[key] = true
-	}
-	var rest []string
-	for _, line := range generated {
-		if key, _, _ := strings.Cut(line, "="); !placed[key] {
-			rest = append(rest, line)
-		}
-	}
-	return strings.Join(lines, ""), rest
+	return parseDotEnv(content, composeLookupEnv)
 }
 
 func randomHexString(numBytes int) (string, error) {
@@ -568,7 +557,11 @@ func seedDevMCPConfig(ctx context.Context, client *restClient, seedEnabled bool)
 	}
 
 	mcpCfg := map[string]any{}
-	if existing, ok := doc.Data["mcp"].(map[string]any); ok {
+	if value, present := doc.Data["mcp"]; present {
+		existing, ok := value.(map[string]any)
+		if !ok {
+			return fmt.Errorf("existing mcp configuration must be an object; refusing to enable MCP")
+		}
 		for k, v := range existing {
 			mcpCfg[k] = v
 		}
