@@ -26,7 +26,7 @@ func TestDelegationChainBoundsChildExpiry(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := service.now().Add(min(ttl, 10*time.Minute))
-			if !child.ExpiresAt.Equal(want) || !claims.ExpiresAt.Time.Equal(want) {
+			if !child.ExpiresAt.Equal(want) || !claims.ExpiresAt.Equal(want) {
 				t.Fatalf("expiry: verified=%v, issued=%v, want=%v", child.ExpiresAt, claims.ExpiresAt, want)
 			}
 			for _, chain := range [][]ChainLink{claims.DelegationChain, child.DelegationChain} {
