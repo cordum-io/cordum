@@ -450,7 +450,7 @@ For a complete key inventory, DR runbooks, and base-to-production migration, see
 All Cordum services connect to Redis cluster via:
 ```
 REDIS_CLUSTER_ADDRESSES=cordum-redis-0.cordum-redis.cordum.svc:6379,...,cordum-redis-5.cordum-redis.cordum.svc:6379
-REDIS_URL=rediss://redis:6379
+REDIS_URL=rediss://:$(REDIS_PASSWORD)@redis:6379
 REDIS_TLS_CA=/etc/cordum/tls/client/ca.crt
 REDIS_TLS_CERT=/etc/cordum/tls/client/tls.crt
 REDIS_TLS_KEY=/etc/cordum/tls/client/tls.key
@@ -461,13 +461,19 @@ REDIS_TLS_KEY=/etc/cordum/tls/client/tls.key
 ## 6. Network Policies
 
 The production overlay defines strict ingress and egress rules per service.
+`cordum-default-deny` blocks every other flow in the namespace, so a pod with no
+matching label (for example the `cordum-backup-retention` CronJob, which needs no
+network) can reach nothing.
 
 ### Ingress Rules
 
 | Target | Allowed Sources | Ports |
 |--------|----------------|-------|
 | NATS | All Cordum services + NATS peers | 4222 (client), 6222 (cluster), 8222 (monitor) |
+| NATS | NATS backup CronJob (`app: cordum-nats-backup`) | 4222 |
 | Redis | All Cordum services + Redis peers | 6379 (client), 16379 (cluster bus) |
+| Redis | Cluster init Job (`app: cordum-redis-cluster-init`), Redis backup CronJob (`app: cordum-redis-backup`) | 6379 |
+| Safety Kernel | API Gateway, Scheduler | 50051 |
 
 ### Egress Rules
 
@@ -478,6 +484,11 @@ The production overlay defines strict ingress and egress rules per service.
 | Workflow Engine | NATS, Redis, DNS | 4222, 6379, 53 |
 | Safety Kernel | NATS, Redis, DNS | 4222, 6379, 53 |
 | Dashboard | API Gateway, DNS | 8081, 53 |
+| Context Engine | Redis, DNS | 6379, 53 |
+| NATS | NATS peers (cluster routes), DNS | 6222, 53 |
+| Redis | Redis peers (cluster bus, replication) | 16379, 6379 |
+| Redis cluster init Job, Redis backup CronJob | Redis, DNS | 6379, 53 |
+| NATS backup CronJob | NATS, DNS | 4222, 53 |
 
 ### Traffic Flow Diagram
 
@@ -682,9 +693,42 @@ kubectl delete pod cordum-redis-0 -n cordum  # Pod restarts and loads RDB
 ```
 
 **NATS:**
+
+The NATS server image has no `nats` CLI, so restore from your machine with the
+CLI through a port-forward. The overlay's NATS requires a client certificate,
+and its server certificate names `cordum-nats`, not `localhost`, so point that
+name at the forward first (for example, add `127.0.0.1 cordum-nats` to
+`/etc/hosts`). A restore refuses to overwrite an existing stream ("stream name
+already in use"), so stop the consumers and remove the stream first.
+
 ```bash
-# Restore a stream snapshot
-kubectl exec -n cordum cordum-nats-0 -- nats stream restore CORDUM_JOBS /backup/nats-.../CORDUM_JOBS.snapshot
+# 1. Copy the snapshot directory off the cordum-backups PVC through a
+#    temporary pod that mounts it
+kubectl run nats-restore-files -n cordum --restart=Never --image=busybox:1.36 \
+  --overrides='{"spec":{"containers":[{"name":"nats-restore-files","image":"busybox:1.36","command":["sleep","3600"],"volumeMounts":[{"name":"backup","mountPath":"/backup"}]}],"volumes":[{"name":"backup","persistentVolumeClaim":{"claimName":"cordum-backups"}}]}}'
+kubectl wait -n cordum --for=condition=Ready pod/nats-restore-files
+kubectl exec -n cordum nats-restore-files -- ls /backup   # pick a nats-<timestamp>
+kubectl cp cordum/nats-restore-files:/backup/nats-<timestamp>/CORDUM_JOBS.snapshot ./CORDUM_JOBS.snapshot
+kubectl delete pod -n cordum nats-restore-files
+
+# 2. Client certificate from the cordum-client-tls Secret
+kubectl get secret -n cordum cordum-client-tls -o jsonpath='{.data.ca\.crt}' | base64 -d > ca.crt
+kubectl get secret -n cordum cordum-client-tls -o jsonpath='{.data.tls\.crt}' | base64 -d > client.crt
+kubectl get secret -n cordum cordum-client-tls -o jsonpath='{.data.tls\.key}' | base64 -d > client.key
+
+# 3. Stop the consumers, then replace the stream through a port-forward
+#    (newer CLIs also call the restore `nats backup restore stream`)
+kubectl scale deployment cordum-scheduler cordum-workflow-engine --replicas=0 -n cordum
+kubectl port-forward -n cordum cordum-nats-0 4222:4222 >/dev/null &
+sleep 2
+nats stream rm CORDUM_JOBS --force --server tls://cordum-nats:4222 \
+  --tlsca ca.crt --tlscert client.crt --tlskey client.key
+nats stream restore ./CORDUM_JOBS.snapshot --server tls://cordum-nats:4222 \
+  --tlsca ca.crt --tlscert client.crt --tlskey client.key
+kill %1
+
+# 4. Bring the consumers back (2 is the HPA minimum)
+kubectl scale deployment cordum-scheduler cordum-workflow-engine --replicas=2 -n cordum
 ```
 
 ---
@@ -750,9 +794,15 @@ kubectl logs -n cordum deployment/cordum-api-gateway --tail=100
 kubectl exec -n cordum cordum-redis-0 -c redis -- \
   sh -c 'redis-cli --tls --cacert /etc/redis/tls/ca.crt --cert /etc/redis/tls/tls.crt --key /etc/redis/tls/tls.key -a "$REDIS_PASSWORD" cluster info'
 
-# Check NATS JetStream streams
-kubectl exec -n cordum cordum-nats-0 -- nats --tlscacert /etc/nats/tls/ca.crt \
-  --tlscert /etc/nats/tls/tls.crt --tlskey /etc/nats/tls/tls.key stream ls
+# Check NATS JetStream streams (production overlay). The NATS image has no
+# nats CLI. Read the monitoring port (8222, plain HTTP) instead: a port-forward
+# connects from inside the pod, so it needs no client certificate and no
+# NetworkPolicy change.
+kubectl port-forward -n cordum cordum-nats-0 8222:8222 >/dev/null &
+sleep 2
+curl -s 'http://localhost:8222/jsz?streams=true' | \
+  jq '.account_details[].stream_detail[] | {name, messages: .state.messages, bytes: .state.bytes}'
+kill %1
 
 # Check network policies
 kubectl get networkpolicy -n cordum

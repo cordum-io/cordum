@@ -73,6 +73,29 @@ services:
       CONTEXT_ENGINE_TLS_KEY: "/certs/context.key"
 ```
 
+### Calling the services with grpcurl
+
+The default Compose stack serves all three gRPC servers over TLS with the
+development CA in `./certs/ca/ca.crt` and publishes them on these host ports:
+
+| Service | Host address (Compose) |
+| --- | --- |
+| `CordumApi` (API gateway gRPC) | `localhost:9080` (container port `8080`) |
+| `SafetyKernel` + `OutputPolicyService` | `localhost:50051` |
+| `ContextEngine` | `localhost:50400` (container port `50070`) |
+
+The server certificate covers `localhost` and the servers don't ask for a
+client certificate, so `-cacert ./certs/ca/ca.crt` is enough. grpcurl finds
+the methods through server reflection, which each service registers only with
+`CORDUM_GRPC_REFLECTION=1`. Compose doesn't set it, and the gateway refuses it
+in production unless `CORDUM_GRPC_REFLECTION_FORCE=1`. Without reflection,
+pass the protos with `-import-path` and `-proto`.
+
+A service run as a bare binary without its TLS certificate (`GRPC_TLS_CERT`,
+`SAFETY_KERNEL_TLS_CERT`, `CONTEXT_ENGINE_TLS_CERT`) serves plaintext on its
+listen address, which is allowed only outside production. Use `-plaintext`
+instead of `-cacert` there, as in the health check example below.
+
 ## CordumApi (`cordum.v1`)
 
 RPC signatures:
@@ -134,10 +157,10 @@ Common status codes from `core/controlplane/gateway/gateway_grpc.go`:
 ### grpcurl example
 
 ```bash
-grpcurl -plaintext \
+grpcurl -cacert ./certs/ca/ca.crt \
   -H "x-api-key: ${CORDUM_API_KEY}" \
   -d '{"prompt":"hello","topic":"job.default","org_id":"default"}' \
-  localhost:8080 cordum.v1.CordumApi/SubmitJob
+  localhost:9080 cordum.v1.CordumApi/SubmitJob
 ```
 
 ## ContextEngine (`cordum.v1`)
@@ -196,9 +219,9 @@ rpc UpdateMemory(UpdateMemoryRequest) returns (UpdateMemoryResponse);
 ### grpcurl example
 
 ```bash
-grpcurl -plaintext \
+grpcurl -cacert ./certs/ca/ca.crt \
   -d '{"memory_id":"m-123","mode":"CONTEXT_MODE_CHAT","logical_payload":"eyJwcm9tcHQiOiJoZWxsbyJ9"}' \
-  localhost:50070 cordum.v1.ContextEngine/BuildWindow
+  localhost:50400 cordum.v1.ContextEngine/BuildWindow
 ```
 
 ## OutputPolicyService (`cordum.v1`)
@@ -270,7 +293,7 @@ This service is hosted by the Safety Kernel process (`pb.RegisterOutputPolicySer
 ### grpcurl example
 
 ```bash
-grpcurl -plaintext \
+grpcurl -cacert ./certs/ca/ca.crt \
   -d '{"job_id":"job-1","topic":"job.default","tenant":"default","output_content":"c2VjcmV0Cg=="}' \
   localhost:50051 cordum.v1.OutputPolicyService/CheckOutput
 ```
@@ -332,7 +355,7 @@ rpc ListSnapshots(ListSnapshotsRequest) returns (ListSnapshotsResponse);
 ### grpcurl example
 
 ```bash
-grpcurl -plaintext \
+grpcurl -cacert ./certs/ca/ca.crt \
   -d '{"job_id":"job-1","topic":"job.default","tenant":"default"}' \
   localhost:50051 cordum.agent.v1.SafetyKernel/Check
 ```
@@ -356,6 +379,9 @@ Health RPCs are treated as public in gateway gRPC rate limiting logic (`/grpc.he
 Example:
 
 ```bash
+grpcurl -cacert ./certs/ca/ca.crt localhost:50051 grpc.health.v1.Health/Check
+
+# Kernel run as a bare binary without SAFETY_KERNEL_TLS_CERT (outside production)
 grpcurl -plaintext localhost:50051 grpc.health.v1.Health/Check
 ```
 

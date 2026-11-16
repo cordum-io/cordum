@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -221,16 +222,32 @@ func (s *LegalHoldStore) ReleaseHold(ctx context.Context, id, releasedBy string)
 }
 
 // IsUnderHold returns true if the tenant has any active (unreleased) legal hold.
+// Retention calls it before deleting a tenant's data, so a hold record that
+// cannot be read or decoded is an error, never "not held". An index entry
+// whose record is gone is not a hold. CreateHold's duplicate check
+// (activeHoldForTenant) still skips unreadable records.
 func (s *LegalHoldStore) IsUnderHold(ctx context.Context, tenant string) (bool, error) {
 	tenant = strings.TrimSpace(tenant)
 	if tenant == "" {
 		return false, nil
 	}
-	hold, err := s.activeHoldForTenant(ctx, tenant)
+	ids, err := s.client.SMembers(ctx, legalHoldSetPrefix+tenant).Result()
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("redis smembers holds: %w", err)
 	}
-	return hold != nil, nil
+	for _, id := range ids {
+		hold, err := s.GetHold(ctx, id)
+		if errors.Is(err, ErrHoldNotFound) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		if hold.IsActive() {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // activeHoldForTenant finds the first active hold for a tenant.
