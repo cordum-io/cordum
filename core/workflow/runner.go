@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"crypto/ed25519"
 	"fmt"
 	"net/http"
 	"os"
@@ -180,7 +181,8 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	// enabled only when one is configured. CORDUM_SDK_HANDSHAKE=enforce REQUIRES
 	// the key be deployed here (see deploy config); absent a key, cancels
 	// publish token-less, which a peer scheduler admits under off/warn.
-	if priv, kid, kerr := policysign.LoadPrivateKeyFromEnv(); kerr == nil {
+	priv, kid, kerr := policysign.LoadPrivateKeyFromEnv()
+	if kerr == nil {
 		engine = engine.WithServiceTokenMinter(func() (string, error) {
 			return servicetoken.MintService(priv, kid, servicetoken.IdentityWorkflow, time.Now())
 		})
@@ -194,6 +196,13 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 			return fmt.Errorf("workflow-engine requires a control-plane service-token signing key when CORDUM_SDK_HANDSHAKE=enforce (internal cancel broadcasts would be rejected by enforce-mode schedulers): %w", kerr)
 		}
 		slog.Info("workflow-engine service-token minting disabled (no signing key configured); internal cancels are unauthenticated and dropped by peer schedulers only under CORDUM_SDK_HANDSHAKE=enforce", "reason", kerr)
+	}
+	var acceptedTrust *policysign.TrustStore
+	if handshakeMode == handshakemode.Enforce {
+		acceptedTrust, err = acceptedResultTrust(priv, kid)
+		if err != nil {
+			return fmt.Errorf("workflow-engine accepted-result trust: %w", err)
+		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -217,7 +226,7 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	go rec.Start(ctx)
 
 	// Use context-aware subscription for trace propagation from NATS headers.
-	if err := natsBus.SubscribeWithContext(capsdk.SubjectAcceptedResult, workflowEngineQueue, acceptedResultHandler(rec)); err != nil {
+	if err := natsBus.SubscribeWithContext(capsdk.SubjectAcceptedResult, workflowEngineQueue, acceptedResultHandler(rec, acceptedTrust)); err != nil {
 		return fmt.Errorf("subscribe %s: %w", capsdk.SubjectAcceptedResult, err)
 	}
 
@@ -289,10 +298,20 @@ func startHealthServer(addr string, probes *health.ProbeServer) *http.Server {
 }
 
 // acceptedResultHandler handles sys.internal.job.result.accepted packets.
-func acceptedResultHandler(rec *reconciler) func(context.Context, *pb.BusPacket) error {
+func acceptedResultHandler(rec *reconciler, trust *policysign.TrustStore) func(context.Context, *pb.BusPacket) error {
 	return func(traceCtx context.Context, p *pb.BusPacket) error {
 		if p == nil || strings.TrimSpace(p.GetSenderId()) != servicetoken.IdentityScheduler {
+			if trust != nil {
+				slog.Warn("workflow accepted result refused", "reason", "sender")
+			}
 			return nil
+		}
+		if trust != nil {
+			claims, err := servicetoken.VerifyService(p.GetAuthToken(), trust, time.Now())
+			if err != nil || claims.Subject != servicetoken.IdentityScheduler {
+				slog.Warn("workflow accepted result refused", "reason", "service_token")
+				return nil
+			}
 		}
 		if jr := p.GetJobResult(); jr != nil {
 			handlerCtx, handlerCancel := context.WithTimeout(traceCtx, 30*time.Second)
@@ -301,4 +320,17 @@ func acceptedResultHandler(rec *reconciler) func(context.Context, *pb.BusPacket)
 		}
 		return nil
 	}
+}
+
+func acceptedResultTrust(priv ed25519.PrivateKey, kid string) (*policysign.TrustStore, error) {
+	trust, err := policysign.LoadTrustStoreFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	if _, exists := trust.Lookup(kid); !exists && len(priv) > 0 {
+		if err := trust.Add(kid, priv.Public().(ed25519.PublicKey)); err != nil {
+			return nil, err
+		}
+	}
+	return trust, nil
 }
