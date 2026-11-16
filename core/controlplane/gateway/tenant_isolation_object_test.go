@@ -1,0 +1,214 @@
+package gateway
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/cordum/cordum/core/auth/delegation"
+	"github.com/cordum/cordum/core/controlplane/workercredentials"
+	wf "github.com/cordum/cordum/core/workflow"
+)
+
+func checkTenantObjectRead(t *testing.T, handler http.HandlerFunc, path, id, marker string) {
+	t.Helper()
+	owner := httptest.NewRecorder()
+	handler(owner, tenantObjectRequest(http.MethodGet, path, "tenant-b", id))
+	if owner.Code != http.StatusOK || !strings.Contains(owner.Body.String(), marker) {
+		t.Fatalf("owner did not read seeded object: %d %s", owner.Code, owner.Body.String())
+	}
+	other := httptest.NewRecorder()
+	handler(other, tenantObjectRequest(http.MethodGet, path, "tenant-a", id))
+	if strings.Contains(other.Body.String(), "private-") || strings.Contains(other.Body.String(), marker) || strings.Contains(other.Body.String(), "tenant-b") {
+		t.Errorf("response released tenant B data: %s", other.Body.String())
+	}
+	if other.Code >= http.StatusInternalServerError {
+		t.Errorf("infrastructure error is not an isolation result: %d", other.Code)
+	}
+}
+
+func TestTenantIsolationGatewayConfigScopes(t *testing.T) {
+	const scope = "org"
+	for _, effective := range []bool{false, true} {
+		t.Run(fmt.Sprintf("%s/effective=%t", scope, effective), func(t *testing.T) {
+			s, _, _ := newTestGateway(t)
+			s.auth = newBasicAuthForTest(t, nil)
+			id := "tenant-b"
+			r := tenantObjectRequest(http.MethodPost, "/api/v1/config", "tenant-b", id)
+			r.Body = io.NopCloser(strings.NewReader(fmt.Sprintf(`{"scope":%q,"scope_id":%q,"data":{"secret":"private-config-b"}}`, scope, id)))
+			seed := httptest.NewRecorder()
+			s.handleSetConfig(seed, r)
+			if seed.Code != http.StatusOK && seed.Code != http.StatusNoContent {
+				t.Fatalf("seed config: %d %s", seed.Code, seed.Body.String())
+			}
+			tenantObjectUnchanged(t, s)
+			path := "/api/v1/config?scope=" + scope + "&scope_id=" + id
+			handler := s.handleGetConfig
+			if effective {
+				path = "/api/v1/config/effective?" + scope + "_id=" + id
+				handler = s.handleGetEffectiveConfig
+			}
+			checkTenantObjectRead(t, handler, path, id, "private-config-b")
+		})
+	}
+}
+
+func seedTenantObjectWorkflow(t *testing.T, s *server) {
+	t.Helper()
+	ctx := context.Background()
+	def := &wf.Workflow{ID: "private-workflow-b", OrgID: "tenant-b", Name: "private-workflow-b"}
+	run := &wf.WorkflowRun{ID: "private-run-b", WorkflowID: def.ID, OrgID: def.OrgID,
+		Steps: map[string]*wf.StepRun{"step": {StepID: "step", JobID: "private-run-b:step"}}}
+	for _, err := range []error{
+		s.workflowStore.SaveWorkflow(ctx, def),
+		s.workflowStore.UpdateAuditHash(ctx, "private-run-b:step", strings.Repeat("b", 64)),
+		s.workflowStore.CreateRun(ctx, run),
+		s.workflowStore.UpdateAuditHash(ctx, "private-run-b:pending", strings.Repeat("c", 64)),
+		s.workflowStore.AppendTimelineEvent(ctx, run.ID, &wf.TimelineEvent{Time: time.Now().UTC(), Type: "job", JobID: "private-run-b:step", Message: "private-timeline-b"}),
+	} {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	stored, err := s.workflowStore.GetRun(ctx, run.ID)
+	if err != nil || stored == nil || stored.Steps["step"] == nil || stored.Steps["step"].AuditHash != strings.Repeat("b", 64) {
+		t.Fatalf("pending audit hash was not joined to run: %v", err)
+	}
+	for _, key := range []string{"wf:run:job:private-run-b:step", "wf:run:pending_audit_hash:private-run-b:pending"} {
+		if n, err := s.jobStore.Client().Exists(ctx, key).Result(); err != nil || n != 1 {
+			t.Fatalf("missing child %s: %d, %v", key, n, err)
+		}
+	}
+}
+
+func TestTenantIsolationGatewayWorkflowObjects(t *testing.T) {
+	for _, surface := range []string{"definition", "run", "timeline", "workflow-runs"} {
+		t.Run(surface, func(t *testing.T) {
+			s, _, _ := newTestGateway(t)
+			s.auth = newBasicAuthForTest(t, nil)
+			seedTenantObjectWorkflow(t, s)
+			tenantObjectUnchanged(t, s)
+			id, marker, handler := "private-run-b", "private-run-b", s.handleGetRun
+			switch surface {
+			case "definition":
+				id, marker, handler = "private-workflow-b", "private-workflow-b", s.handleGetWorkflow
+			case "timeline":
+				marker, handler = "private-timeline-b", s.handleGetRunTimeline
+			case "workflow-runs":
+				id, handler = "private-workflow-b", s.handleListRuns
+			}
+			checkTenantObjectRead(t, handler, "/api/v1/workflows/"+id, id, marker)
+		})
+	}
+}
+
+func TestTenantIsolationGatewayWorkerCredential(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.auth = newBasicAuthForTest(t, nil)
+	ctx := context.Background()
+	const id = "private-worker-b"
+	if _, err := s.workerCredentialStore.Create(ctx, workercredentials.IssueInput{TenantID: "tenant-b", WorkerID: id, CreatedBy: "private-owner-b"}); err != nil {
+		t.Fatal(err)
+	}
+	owner, err := s.workerCredentialStore.GetByWorkerID(ctx, id)
+	if err != nil || owner == nil || owner.TenantID != "tenant-b" {
+		t.Fatalf("internal lookup control: %v, %v", owner, err)
+	}
+	tenantObjectUnchanged(t, s)
+	// The public Get wrapper is the tenant boundary around GetByWorkerID.
+	got, err := s.workerCredentialStore.Get(ctx, "tenant-a", id)
+	if err != nil || got != nil {
+		t.Errorf("tenant-qualified lookup: %v, %v", got, err)
+	}
+	checkTenantObjectRead(t, s.handleListWorkerCredentials, "/api/v1/workers/credentials", id, id)
+}
+
+func TestTenantIsolationGatewayDelegationObject(t *testing.T) {
+	for _, revoked := range []bool{false, true} {
+		t.Run(fmt.Sprintf("revoked=%t", revoked), func(t *testing.T) {
+			s, _, _ := newTestGateway(t)
+			s.auth = newBasicAuthForTest(t, nil)
+			ctx := context.Background()
+			const id = "private-delegation-b"
+			view := delegation.DelegationView{JTI: id, Tenant: "tenant-b", Subject: "private-agent-b",
+				Audience: "private-target-b", IssuedAt: time.Now().UTC(), ExpiresAt: time.Now().Add(time.Hour), Revoked: revoked}
+			if err := s.delegationListStore().RecordIssuedToken(ctx, view); err != nil {
+				t.Fatal(err)
+			}
+			if revoked {
+				if err := s.jobStore.Client().Set(ctx, "delegation:revoked:"+id, "1", time.Hour).Err(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			tenantObjectUnchanged(t, s)
+			checkTenantObjectRead(t, s.handleListDelegations, "/api/v1/delegations?status=all", id, id)
+			// Revoke is the gateway's only id-addressed lookup of the token record.
+			r := tenantObjectRequest(http.MethodPost, "/api/v1/delegations/revoke", "tenant-a", id)
+			r.Body = io.NopCloser(strings.NewReader(fmt.Sprintf(`{"jti":%q}`, id)))
+			rr := httptest.NewRecorder()
+			s.handleRevokeDelegation(rr, r)
+			if rr.Code != http.StatusNotFound || strings.Contains(rr.Body.String(), id) {
+				t.Errorf("foreign delegation lookup was not refused: %d %s", rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestTenantIsolationGatewayMCPApprovalObject(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	store := NewMCPApprovalStore(s.jobStore.Client())
+	stored, err := store.EnqueueMCPApproval(context.Background(), &MCPApprovalRequest{
+		Tenant: "tenant-b", AgentID: "private-agent-b", ToolName: "private-tool-b", ArgsHash: "private-hash-b", Requester: "private-owner-b",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenantObjectUnchanged(t, s)
+	h := &mcpApprovalHandler{store: store}
+	checkTenantObjectRead(t, func(w http.ResponseWriter, r *http.Request) {
+		h.Get(w, r, stored.ID)
+	}, "/api/v1/approvals/mcp/"+stored.ID, stored.ID, "private-tool-b")
+}
+
+func TestTenantIsolationGatewayEvalRunPending(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.auth = newBasicAuthForTest(t, nil)
+	ctx := context.Background()
+	const id = "private-pending-run-b"
+	pending := evalRunPendingRecord{RunID: id, Tenant: "tenant-b", Status: "running",
+		DatasetID: "private-dataset-b", DatasetName: "private-pending-marker-b", DatasetVersion: 1}
+	if err := s.saveEvalRunPending(ctx, pending); err != nil {
+		t.Fatal(err)
+	}
+	key := "eval:run:pending:tenant-b:" + id
+	before, err := s.jobStore.Client().Get(ctx, key).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := bindEvalRunRoutes(t, s)
+	path := "/api/v1/evals/runs/" + id
+	owner := httptest.NewRecorder()
+	mux.ServeHTTP(owner, tenantObjectRequest(http.MethodGet, path, "tenant-b", id))
+	var got evalRunPendingRecord
+	if err := json.Unmarshal(owner.Body.Bytes(), &got); err != nil || owner.Code != http.StatusAccepted || got != pending {
+		t.Fatalf("owner did not read pending record: %d %s, %v", owner.Code, owner.Body.String(), err)
+	}
+	for _, method := range []string{http.MethodGet, http.MethodDelete} {
+		t.Run(method, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			mux.ServeHTTP(rr, tenantObjectRequest(method, path+"?force=true", "tenant-a", id))
+			if rr.Code != http.StatusNotFound || strings.Contains(rr.Body.String(), "private-") || strings.Contains(rr.Body.String(), "tenant-b") {
+				t.Errorf("foreign pending record was not refused: %d %s", rr.Code, rr.Body.String())
+			}
+			if after, err := s.jobStore.Client().Get(ctx, key).Result(); err != nil || after != before {
+				t.Errorf("foreign request changed pending record: %v", err)
+			}
+		})
+	}
+}
