@@ -146,3 +146,36 @@ func TestSign_RoundTripsThroughVerify(t *testing.T) {
 		t.Fatalf("token must have 3 dot-separated segments: %q", token)
 	}
 }
+
+func TestAuditPublisherServiceIdentities(t *testing.T) {
+	t.Parallel()
+	priv := testKey(t)
+	for _, tc := range []struct{ identity, want string }{
+		{IdentityMCP, "cordum-mcp"},
+		{IdentitySafetyKernel, "cordum-safety-kernel"},
+	} {
+		t.Run(tc.want, func(t *testing.T) {
+			if tc.identity != tc.want {
+				t.Fatalf("identity = %q, want %q", tc.identity, tc.want)
+			}
+			if !IsReservedIdentity(tc.identity) {
+				t.Fatalf("identity %q is not reserved", tc.identity)
+			}
+			token, err := MintService(priv, "primary", tc.identity, time.Now())
+			if err != nil {
+				t.Fatalf("mint publisher token: %v", err)
+			}
+			parts := strings.Split(token, ".")
+			if len(parts) != 3 || PeekTyp(token) != TypService {
+				t.Fatal("expected a cordum-service token")
+			}
+			var claims Claims
+			if err := json.Unmarshal(decodeSegment(t, parts[1]), &claims); err != nil {
+				t.Fatalf("decode claims: %v", err)
+			}
+			if claims.Subject != tc.want {
+				t.Fatalf("subject = %q, want %q", claims.Subject, tc.want)
+			}
+		})
+	}
+}
