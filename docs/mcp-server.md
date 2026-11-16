@@ -1150,10 +1150,9 @@ whether `mcp.policy_gate_enabled` is off or on:
   consumes that approval, and gets the same `-32098` instead of a `-32097`
   error.
 - With the gate on, a request that is missing its tenant, session or execution
-  metadata still fails closed with its own error: `-32603` for a plain call, or
-  `-32097` for one that carries an `_approval_ref`, both with
-  `missing_mcp_metadata`. The `-32098` answer applies only when that metadata
-  is present and the agent ID is blank.
+  metadata still fails closed with `-32097` and `error.data="missing_mcp_metadata"`,
+  for a plain call and for one that carries an `_approval_ref`. The `-32098`
+  answer applies only when that metadata is present and the agent ID is blank.
 
 When `/mcp` fronts a registered upstream (EDGE-101), the upstream catalog is
 not scope-filtered, and the bound ID only feeds the policy gate.
