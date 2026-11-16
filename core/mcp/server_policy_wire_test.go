@@ -3,10 +3,77 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/cordum/cordum/core/edge"
 )
+
+// kindFailingEmitter refuses events of kind fail, as an Edge store at its
+// event cap would, and records the rest.
+type kindFailingEmitter struct {
+	fail   edge.EventKind
+	events []*edge.AgentActionEvent
+}
+
+func (e *kindFailingEmitter) Emit(_ context.Context, evt *edge.AgentActionEvent) error {
+	if evt.Kind == e.fail {
+		return errors.New("edge execution exec_99 is full")
+	}
+	e.events = append(e.events, evt)
+	return nil
+}
+
+// TestMCPServer_InternalErrorsHideDetail: failures of the MCP machinery itself
+// (the Edge store refusing an event, the approval store failing a claim or a
+// mint) used to reach the JSON-RPC client verbatim, internal ids included.
+// The client now gets a fixed text; the detail goes to the log.
+func TestMCPServer_InternalErrorsHideDetail(t *testing.T) {
+	t.Parallel()
+	const internal = "edge execution mcp-direct-0f3c is full"
+	gated := func(emitter EventEmitter, tools *fakeToolService) *MCPServer {
+		return NewServer(nil, tools, nil, ServerConfig{}).WithPolicyGate("cordum.builtin", ToolCallDeps{
+			Pipeline:      &fakePolicyDispatcher{},
+			EventEmitter:  emitter,
+			ArtifactStore: &fakeArtifactStore{},
+		})
+	}
+	held := func(store *fakeApprovalClaimStore) *MCPServer {
+		return NewServer(nil, &fakeToolService{}, nil, ServerConfig{}).WithApprovalHold(ApprovalHoldDeps{
+			Store:          store,
+			PolicySnapshot: func(context.Context) string { return "snap" },
+			ServerName:     "cordum.builtin",
+		})
+	}
+	ran := &fakeToolService{result: &ToolCallResult{Content: []ContentItem{{Type: "text", Text: "ran"}}}}
+	servers := map[string]*MCPServer{
+		"pre event":      gated(&fakeEventEmitter{err: errors.New(internal)}, &fakeToolService{}),
+		"post event":     gated(&kindFailingEmitter{fail: edge.EventKindMCPToolPost}, ran),
+		"failed event":   gated(&kindFailingEmitter{fail: edge.EventKindMCPToolFailed}, &fakeToolService{err: errors.New("upstream refused")}),
+		"claim store":    held(&fakeApprovalClaimStore{err: errors.New(internal)}),
+		"claim conflict": held(&fakeApprovalClaimStore{err: fmt.Errorf("%w: %s", edge.ErrApprovalConflict, internal)}),
+	}
+	call := json.RawMessage(`{"name":"fs.write","arguments":{"path":"/tmp/x","_approval_ref":"edge_appr_1"}}`)
+	replies := map[string]*JSONRPCError{}
+	for name, srv := range servers {
+		_, replies[name] = srv.handleToolsCall(newAuthedToolCallCtx(), call)
+	}
+	mint := fmt.Errorf("%w: edge approval mint failed: %s", ErrApprovalStoreUnavailable, internal)
+	replies["approval mint"] = servers["pre event"].mapHandlerError(mint)
+	for name, reply := range replies {
+		raw, _ := json.Marshal(reply)
+		if reply == nil || strings.Contains(string(raw), "mcp-direct-0f3c") || strings.Contains(string(raw), "exec_99") {
+			t.Errorf("%s: JSON-RPC error %s, want one without the internal detail", name, raw)
+		}
+	}
+	for _, name := range []string{"pre event", "post event", "failed event"} {
+		if reply := replies[name]; reply == nil || reply.Code != jsonRPCInternalErrorCode {
+			t.Errorf("%s append failure = %+v, want %d internal error", name, reply, jsonRPCInternalErrorCode)
+		}
+	}
+}
 
 // TestMCPServer_MissingCallMetadataIsGatewayMisconfigured: a tools/call that
 // reaches the policy gate without CallMetadata is a gateway wiring defect. The

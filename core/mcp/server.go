@@ -66,6 +66,11 @@ var (
 	// gatewayApprovalGate.Check + ConsumeActionGateDecision (the
 	// fail-closed branches).
 	ErrApprovalStoreUnavailable = errors.New("approval_store_unavailable: approval store unavailable")
+	// ErrInternal marks a failure of the MCP machinery itself (the Edge
+	// event store or the artifact store) rather than of the tool. Its text
+	// can name internal ids such as Edge execution ids, so the JSON-RPC
+	// reply carries a generic message and the detail is logged.
+	ErrInternal = errors.New("mcp: internal error")
 	// ErrPolicySnapshotChanged means policy changed between the call's
 	// mcp.tool.pre stamp and the Edge mint, so nothing was minted. An old
 	// snapshot would fail the resumed call's current-snapshot claim; a new
@@ -809,6 +814,9 @@ func (s *MCPServer) mapHandlerError(err error) *JSONRPCError {
 		return s.rpcError(jsonRPCInternalErrorCode, "request timeout", nil)
 	case errors.Is(err, context.Canceled):
 		return s.rpcError(jsonRPCInternalErrorCode, "request canceled", nil)
+	case errors.Is(err, ErrInternal):
+		slog.Warn("mcp: internal error", "error", err)
+		return s.rpcError(jsonRPCInternalErrorCode, "internal error", nil)
 	case errors.Is(err, ErrInvalidParams):
 		return s.rpcError(jsonRPCInvalidParamsCode, "invalid params", err.Error())
 	case errors.Is(err, ErrMethodNotFound):

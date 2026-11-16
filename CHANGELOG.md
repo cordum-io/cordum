@@ -813,6 +813,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- MCP: JSON-RPC errors no longer expose execution ids. Errors caused by
+  Cordum's own stores carry a fixed message, such as `internal error`, and
+  the detail is in the gateway log (#492, task-e489e0c5).
+
 - MCP approvals: VS Code `type:"http"` (session-less) callers can claim
   their approval on retry, and their prompt-injection taint now carries
   across POSTs. Two callers never share either (#492, task-dcd2a4fb).

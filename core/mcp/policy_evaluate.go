@@ -709,7 +709,7 @@ func EvaluateToolCall(ctx context.Context, deps ToolCallDeps, params ToolCallPar
 		return EvaluateToolCallResult{}, errors.New("deps.EventEmitter is required")
 	}
 	if err := deps.EventEmitter.Emit(ctx, event); err != nil {
-		return EvaluateToolCallResult{}, fmt.Errorf("emit pre event: %w", err)
+		return EvaluateToolCallResult{}, fmt.Errorf("%w: emit pre event: %w", ErrInternal, err)
 	}
 	logToolCallDecision(ctx, event, descriptor, decision)
 
@@ -798,7 +798,7 @@ func materializeRedactedPayload(ctx context.Context, deps ToolCallDeps, payload 
 		ContentType: "application/json",
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("artifact store put: %w", err)
+		return nil, nil, fmt.Errorf("%w: artifact store put: %w", ErrInternal, err)
 	}
 	// Small payloads with high-severity findings keep their inline map
 	// (no value in truncating a 200-byte event); large payloads collapse
@@ -1037,7 +1037,7 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 		if herr != nil {
 			if blocked := newPostEvent(evalResult.PreEvent, deps.Clock, edge.EventKindMCPToolFailed, dec); markPolicyDenied(blocked, herr) {
 				if emitErr := deps.EventEmitter.Emit(ctx, blocked); emitErr != nil {
-					finalErr = fmt.Errorf("emit failed event: %w", emitErr)
+					finalErr = fmt.Errorf("%w: emit failed event: %w", ErrInternal, emitErr)
 					return nil, finalErr
 				}
 			}
@@ -1158,7 +1158,7 @@ func resumeConsumedApproval(ctx context.Context, deps ToolCallDeps, params ToolC
 		if blocked := newPostEvent(evalResult.PreEvent, deps.Clock, edge.EventKindMCPToolFailed, evalResult.Decision); markPolicyDenied(blocked, err) {
 			blocked.ApprovalRef = consumed.Ref
 			if emitErr := deps.EventEmitter.Emit(ctx, blocked); emitErr != nil {
-				return nil, fmt.Errorf("emit failed event: %w", emitErr)
+				return nil, fmt.Errorf("%w: emit failed event: %w", ErrInternal, emitErr)
 			}
 		}
 		return nil, fmt.Errorf("approval handoff: %w", err)
@@ -1194,14 +1194,14 @@ func invokeUpstreamWithEvents(ctx context.Context, deps ToolCallDeps, params Too
 		}
 		failed.ApprovalRef = approvalRef
 		if emitErr := deps.EventEmitter.Emit(ctx, failed); emitErr != nil {
-			return nil, fmt.Errorf("emit failed event: %w", emitErr)
+			return nil, fmt.Errorf("%w: emit failed event: %w", ErrInternal, emitErr)
 		}
 		return nil, upstreamErr
 	}
 	post := newPostEvent(evalResult.PreEvent, deps.Clock, edge.EventKindMCPToolPost, dec)
 	post.ApprovalRef = approvalRef
 	if err := deps.EventEmitter.Emit(ctx, post); err != nil {
-		return nil, fmt.Errorf("emit post event: %w", err)
+		return nil, fmt.Errorf("%w: emit post event: %w", ErrInternal, err)
 	}
 	// Best-effort content session-taint (DoD#1): scan the read RESULT for a
 	// prompt injection and, on a hit, persist a taint keyed by (tenant, session)
