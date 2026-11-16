@@ -309,6 +309,16 @@ func serverTransportCredentials(ctx context.Context) (grpc.ServerOption, error) 
 	serverCreds := grpc.Creds(insecure.NewCredentials())
 	cert := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_TLS_CERT"))
 	key := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_TLS_KEY"))
+	clientCA := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_TLS_CLIENT_CA"))
+	if clientCA != "" && (cert == "" || key == "") {
+		return nil, fmt.Errorf("SAFETY_KERNEL_TLS_CLIENT_CA requires SAFETY_KERNEL_TLS_CERT and SAFETY_KERNEL_TLS_KEY")
+	}
+	if env.IsProduction() && cert == "" {
+		return nil, fmt.Errorf("safety kernel tls required in production")
+	}
+	if env.IsProduction() && clientCA == "" {
+		return nil, fmt.Errorf("SAFETY_KERNEL_TLS_CLIENT_CA required in production")
+	}
 	if cert != "" || key != "" {
 		if cert == "" || key == "" {
 			return nil, fmt.Errorf("safety kernel tls requires both SAFETY_KERNEL_TLS_CERT and SAFETY_KERNEL_TLS_KEY")
@@ -317,18 +327,23 @@ func serverTransportCredentials(ctx context.Context) (grpc.ServerOption, error) 
 		if err != nil {
 			return nil, fmt.Errorf("safety kernel tls keypair: %w", err)
 		}
-		go reloader.WatchLoop(ctx, 30*time.Second)
 		tlsCfg := &tls.Config{
 			GetCertificate: reloader.GetCertificate,
-			MinVersion:     tls.VersionTLS12,
+			MinVersion:     env.TLSMinVersion(),
 		}
-		if env.TLSMinVersion() == tls.VersionTLS13 {
-			tlsCfg.MinVersion = tls.VersionTLS13
+		if clientCA != "" {
+			pem, err := os.ReadFile(clientCA)
+			if err != nil {
+				return nil, fmt.Errorf("read SAFETY_KERNEL_TLS_CLIENT_CA: %w", err)
+			}
+			tlsCfg.ClientCAs = x509.NewCertPool()
+			if !tlsCfg.ClientCAs.AppendCertsFromPEM(pem) {
+				return nil, fmt.Errorf("SAFETY_KERNEL_TLS_CLIENT_CA contains no certificates")
+			}
+			tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
 		}
+		go reloader.WatchLoop(ctx, 30*time.Second)
 		serverCreds = grpc.Creds(credentials.NewTLS(tlsCfg))
-	}
-	if env.IsProduction() && cert == "" {
-		return nil, fmt.Errorf("safety kernel tls required in production")
 	}
 	return serverCreds, nil
 }
