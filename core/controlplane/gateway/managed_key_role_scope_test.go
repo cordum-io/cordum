@@ -33,6 +33,7 @@ func TestManagedKeyRoleScope_Minting(t *testing.T) {
 		{"refuse resource wildcard", "write", "jobs:*", http.StatusForbidden},
 		{"normalized bare scope", " A D M I N ,write", "admin", http.StatusCreated},
 		{"one unheld scope", "write", "jobs:write,admin", http.StatusForbidden},
+		{"no scopes", "write", "", http.StatusForbidden},
 		{"static admin", "static", "admin", http.StatusCreated},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -42,6 +43,9 @@ func TestManagedKeyRoleScope_Minting(t *testing.T) {
 			}
 			before := managedRoleKeyCount(t, f)
 			body := `{"name":"role-scope","scopes":["` + strings.ReplaceAll(tc.requested, ",", `","`) + `"]}`
+			if tc.requested == "" {
+				body = `{"name":"role-scope","scopes":[]}`
+			}
 			rec := f.post(t, secret, "/api/v1/auth/keys", body)
 			want := before
 			if tc.code == http.StatusCreated {

@@ -20,9 +20,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `operator`, `read` or `viewer`) is held only by a key that has the same bare
   scope, and a `<resource>:<verb>` or `<resource>:*` scope by a key whose own
   scopes match it. Existing `admin`, `write` and `operator` keys must request
-  held scopes when creating keys. `/api/v1/audit/legal-hold` and
-  `/api/v1/audit/legal-holds` use the `legalhold` resource: `audit:write` and
-  `audit:*` keys no longer authorize those routes. Static keys are unchanged.
+  held scopes when creating keys. A managed key can no longer create a key
+  without scopes. `/api/v1/audit/legal-hold` and `/api/v1/audit/legal-holds`
+  use the `legalhold` resource: `audit:write` and `audit:*` keys no longer
+  authorize those routes. Static keys are unchanged.
 
 - Worker ids `cordum-mcp` and `cordum-safety-kernel` are reserved. The handshake
   and bound session tokens refuse these worker ids; rename any worker registered

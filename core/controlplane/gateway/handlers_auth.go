@@ -1324,6 +1324,12 @@ func (s *server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusForbidden, "key grant denied")
 			return
 		}
+		// Scope checks do not apply to a key without scopes, so a managed
+		// caller must name the held scopes it grants.
+		if len(req.Scopes) == 0 {
+			writeErrorJSON(w, http.StatusForbidden, "key scope grant denied")
+			return
+		}
 		for _, requested := range req.Scopes {
 			// MatchedScope's empty-grant compatibility rule is not authority
 			// to mint a scope: a nonempty matching grant is required here.
