@@ -11,6 +11,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   and bound session tokens refuse these worker ids; rename any worker registered
   under either id before upgrading.
 
+- The deployment manifests provision the audit-publisher keys for
+  `sys.audit.export` service tokens; create them before upgrading
+  (task-022f53b0). Helm: `audit.publisherKeys.safetyKernel.privateKeySecret`
+  (`name`, `key`) renders the safety kernel's `CORDUM_AUDIT_SIGNING_KEY` and is
+  required when `global.production=true`; `audit.publisherKeys.keyId` sets its
+  key id; `audit.publisherKeys.safetyKernel.publicKeySecret` and
+  `audit.publisherKeys.mcp.publicKeySecret` give the gateway its
+  `CORDUM_AUDIT_PUBLIC_KEY_` variables. With `audit.transport=nats`,
+  `workerTrust.sessionSigning` is required even when `workerTrust.mode=off`.
+  K8s production overlay: the safety kernel needs Secret `cordum-audit-signing`
+  (`signing-key`, optional `key-id`); Secrets `cordum-policy-signing`
+  (`signing-key`, `key-id`) for the scheduler and `cordum-audit-trust`
+  (`cordum-safety-kernel`, `cordum-mcp`) for the gateway are optional.
+  `docker-compose.release.yml` requires `CORDUM_AUDIT_SIGNING_KEY`.
+
 - Edge managed settings: managed-settings verification fails closed on
   unsupported conditional or background hook modifiers, and command hooks
   must have the correct type and tool-event coverage (#492, task-99f50a3d).
