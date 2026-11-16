@@ -940,6 +940,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - The `cordumctl init` scaffold starts, and serves its gateway over HTTPS
   (#492, task-75cb9729).
 
+- Long-lived SSE sessions rotate their Edge execution and session before the
+  Edge store caps, and claims keep working across rotation (#492,
+  task-6052fd78).
+
 - `CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION` now reaches the gateway's store
   (#492, task-52cd466b).
 
