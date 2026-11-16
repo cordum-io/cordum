@@ -2225,6 +2225,7 @@ func (s *server) persistSubmitDeniedJob(
 		},
 	}
 	if s.bus != nil {
+		s.attachServiceToken(packet)
 		if err := s.bus.Publish(capsdk.SubjectDLQ, packet); err != nil {
 			slog.Warn("publish dlq on submit deny failed", "job_id", jobID, "error", err)
 		}
