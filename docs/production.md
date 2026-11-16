@@ -241,10 +241,11 @@ kubectl wait -n cordum --for=delete pod --timeout=5m \
 ```
 
 **Redis**: follow [Restore From Backup](./redis-operations.md#restore-from-backup).
-Each backup file holds one primary's slots, so it goes back to the pod that serves
-those slots, and it is loaded onto that pod's volume while Redis is stopped. Do not
-copy an RDB into a running pod and restart it: with `appendonly yes`, Redis loads its
-AOF on startup and ignores `dump.rdb`, so nothing is restored.
+The backup is imported into the running cluster: a toolbox pod loads each file into
+a throwaway Redis, which sends every key to the primary that owns its slot under the
+current slot layout, and no Redis pod restarts. Do not copy an RDB into a running pod
+and restart it: with `appendonly yes`, Redis loads its AOF on startup and ignores
+`dump.rdb`, so nothing is restored.
 
 **NATS JetStream**: `nats stream restore` takes only the snapshot directory and
 refuses a stream that already exists, so remove each stream first. The NATS server

@@ -257,10 +257,12 @@ TTL controlled by `CORDUM_DLQ_ENTRY_TTL_DAYS` (default 30).
    kubectl apply -k deploy/k8s/production
    kubectl wait --for=condition=complete job/cordum-redis-cluster-init -n cordum --timeout=120s
    ```
-4. Stop the Cordum services and the backup CronJobs as
-   [production.md](./production.md#restore-procedures) describes, then restore
-   the latest backup with [Restore From Backup](#restore-from-backup). The
-   re-created nodes have new IDs, so map the files to pods by slot (step 2b).
+4. Stop the Cordum services, suspend the backup and retention CronJobs, and delete
+   their unfinished Jobs as [production.md](./production.md#restore-procedures)
+   describes, then restore the latest backup with
+   [Restore From Backup](#restore-from-backup). The restore imports every key into
+   the re-created cluster by slot, so the new node IDs and slot layout need no
+   extra step.
 5. Resume the services and the CronJobs as production.md describes
    (`kubectl apply -k deploy/k8s/production` brings the services back at their
    usual replica counts).
@@ -437,10 +439,13 @@ Retention: 7 days (`cordum-backup-retention` CronJob runs at 03:30 UTC daily).
 ### Restore From Backup
 
 A backup run writes one file per primary, `redis-<ts>-node<N>.rdb`, where `N` is the
-ordinal of the pod that was a primary at `<ts>`. A file holds only that primary's
-slots, so it has to go back to the pod that serves those slots now, and it has to be
-loaded onto the pod's volume while Redis is stopped: with `appendonly yes`, Redis
-loads its AOF on startup and ignores a `dump.rdb` copied into a running pod.
+ordinal of the pod that was a primary at `<ts>`. The restore imports the files into
+the running cluster: a throwaway Redis in a toolbox pod loads one file at a time, and
+`redis-cli --cluster import` sends each key to the primary that owns its slot now.
+That works for any slot layout, including a cluster resharded since the backup or
+re-created by [Runbook D](#runbook-d-full-cluster-loss), and no Redis pod stops or
+restarts. Do not copy a backup file onto a Redis pod's volume and restart the pod:
+with `appendonly yes`, Redis loads its AOF on startup and ignores the RDB file.
 
 Stop the Cordum services, suspend the backup and retention CronJobs, and delete
 active backup and retention Jobs with foreground deletion and wait for their pods to stop first
@@ -448,7 +453,10 @@ active backup and retention Jobs with foreground deletion and wait for their pod
 
 1. **Start a toolbox pod.** It has the client certificate, the password and the
    backups, and carries the Redis backup CronJob's label, which the production
-   NetworkPolicies admit to Redis's port 6379 and DNS:
+   NetworkPolicies admit to Redis's port 6379 and DNS. Its memory request and limit
+   let the throwaway Redis load the largest backup file, which can be as large as a
+   Redis pod's 1Gi limit, with room to spare; without them the namespace LimitRange
+   would cap the pod at 256Mi.
 
    ```bash
    kubectl apply -n cordum -f - <<'EOF'
@@ -464,6 +472,9 @@ active backup and retention Jobs with foreground deletion and wait for their pod
      - name: toolbox
        image: redis:7
        command: ["sleep", "infinity"]
+       resources:
+         requests: {cpu: 500m, memory: 1Gi}
+         limits: {cpu: "2", memory: 2Gi}
        env:
        - name: REDISCLI_AUTH
          valueFrom:
@@ -486,163 +497,113 @@ active backup and retention Jobs with foreground deletion and wait for their pod
    `r="redis-cli --tls --cacert ... --key ..."`, the client-certificate flags every
    Redis call needs. `REDISCLI_AUTH` supplies the password.
 
-2. **Map each file to the pod that will load it.**
-
-   a. *Same cluster as the backup (the data PVCs survived).* Stop replicas from
-      taking over while the pods stop, and print each pod's role. Without
-      `cluster-replica-no-failover`, a replica that outlives its primary during the
-      scale-down is promoted, its claim wins when the cluster restarts, and the
-      restored primary resyncs from it and loses the restored data. The setting
-      lasts until the pods restart.
-
-      ```bash
-      kubectl exec -n cordum cordum-redis-toolbox -- sh -c '
-        r="redis-cli --tls --cacert /etc/cordum/tls/client/ca.crt --cert /etc/cordum/tls/client/tls.crt --key /etc/cordum/tls/client/tls.key"
-        for i in 0 1 2 3 4 5; do
-          h=cordum-redis-$i.cordum-redis.cordum.svc
-          $r -h $h -p 6379 CONFIG SET cluster-replica-no-failover yes >/dev/null
-          printf "cordum-redis-%s " $i
-          $r -h $h -p 6379 CLUSTER NODES | grep myself | cut -d" " -f1,3,4,9
-        done'
-      ```
-
-      Restore `redis-<ts>-node<N>.rdb` onto pod `N` if it is a `master` now. If pod
-      `N` is a `slave`, a failover has swapped it with its primary since the backup:
-      restore the file onto the pod whose ID is in pod `N`'s third column.
-
-   b. *Re-created cluster (Runbook D).* The node IDs are new, so map by slot. This
-      loads each file into a throwaway server inside the toolbox and asks the
-      cluster for the slot of one of its keys; restore the file onto the primary
-      whose slot range (the last column of `CLUSTER NODES`) contains that slot.
-      Then freeze failover as in step 2a.
-
-      ```bash
-      kubectl exec -n cordum cordum-redis-toolbox -- env ts=$ts sh -c '
-        r="redis-cli --tls --cacert /etc/cordum/tls/client/ca.crt --cert /etc/cordum/tls/client/tls.crt --key /etc/cordum/tls/client/tls.key"
-        for f in /backup/redis-$ts-node*.rdb; do
-          redis-server --port 6390 --bind 127.0.0.1 --requirepass "$REDISCLI_AUTH" \
-            --dir /backup --dbfilename "$(basename "$f")" --appendonly no --save "" --daemonize yes
-          until redis-cli -p 6390 PING 2>/dev/null | grep -q PONG; do sleep 1; done
-          key=$(redis-cli -p 6390 RANDOMKEY)
-          if [ -n "$key" ]; then
-            echo "$f: slot $($r -h cordum-redis-0.cordum-redis.cordum.svc -p 6379 CLUSTER KEYSLOT "$key")"
-          else
-            echo "$f: no keys, nothing to restore"
-          fi
-          redis-cli -p 6390 SHUTDOWN NOSAVE
-        done'
-      ```
-
-3. **Stop Redis.**
+2. **Check the backup and the cluster, then empty the cluster.** This is the point
+   of no return: the script deletes every key in the cluster. It gets there only
+   after all six nodes answer, `--cluster check` passes, the backup has one file per
+   primary (three in all) and `redis-check-rdb` accepts every file. If a check fails,
+   it stops with the cluster unchanged. No other step deletes keys.
 
    ```bash
-   kubectl scale statefulset cordum-redis -n cordum --replicas=0
-   kubectl wait -n cordum --for=delete pod -l app=redis --timeout=10m
-   ```
-
-4. **Load each file onto its primary's volume**, one pod at a time. A helper pod
-   mounts the pod's PVC, the toolbox streams the file into it, and a Redis on a
-   local port loads the RDB and rewrites the AOF from it. The old AOF is kept as
-   `appendonlydir.before-restore` until you have checked the result. Replicas take
-   no files: they resync from their primary when the cluster starts.
-
-   ```bash
-   pod=0 file=redis-$ts-node0.rdb   # from step 2
-
-   kubectl apply -n cordum -f - <<EOF
-   apiVersion: v1
-   kind: Pod
-   metadata:
-     name: cordum-redis-restore
-   spec:
-     restartPolicy: Never
-     containers:
-     - name: restore
-       image: redis:7
-       command: ["sleep", "infinity"]
-       volumeMounts:
-       - {name: data, mountPath: /data}
-     volumes:
-     - name: data
-       persistentVolumeClaim: {claimName: data-cordum-redis-$pod}
-   EOF
-   kubectl wait -n cordum --for=condition=Ready pod/cordum-redis-restore --timeout=120s
-
-   kubectl exec -n cordum cordum-redis-toolbox -- cat "/backup/$file" |
-     kubectl exec -i -n cordum cordum-redis-restore -- sh -c 'cat > /data/dump.rdb'
-
-   kubectl exec -n cordum cordum-redis-restore -- sh -c '
-     set -e
-     cd /data
-     test -s dump.rdb
-     if [ -d appendonlydir ]; then mv appendonlydir appendonlydir.before-restore; fi
-     redis-server --port 6380 --bind 127.0.0.1 --dir /data --dbfilename dump.rdb \
-       --appendonly no --save "" --daemonize yes --logfile /tmp/restore.log
-     until redis-cli -p 6380 PING 2>/dev/null | grep -q PONG; do sleep 1; done
-     echo "keys loaded: $(redis-cli -p 6380 DBSIZE)"
-     redis-cli -p 6380 CONFIG SET appendonly yes
-     while redis-cli -p 6380 INFO persistence | grep -Eq "^aof_rewrite_(in_progress|scheduled):1"; do
-       sleep 1
-     done
-     redis-cli -p 6380 INFO persistence | grep aof_last_bgrewrite_status
-     redis-cli -p 6380 SHUTDOWN'
-
-   kubectl delete pod -n cordum cordum-redis-restore
-   ```
-
-   Expect `aof_last_bgrewrite_status:ok`. Note each `keys loaded` count, then repeat
-   for the next primary.
-
-5. **Start Redis and reintroduce the nodes.** The pods usually come back with new
-   IPs while each node's `nodes.conf` still lists the old ones, so the cluster stays
-   down until the nodes meet again. A replica that learns its primary's new address
-   from the other nodes keeps replicating from the old one, so then point every
-   replica at its primary again:
-
-   ```bash
-   kubectl scale statefulset cordum-redis -n cordum --replicas=6
-   kubectl rollout status statefulset/cordum-redis -n cordum --timeout=10m
-
-   kubectl exec -n cordum cordum-redis-toolbox -- sh -c '
+   kubectl exec -n cordum cordum-redis-toolbox -- env ts=$ts sh -c '
+     set -eu
      r="redis-cli --tls --cacert /etc/cordum/tls/client/ca.crt --cert /etc/cordum/tls/client/tls.crt --key /etc/cordum/tls/client/tls.key"
      for i in 0 1 2 3 4 5; do
-       ip=$(getent hosts cordum-redis-$i.cordum-redis.cordum.svc | cut -d" " -f1)
-       $r -h cordum-redis-0.cordum-redis.cordum.svc -p 6379 CLUSTER MEET $ip 6379
+       pong=$($r -h cordum-redis-$i.cordum-redis.cordum.svc -p 6379 PING)
+       if [ "$pong" != PONG ]; then echo "cordum-redis-$i: $pong"; exit 1; fi
      done
-     sleep 10
+     $r --cluster check cordum-redis-0.cordum-redis.cordum.svc:6379
+     set -- /backup/redis-$ts-node*.rdb
+     if [ $# -ne 3 ]; then echo "need 3 files, one per primary: $*"; exit 1; fi
+     for f in "$@"; do redis-check-rdb "$f"; done
+     $r --cluster call cordum-redis-0.cordum-redis.cordum.svc:6379 FLUSHALL --cluster-only-masters
      for i in 0 1 2 3 4 5; do
        h=cordum-redis-$i.cordum-redis.cordum.svc
-       set -- $($r -h $h -p 6379 CLUSTER NODES | grep myself)
-       case $3 in *slave*) $r -h $h -p 6379 CLUSTER REPLICATE $4 ;; esac
-     done'
+       repl=$($r -h $h -p 6379 INFO replication)
+       case $repl in *role:master*)
+         n=$($r -h $h -p 6379 DBSIZE)
+         if [ "$n" != 0 ]; then echo "cordum-redis-$i: $n keys left"; exit 1; fi ;;
+       esac
+     done
+     echo "cluster empty"'
    ```
 
-6. **Verify**, then clean up:
+3. **Import the backup.** For each file, the script starts a throwaway Redis on
+   `127.0.0.1:6390` that loads the file, and `redis-cli --cluster import` sends every
+   key to the primary that owns its slot, replacing a key that is already there.
+   `--tls-cluster yes` and the client certificate make the throwaway's MIGRATE
+   connections use TLS and present that certificate, as port 6379 requires. MIGRATE
+   keeps each key's remaining TTL. Keys with a TTL can expire while the restore runs,
+   so the script counts the keys without one: the primaries must end up holding
+   exactly as many as the files.
+
+   ```bash
+   kubectl exec -n cordum cordum-redis-toolbox -- env ts=$ts sh -c '
+     set -eu
+     r="redis-cli --tls --cacert /etc/cordum/tls/client/ca.crt --cert /etc/cordum/tls/client/tls.crt --key /etc/cordum/tls/client/tls.key"
+     t="env -u REDISCLI_AUTH redis-cli -p 6390"
+     persistent() { printf "%s\n" "$1" | awk -F "[=,]" "/^db0:/ {n += \$2 - \$4} END {print n + 0}"; }
+     want=0
+     for f in /backup/redis-$ts-node*.rdb; do
+       test -s "$f"
+       $t SHUTDOWN NOSAVE >/dev/null 2>&1 || true
+       redis-server --port 6390 --bind 127.0.0.1 --dir /backup --dbfilename "$(basename "$f")" \
+         --appendonly no --save "" --daemonize yes --logfile /tmp/throwaway.log --tls-cluster yes \
+         --tls-cert-file /etc/cordum/tls/client/tls.crt --tls-key-file /etc/cordum/tls/client/tls.key \
+         --tls-ca-cert-file /etc/cordum/tls/client/ca.crt
+       i=0
+       until [ "$($t PING 2>/dev/null)" = PONG ]; do
+         i=$((i + 1))
+         if [ $i -gt 600 ]; then cat /tmp/throwaway.log; exit 1; fi
+         sleep 1
+       done
+       info=$($t INFO keyspace)
+       want=$((want + $(persistent "$info")))
+       if ! $r --cluster import cordum-redis-0.cordum-redis.cordum.svc:6379 \
+           --cluster-from 127.0.0.1:6390 --cluster-copy --cluster-replace >/tmp/import.log 2>&1; then
+         tail -n 20 /tmp/import.log; exit 1
+       fi
+       echo "$f: imported"
+     done
+     $t SHUTDOWN NOSAVE >/dev/null 2>&1 || true
+     got=0
+     for i in 0 1 2 3 4 5; do
+       h=cordum-redis-$i.cordum-redis.cordum.svc
+       repl=$($r -h $h -p 6379 INFO replication)
+       case $repl in *role:master*)
+         info=$($r -h $h -p 6379 INFO keyspace)
+         got=$((got + $(persistent "$info"))) ;;
+       esac
+     done
+     echo "keys without a TTL: $want in the backup, $got in the cluster"
+     test "$got" -eq "$want"'
+   ```
+
+   If the script stops with an error, or a replica takes over from a primary while it
+   runs, run this step again as written. It replaces the keys it has already
+   imported and counts from zero again.
+
+4. **Verify:**
 
    ```bash
    kubectl exec -n cordum cordum-redis-toolbox -- sh -c '
+     set -eu
      r="redis-cli --tls --cacert /etc/cordum/tls/client/ca.crt --cert /etc/cordum/tls/client/tls.crt --key /etc/cordum/tls/client/tls.key"
-     $r -h cordum-redis-0.cordum-redis.cordum.svc -p 6379 CLUSTER INFO | grep -E "cluster_state|cluster_slots_ok"
      $r --cluster check cordum-redis-0.cordum-redis.cordum.svc:6379
      for i in 0 1 2 3 4 5; do
-       printf "cordum-redis-%s " $i
-       $r -h cordum-redis-$i.cordum-redis.cordum.svc -p 6379 INFO replication |
-         grep -E "^(role|master_link_status):" | tr -d "\r" | tr "\n" " "
-       echo
+       repl=$($r -h cordum-redis-$i.cordum-redis.cordum.svc -p 6379 INFO replication)
+       case $repl in
+         *role:master*) echo "cordum-redis-$i: primary" ;;
+         *master_link_status:up*) echo "cordum-redis-$i: replica, link up" ;;
+         *) echo "cordum-redis-$i: replica link not up"; exit 1 ;;
+       esac
      done'
-   for i in 0 1 2 3 4 5; do
-     kubectl logs -n cordum cordum-redis-$i -c redis | grep "I have keys for slot"
-   done
    ```
 
-   Expect `cluster_state:ok`, `[OK] All 16384 slots covered.`, no open slots, each
-   primary holding its file's `keys loaded` count, and `master_link_status:up` on
-   every replica. The log search must print nothing: that line means a file went to
-   a primary that does not own its slots. A replica may take over from its primary
-   once it has synced; that is harmless. When the data checks out, remove
-   `/data/appendonlydir.before-restore` from each restored pod
-   (`kubectl exec -n cordum cordum-redis-<N> -c redis -- rm -rf /data/appendonlydir.before-restore`)
-   and delete the toolbox pod.
+   Expect `[OK] All 16384 slots covered.`, no open slots, and every replica's link up.
+   A replica whose link is still down is catching up with its primary; run the check
+   again a minute later. Then delete the toolbox pod
+   (`kubectl delete pod -n cordum cordum-redis-toolbox`) and continue with
+   [production.md](./production.md#restore-procedures), which ends with **Resume**.
 
 ## Cross-References
 
