@@ -281,4 +281,3 @@ func TestTenantIsolationTelemetryExport(t *testing.T) {
 	leaks := append([]string{isoTenantA, isoTenantB, isoMarkerA, isoMarkerB, jobA, jobB}, append(hashesA, hashesB...)...)
 	assertNoLeak(t, "telemetry export", rec.Body.String(), leaks...)
 }
-

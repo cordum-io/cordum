@@ -58,7 +58,7 @@ var storeKeyManifest = []storeKeyEntry{
 	{"cfg:system:default", "core/configsvc", "global-id", "pending:PR1-03G"},
 	{"cfg:system:policy", "core/configsvc", "global-id", "pending:PR1-03G"},
 	{"cfg:system:policy_snapshots", "core/configsvc", "global-id", "pending:PR1-03G"},
-	{"cfg:system:policy_audit", "core/configsvc", "global-id", "pending:PR1-03E"},
+	{"cfg:system:policy_audit", "core/configsvc", "global-id", "open-finding:PR1-03E-F1"},
 	{"cfg:system:packs", "core/configsvc", "global-id", "pending:PR1-03G"},
 	{"cfg:system:pack_catalogs", "core/configsvc", "global-id", "pending:PR1-03G"},
 	// Config-document collections use the owner's literal field prefix or scope ID.
