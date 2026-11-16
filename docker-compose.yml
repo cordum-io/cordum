@@ -128,6 +128,8 @@ services:
       - SAFETY_POLICY_RELOAD_INTERVAL=${SAFETY_POLICY_RELOAD_INTERVAL:-60s}
       - CORDUM_POLICY_SIGNING_KEY_ID=${CORDUM_POLICY_SIGNING_KEY_ID:-dev-local}
       - CORDUM_POLICY_DEV_SIGNING_SEED=${CORDUM_POLICY_DEV_SIGNING_SEED:-cordum-local-policy-signing-v1}
+      # Dev audit-publisher seed: the kernel signs its sys.audit.export tokens with it (same value as the api-gateway).
+      - CORDUM_AUDIT_DEV_SIGNING_SEED=${CORDUM_AUDIT_DEV_SIGNING_SEED:-cordum-local-audit-publisher-v1}
       - CORDUM_LICENSE_TOKEN=${CORDUM_LICENSE_TOKEN:-}
       - CORDUM_LICENSE_PUBLIC_KEY=${CORDUM_LICENSE_PUBLIC_KEY:-}
     volumes:
@@ -199,6 +201,9 @@ services:
       - WORKER_SNAPSHOT_INTERVAL=5s
       - CORDUM_LICENSE_TOKEN=${CORDUM_LICENSE_TOKEN:-}
       - CORDUM_LICENSE_PUBLIC_KEY=${CORDUM_LICENSE_PUBLIC_KEY:-}
+      # Control-plane dev key: the scheduler signs its sys.audit.export tokens with it (same values as the api-gateway).
+      - CORDUM_POLICY_SIGNING_KEY_ID=${CORDUM_POLICY_SIGNING_KEY_ID:-dev-local}
+      - CORDUM_POLICY_DEV_SIGNING_SEED=${CORDUM_POLICY_DEV_SIGNING_SEED:-cordum-local-policy-signing-v1}
     volumes:
       - ./config/pools.yaml:/etc/cordum/pools.yaml:ro
       - ./config/timeouts.yaml:/etc/cordum/timeouts.yaml:ro
@@ -289,6 +294,8 @@ services:
       - CORDUM_LICENSE_PUBLIC_KEY=${CORDUM_LICENSE_PUBLIC_KEY:-}
       - CORDUM_POLICY_SIGNING_KEY_ID=${CORDUM_POLICY_SIGNING_KEY_ID:-dev-local}
       - CORDUM_POLICY_DEV_SIGNING_SEED=${CORDUM_POLICY_DEV_SIGNING_SEED:-cordum-local-policy-signing-v1}
+      # Dev audit-publisher seed: the gateway derives the safety kernel's and cordum-mcp's audit trust from it.
+      - CORDUM_AUDIT_DEV_SIGNING_SEED=${CORDUM_AUDIT_DEV_SIGNING_SEED:-cordum-local-audit-publisher-v1}
       - CORDUM_MCP_DESTRUCTIVE_TOOL_GLOBS=${CORDUM_MCP_DESTRUCTIVE_TOOL_GLOBS:-}
       - CORDUM_TELEMETRY_MODE=off
       # Unset by default — the audit chain engages unconditionally at gateway boot. Set this to
