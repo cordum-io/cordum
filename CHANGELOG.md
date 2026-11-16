@@ -292,6 +292,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- Edge: the session sweeper keeps sessions under legal hold. Before each
+  deletion it checks the tenant's audit legal hold, and it keeps the
+  expired sessions, executions and events of a tenant under an active hold
+  or whose hold check fails. If the gateway's legal hold store fails to
+  start, Edge session retention deletes nothing until the gateway restarts
+  (task-eab83dcc).
+
 - Gateway: a stored `mcp.enabled`, `mcp.transport` or `mcp.policy_gate_enabled`
   key now blocks its `CORDUM_MCP_*` env default even when the gateway cannot
   read the value (null, a number, an unknown string, or an `mcp` value that is
