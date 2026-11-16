@@ -813,6 +813,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- K8s: the production NATS backup CronJob failed on every run: natscli has no
+  `--tlscacert`. It passes `--tlsca` (#492, task-81fe0880).
+
+- K8s: the production NetworkPolicies blocked NATS and Redis peer traffic, the
+  backup jobs, the Redis init Job, and the gateway and scheduler calls to the
+  safety kernel. The jobs are labelled, and each of those flows has its own
+  rule (#492, task-81fe0880).
+
 - MCP approvals: VS Code `type:"http"` (session-less) callers can claim
   their approval on retry, and their prompt-injection taint now carries
   across POSTs. Two callers never share either (#492, task-dcd2a4fb).
