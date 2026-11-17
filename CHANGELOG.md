@@ -52,6 +52,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `jobs:write` keys, can no longer read job status over gRPC. Managed keys
   without scopes, static keys and JWT callers are unchanged.
 
+- The gateway gRPC API no longer accepts a user session token in `x-api-key`
+  or `api-key` metadata and refuses it as an invalid API key. gRPC clients
+  present an API key there, or a gateway JWT or OIDC token as
+  `authorization: Bearer <token>`. Sessions on the HTTP API are unchanged.
+
 - With `AUDIT_TRANSPORT=nats`, the gateway's audit consumer chains and exports
   only `sys.audit.export` packets that carry a valid audit-publisher service
   token: `api-gateway` or `cordum-scheduler` signed by a key in
