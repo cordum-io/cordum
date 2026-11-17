@@ -3,19 +3,14 @@ syntax = "proto3";
 package cordum.v1;
 option go_package = "github.com/cordum/cordum/core/protocol/pb/v1";
 
-// Execution grant schema v1, following ADR-011
-// (docs/adr/011-execution-grant-format.md, "Grant fields").
-// This file only declares the wire types. Canonical bytes, decoding,
-// validation, signing and verification are not implemented here.
-//
-// Schema profile (ADR-011 "Canonical bytes" item 1): no imports, maps,
-// float/double, groups or proto3 optional; every oneof member is numbered
-// above every ordinary field of its message; enum value 0 is
-// <PREFIX>_UNSPECIFIED. Helper types sit one level under ExecutionGrant.
+// Execution grant schema v1 types, following docs/adr/011-execution-grant-format.md.
+// Canonical bytes, decoding, validation, signing and verification are not
+// implemented here. Schema profile (ADR "Canonical bytes" item 1): no imports,
+// maps, float/double, groups or proto3 optional; oneof members are numbered above
+// every ordinary field of their message; enum value 0 is <PREFIX>_UNSPECIFIED.
 
-// SignedExecutionGrant is the envelope (ADR-011 "Canonical bytes" item 7):
-// grant holds the serialized ExecutionGrant bytes, and signature is the
-// detached Ed25519 signature over the domain-tagged grant bytes.
+// SignedExecutionGrant is the envelope (ADR-011 "Canonical bytes" item 7): grant
+// holds the ExecutionGrant bytes, signature the detached Ed25519 signature.
 message SignedExecutionGrant {
   bytes grant = 1;
   string key_id = 2;
@@ -30,28 +25,21 @@ message ExecutionGrant {
   uint32 schema_version = 1;
   string issuer_id = 2;
   string issuer_key_id = 3;
-
-  // G1: tenant, human principal, agent, session and delegation.
+  // G1: tenant, human principal, agent, session and delegation (root to leaf).
   string tenant_id = 4;
   string principal_id = 5;
   string agent_id = 6;
   string session_id = 7;
-  // Root-to-leaf order.
   repeated DelegationLink delegation_chain = 8;
-
   // G2-G4: the approved action, its target, inputs and runtime.
   Action action = 9;
-
   // G5: effective policy digest (32 bytes) and authority epoch.
   bytes policy_digest = 10;
   uint64 authority_epoch = 11;
-
   // G6: approval and action commitment.
   Approval approval = 12;
-
   // G7: required enforcement profile.
   EnforcementProfile enforcement_profile = 13;
-
   // G8: grant id (16 bytes), execution identity, validity window, uses.
   bytes grant_id = 14;
   string execution_id = 15;
@@ -59,7 +47,6 @@ message ExecutionGrant {
   int64 not_before_unix = 17;
   int64 expires_at_unix = 18;
   uint32 max_uses = 19;
-
   // G9: intended executor or broker.
   Executor executor = 20;
 
@@ -76,8 +63,7 @@ message ExecutionGrant {
     repeated InputDigest inputs = 4;
     RuntimeIdentity runtime = 5;
 
-    // Numbered above every ordinary field: protobuf-go marshals oneof
-    // members after ordinary fields.
+    // Above every ordinary field: protobuf-go marshals oneof members last.
     oneof parameters {
       KubernetesManifestApply kubernetes_manifest_apply = 6;
     }
