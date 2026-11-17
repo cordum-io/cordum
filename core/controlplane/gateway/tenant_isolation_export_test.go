@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	edgecore "github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -280,4 +282,90 @@ func TestTenantIsolationTelemetryExport(t *testing.T) {
 	}
 	leaks := append([]string{isoTenantA, isoTenantB, isoMarkerA, isoMarkerB, jobA, jobB}, append(hashesA, hashesB...)...)
 	assertNoLeak(t, "telemetry export", rec.Body.String(), leaks...)
+}
+
+// TestTenantIsolationPolicyAuditList: GET /api/v1/policy/audit reads the
+// install-wide cfg:system:policy_audit log, which also records per-job
+// approval decisions. Tenant A may see its own job entries or be refused,
+// but never reads tenant B's.
+func TestTenantIsolationPolicyAuditList(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.auth = testAuthProvider{}
+	ctx := context.Background()
+	jobA, jobB := seedIsoJob(t, s, isoTenantA, isoMarkerA), seedIsoJob(t, s, isoTenantB, isoMarkerB)
+	s.appendApprovalDecisionAudit(ctx, "approve", jobA, "job."+isoMarkerA, "admin-iso-a", "admin", "", "", isoMarkerA+" reason", "", "", "", "")
+	s.appendApprovalDecisionAudit(ctx, "approve", jobB, "job."+isoMarkerB, "admin-iso-b", "admin", "", "", isoMarkerB+" reason", "", "", "", "")
+
+	rec := httptest.NewRecorder()
+	s.handleListPolicyAudit(rec, withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/policy/audit", nil), isoAdminA))
+	switch rec.Code {
+	case http.StatusOK:
+		if !strings.Contains(rec.Body.String(), jobA) {
+			t.Fatalf("A policy audit list omits A's own job entry: %s", rec.Body.String())
+		}
+	case http.StatusForbidden, http.StatusNotFound:
+	default:
+		t.Fatalf("A policy audit list = %d: %s", rec.Code, rec.Body.String())
+	}
+	assertNoLeak(t, "A policy audit list", rec.Body.String(), jobB, isoMarkerB, "admin-iso-b")
+}
+
+// TestTenantIsolationPolicyAuditListScope: a job entry records the job's
+// tenant, a submit entry the submit's tenant, and another entry its
+// tenant-scoped writer's tenant. A tenant-scoped admin lists exactly its own
+// tenant's entries and total counts only those; an entry with no tenant is
+// listed only to a cross-tenant admin.
+func TestTenantIsolationPolicyAuditListScope(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.auth = testAuthProvider{}
+	ctx := context.Background()
+	adminB := &auth.AuthContext{Tenant: isoTenantB, Role: "admin", PrincipalID: "admin-iso-b"}
+	crossAdmin := &auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "root-iso", AllowCrossTenant: true}
+	asA, asCross := context.WithValue(ctx, auth.ContextKey{}, isoAdminA), context.WithValue(ctx, auth.ContextKey{}, crossAdmin)
+	jobA, jobB := seedIsoJob(t, s, isoTenantA, isoMarkerA), seedIsoJob(t, s, isoTenantB, isoMarkerB)
+	deniedB, bundleA := "job-"+isoMarkerB+"-denied", "bundle-"+isoMarkerA
+	s.appendApprovalDecisionAudit(ctx, "approve", jobA, "job."+isoMarkerA, "admin-iso-a", "admin", "", "", isoMarkerA+" reason", "", "", "", "")
+	s.appendApprovalDecisionAudit(asCross, "approve", jobB, "job."+isoMarkerB, "root-iso", "admin", "", "", isoMarkerB+" reason", "", "", "", "")
+	s.appendSubmitSafetyDecisionAudit(ctx, "submit_denied", deniedB, isoTenantB, "job."+isoMarkerB, "admin-iso-b", "admin", "", "",
+		isoMarkerB+" denied", submitPolicyDecision{Denied: true}, nil, "", "", "")
+	s.appendAuditEntryNamed(asA, "publish", "bundle", bundleA, "", "admin-iso-a", "admin", isoMarkerA+" publish")
+	s.appendAuditEntryNamed(asCross, "publish", "bundle", "bundle-cross-iso", "", "root-iso", "admin", "cross publish")
+	legacy := normalizePolicyAuditEntry(policybundles.PolicyAuditEntry{Action: "approve", ResourceType: "job", ResourceID: "job-legacy-iso"})
+	if err := s.configSvc.SetWithRetry(ctx, configsvc.Scope(policybundles.PolicyAuditScope), policybundles.PolicyAuditID, 1,
+		func(doc *configsvc.Document) error { return prependPolicyAuditEntry(doc, legacy) }); err != nil {
+		t.Fatalf("seed tenantless entry: %v", err)
+	}
+
+	hidden := []string{"bundle-cross-iso", "job-legacy-iso"}
+	cases := []struct {
+		name   string
+		caller *auth.AuthContext
+		want   []string
+		leaks  []string
+	}{
+		{"A", isoAdminA, []string{jobA, bundleA}, append([]string{jobB, deniedB, isoMarkerB, isoTenantB, "admin-iso-b"}, hidden...)},
+		{"B", adminB, []string{jobB, deniedB}, append([]string{jobA, bundleA, isoMarkerA, isoTenantA, "admin-iso-a"}, hidden...)},
+		{"cross-tenant", crossAdmin, append([]string{jobA, jobB, deniedB, bundleA}, hidden...), nil},
+	}
+	for _, tc := range cases {
+		rec := httptest.NewRecorder()
+		s.handleListPolicyAudit(rec, withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/policy/audit", nil), tc.caller))
+		var resp struct {
+			Items []policybundles.PolicyAuditEntry `json:"items"`
+			Total int64                            `json:"total"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); rec.Code != http.StatusOK || err != nil {
+			t.Fatalf("%s policy audit list = %d (decode %v): %s", tc.name, rec.Code, err, rec.Body.String())
+		}
+		got := make([]string, 0, len(resp.Items))
+		for _, item := range resp.Items {
+			got = append(got, item.ResourceID)
+		}
+		sort.Strings(got)
+		sort.Strings(tc.want)
+		if !reflect.DeepEqual(got, tc.want) || resp.Total != int64(len(tc.want)) {
+			t.Fatalf("%s policy audit list = %v (total %d), want %v", tc.name, got, resp.Total, tc.want)
+		}
+		assertNoLeak(t, tc.name+" policy audit list", rec.Body.String(), tc.leaks...)
+	}
 }

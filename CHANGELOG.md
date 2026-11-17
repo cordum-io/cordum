@@ -7,6 +7,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Config: documents at team, workflow and step scope are stored per tenant,
+  under `cfg:{scope}:{tenant}/{id}` with the tenant path-escaped.
+  `GET /api/v1/config` and `PUT`/`POST /api/v1/config` at those scopes use
+  the caller's tenant; a caller with cross-tenant access selects one with
+  `X-Tenant-ID`. Effective config merges only the documents of the tenant it
+  is computed for. Documents stored at `cfg:{scope}:{id}` are not read; write
+  them again from their tenant (task-80a785cd).
+
+- Config: team, workflow and step documents record their tenant. A document
+  stored at `cfg:{scope}:{tenant}/{id}` without that tenant recorded is not
+  read and not merged into effective config, and `PUT`/`POST /api/v1/config`
+  answer `403` instead of replacing it. Delete such a key in Redis, then
+  write the document again from its tenant (task-42142ce4).
+
 - Edge managed settings: managed-settings verification fails closed on
   unsupported conditional or background hook modifiers, and command hooks
   must have the correct type and tool-event coverage (#492, task-99f50a3d).
@@ -844,6 +858,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - typedoc, typedoc-plugin-coverage and typedoc-plugin-markdown are removed from the install with pnpm `-` overrides. typedoc 0.28 calls `Minimatch#matchOne`, which 11.x removed. orval 8.31.0 loads typedoc only for its `docs` output, which the dashboard does not configure. Until typedoc supports minimatch 11, enabling that output fails at import. orval stays at 8.31.0.
 
 ### Fixed
+
+- Config: `PUT` and `POST /api/v1/config` accept only the scopes `system`,
+  `org`, `team`, `workflow` and `step`, the same set `GET /api/v1/config`
+  accepts. Any other `scope` string gets 400 `CONFIG_REQUEST_INVALID`
+  ("invalid scope"), and the config store is neither read nor written. The
+  gateway reads its MCP argument-redaction rules from scope `gateway`; that
+  scope is not written through this endpoint (task-13eb1d1e).
+- Jobs: a submit whose idempotency key matches a legacy unscoped key
+  (`job:idempotency:{key}`) reuses that key's job only when the job's stored
+  tenant equals the caller's tenant. When the job's tenant cannot be read,
+  for example after its metadata expires (`JOB_META_TTL`, 7 days by default),
+  the submit is handled as a new job under the caller's tenant-scoped key
+  (task-e9209d0e).
+
+- Policy audit: each entry records a tenant: the job's tenant for job
+  entries, otherwise the tenant of a caller without cross-tenant access.
+  For callers without cross-tenant access, `GET /api/v1/policy/audit` lists
+  only entries recorded for their own tenant. Entries recorded before this
+  release carry no tenant and are listed only to callers with cross-tenant
+  access (task-1dbaae72).
 
 - K8s restore runbooks: NATS restores run from a nats-box pod and remove each
   stream first, and `redis-operations.md` has a Redis "Restore From Backup"
