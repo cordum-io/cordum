@@ -820,6 +820,10 @@ type EdgeDecisionResponse struct {
 	// WaitAfterSeconds optionally tells the operator how long to wait
 	// before retrying after REQUIRE_APPROVAL/THROTTLE.
 	WaitAfterSeconds int
+	// Constraints is the evaluate response's constraints map, keyed by the
+	// PolicyConstraints JSON names. An ALLOW or CONSTRAIN that carries a kind
+	// the hook cannot apply maps to deny.
+	Constraints map[string]any
 }
 
 // errUnknownEdgeDecision is returned by MapEdgeDecisionToHookOutput when
@@ -856,6 +860,10 @@ func MapEdgeDecisionToHookOutput(eventName string, resp EdgeDecisionResponse) (C
 	decision := normalizeEdgeDecision(resp.Decision)
 	if decision == "" {
 		return ClaudeHookOutput{}, errUnknownEdgeDecision
+	}
+	if kinds := edge.UnenforceableConstraintKinds(resp.Constraints); len(kinds) > 0 && (decision == edgeDecisionAllow || decision == edgeDecisionConstrain) {
+		decision = edgeDecisionDeny
+		resp.Reason = redactHookBoundaryString(edge.UnenforceableConstraintReason(kinds))
 	}
 	switch eventName {
 	case "PreToolUse":
