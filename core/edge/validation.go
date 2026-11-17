@@ -28,6 +28,9 @@ func (s EdgeSession) Validate() error {
 	if err := validateSessionStatus(s.Status); err != nil {
 		return err
 	}
+	if err := validateAssuranceState(s.AssuranceState); err != nil {
+		return err
+	}
 	if err := validateRiskSummary(s.RiskSummary); err != nil {
 		return err
 	}
@@ -351,6 +354,17 @@ func validateSessionStatus(value SessionStatus) error {
 		return nil
 	default:
 		return fmt.Errorf("status has unsafe session value %q", value)
+	}
+}
+
+// validateAssuranceState accepts an unset value, since the field is optional.
+func validateAssuranceState(value AssuranceState) error {
+	switch value {
+	case "", AssuranceStateCompatibility, AssuranceStateHookMediated, AssuranceStateExecutorEnforced,
+		AssuranceStateUnsupported, AssuranceStateStale:
+		return nil
+	default:
+		return fmt.Errorf("assurance_state has unsafe value %q", value)
 	}
 }
 
