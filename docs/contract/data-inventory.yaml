@@ -97,11 +97,11 @@ control_plane:
      deletion: {paths: [{path: core/workflow/store_redis.go, symbol: RedisStore.UpdateAuditHash}, {path: core/workflow/store_redis.go, symbol: enqueuePendingAuditDeletes}]},
      legal_hold: {applies: false, reason: Pending-hash TTL and consumption do not consult legal holds}}
   - {id: DI-C10, class: artifacts,
-     storage: {kind: redis_key, location: Artifact bytes and metadata, redis_keys: [{pattern: 'art:{id}', path: core/infra/artifacts/redis_store.go}, {pattern: 'art:meta:{id}', path: core/infra/artifacts/redis_store.go}], writers: [{path: core/infra/artifacts/redis_store.go, symbol: RedisStore.Put}]},
+     storage: {kind: redis_key, location: Artifact bytes and metadata, redis_keys: [{pattern: 'art:{id}', path: core/infra/artifacts/redis_store.go}, {pattern: 'art:meta:{id}', path: core/infra/artifacts/redis_store.go}, {pattern: 'cas:{tenant}:{sha256}', path: core/infra/artifacts/content_store.go}], writers: [{path: core/infra/artifacts/redis_store.go, symbol: RedisStore.Put}, {path: core/infra/artifacts/content_store.go, symbol: RedisStore.PutContent}, {path: core/infra/artifacts/content_store.go, symbol: RedisStore.RetainContent}]},
      content: {description: Uploaded artifact content and metadata; content can include personal data or secrets, personal_data: possible},
      retention: {settings: [{name: ARTIFACT_TTL_SHORT, path: core/infra/artifacts/redis_store.go}, {name: ARTIFACT_TTL_STANDARD, path: core/infra/artifacts/redis_store.go}, {name: ARTIFACT_TTL_AUDIT, path: core/infra/artifacts/redis_store.go}], default: 'short 24h; standard 7d; audit 30d'},
-     deletion: {paths: [{path: core/infra/artifacts/redis_store.go, symbol: RedisStore.Put}, {path: core/infra/artifacts/redis_store.go, symbol: RedisStore.ttlFor}]},
-     legal_hold: {applies: false, reason: Put assigns Redis expiry without consulting legal holds}}
+     deletion: {paths: [{path: core/infra/artifacts/redis_store.go, symbol: RedisStore.Put}, {path: core/infra/artifacts/redis_store.go, symbol: RedisStore.ttlFor}, {path: core/infra/artifacts/content_store.go, symbol: RedisStore.PutContent}, {path: core/infra/artifacts/content_store.go, symbol: RedisStore.RetainContent}]},
+     legal_hold: {applies: false, reason: Put assigns expiry and PutContent and RetainContent extend expiry without consulting legal holds}}
   - {id: DI-C11, class: artifacts,
      storage: {kind: redis_key, location: Job context and result payloads, redis_keys: [{pattern: 'ctx:{job}', path: core/infra/store/redis_store.go}, {pattern: 'res:{job}', path: core/infra/store/redis_store.go}], writers: [{path: core/infra/store/redis_store.go, symbol: RedisStore.PutContext}, {path: core/infra/store/redis_store.go, symbol: RedisStore.PutResult}]},
      content: {description: Job inputs and worker outputs including user-supplied content, personal_data: possible},
