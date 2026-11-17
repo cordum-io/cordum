@@ -286,6 +286,14 @@ func (s *SagaManager) sendBrokenCompensationToDLQ(workflowID string, raw []byte,
 			},
 		},
 	}
+	if s.sessionMiddleware != nil {
+		if token, err := s.sessionMiddleware.MintServiceToken(defaultSenderID); err != nil {
+			slog.Error("saga service-token mint failed; peer rejects under enforce", "error", err)
+		} else if token != "" {
+			packet.SenderId = defaultSenderID
+			packet.AuthToken = token
+		}
+	}
 	if err := s.bus.Publish(capsdk.SubjectDLQ, packet); err != nil {
 		slog.Error("failed to send broken compensation to DLQ",
 			"workflow_id", workflowID, "error", err)
@@ -316,6 +324,14 @@ func (s *SagaManager) sendCompensationSafetyFailureToDLQ(workflowID string, req 
 				Identity:     req.GetIdentity(),
 			},
 		},
+	}
+	if s.sessionMiddleware != nil {
+		if token, err := s.sessionMiddleware.MintServiceToken(defaultSenderID); err != nil {
+			slog.Error("saga service-token mint failed; peer rejects under enforce", "error", err)
+		} else if token != "" {
+			packet.SenderId = defaultSenderID
+			packet.AuthToken = token
+		}
 	}
 	if err := s.bus.Publish(capsdk.SubjectDLQ, packet); err != nil {
 		slog.Error("failed to send safety-unavailable compensation to DLQ",
