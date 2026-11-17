@@ -81,7 +81,7 @@ refused() {
 }
 verify_default() { # FILE SIG PUB: policy verify with PUB as the only trusted key
   local out
-  out="$(SAFETY_POLICY_PUBLIC_KEY="$3" "${CTL}" policy verify --in "$1" --sig "$2")" || return 1
+  out="$(MSYS2_ENV_CONV_EXCL=SAFETY_POLICY_PUBLIC_KEY SAFETY_POLICY_PUBLIC_KEY="$3" "${CTL}" policy verify --in "$1" --sig "$2")" || return 1
   [[ "${out}" == *"verified against key_id=default "* ]]
 }
 
@@ -104,7 +104,8 @@ if grep -Fq -- "${priv}" "${WORK}/a.log"; then fail "a: quickstart output contai
 ok "(a) fresh run persists a signature that policy verify accepts under key_id=default; no private key in output; TMPDIR empty"
 
 printf 'scratch policy\n' > "${WORK}/scratch.yaml"
-CORDUM_POLICY_SIGNING_KEY="${priv}" "${CTL}" policy sign --in "${WORK}/scratch.yaml" --out "${WORK}/scratch.sig" 2> /dev/null ||
+MSYS2_ENV_CONV_EXCL=CORDUM_POLICY_SIGNING_KEY CORDUM_POLICY_SIGNING_KEY="${priv}" "${CTL}" policy sign \
+  --in "${WORK}/scratch.yaml" --out "${WORK}/scratch.sig" 2> /dev/null ||
   fail "b: policy sign with the persisted private key failed"
 verify_default "${WORK}/scratch.yaml" "${WORK}/scratch.sig" "${pub}" || fail "b: content signed with the private key did not verify"
 ok "(b) the persisted private key signs under the key id the persisted public key is trusted under"
