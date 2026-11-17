@@ -16,6 +16,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Delegation tokens: child issuance requires the parent's tenant and caps expiry
+  at the parent's expiry. Chain-link expiry checks use the configured clock leeway.
+  Upgrade note: a token with an expired chain link beyond that leeway is no longer
+  accepted (PR1-25).
+
 - Production recovery now requires a completed backup checksum manifest and
   its digest from a trusted external catalog before deleting data. Redis
   recovery also requires complete shard topology evidence and stable primary
@@ -208,6 +213,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   instead of TanStack, without changing table behavior (task-fc8b600a).
 
 ### Added
+
+- Decision records: for a job dispatched under a delegation token, the Policy
+  Decision Log record and the job's stored safety decision carry
+  `delegation_issuer_chain`, the issuer agent ids of the job's delegation lineage,
+  root issuer first. Jobs without delegation produce the same records as before
+  (task-be2a9f2e).
 
 - Gateway: MCP env defaults (from PR #591). When the stored system config has no
   `mcp.enabled`, `mcp.transport` or `mcp.policy_gate_enabled` key, the gateway reads
@@ -888,6 +899,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Delegation issuance: a parent-token tenant mismatch returns HTTP 400 with
+  `DELEGATION_REQUEST_INVALID` and `tenant_mismatch` (task-9b21101b).
+
 - The Python SDK's mypy target is now 3.10, the SDK's supported minimum. mypy
   no longer prints its "Python 3.9 is not supported" configuration warning
   (task-ec93b7c3).
@@ -1070,6 +1084,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 - MCP approvals: a re-ask returns the caller's pending approval instead of
   minting another (#492, task-2a9d0a7c).
+
+- MCP approvals: a repeat of a gated call whose legacy approval is still
+  pending, such as a redelivered or concurrent duplicate, gets the caller's
+  pending approval back instead of queuing a second one, as re-asks already
+  did under the policy gate. `cordum_create_workflow` called with an
+  `idempotency_key` and no `id` writes one workflow per key, so a repeated
+  delivery returns the same `workflow_id` instead of creating a second
+  workflow (task-1bf8c325).
 
 - MCP server: a policy-gate call without metadata gets `-32097`, as
   documented (#492, task-11710a81).
@@ -1271,6 +1293,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - The Redis restore in `docs/redis-operations.md` imports each backup file into the running cluster, so every key reaches the primary that owns its slot under any slot layout, including a cluster re-created after a full loss, and no Redis pod restarts. Before it empties the cluster it checks every node and backup file, and afterwards it compares the count of keys without a TTL with the backup's. The toolbox pod now sets memory requests and limits (task-4dd14329).
 - The workflow credential scanner reads a `set` or `return` that follows a condition's reserved word (`if`, `elif`, `while`, `until`, `!`), `builtin` or `command` as the command bash runs in that shell. A sourced function such as `relax() { set +e; if return 0; then :; fi; set -e; }` now counts as returning with errexit off, `builtin set -x`, `command set -x` and `if set -x; then :; fi` turn tracing on, `if set -e; then :; fi` turns errexit back on, and a mask-failure block that returns in a condition before it clears the credential no longer counts as clearing it (task-2c63dd9c, task-f33bf0c3).
 - `docs/edge/observability.md` cites every call site of `cordum_edge_fail_closed_total` by file and line: agentd and the Claude hook runner when they fail closed, and the Edge retention sweeper, which counts a cleanup page that the legal-hold guard keeps with `mode="unknown"` and `reason_code` `retention_hold_unverifiable` or `retention_hold_changed` (task-49549242).
+- On a Windows host the workflow credential scanner reports a drive-letter operand (`source C:/x`, `bash C:/x`, `bash --rcfile C:/x`) as a missing source, as it does on Linux, instead of failing with a file-not-found error. (task-a160f44a)
 
 ### Added
 
