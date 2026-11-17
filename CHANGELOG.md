@@ -18,6 +18,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Without advanced RBAC, a managed API key needs the `admin` scope to submit
+  `delegation_audience_agent_id` for an agent other than its own. Keys holding
+  only job-write scopes must use their own agent as the audience. With RBAC,
+  the existing `delegation.impersonate` permission check is unchanged.
+
 - Managed API key grants are limited to scopes held by the calling key;
   requests for other scopes return 403. A bare scope (`admin`, `write`,
   `operator`, `read` or `viewer`) is held only by a key that has the same bare
