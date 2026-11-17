@@ -55,7 +55,7 @@ var storeKeyManifest = []storeKeyEntry{
 	{"cfg:policy_shadow:{tenant}", "core/configsvc", "tenant-in-key", "pending:PR1-03H"},
 	{"cfg:system:workers", "core/configsvc", "tenant-in-value", "TestTenantIsolationGatewayWorkerCredential"},
 	{"cfg:system:topics", "core/configsvc", "tenant-in-value", "pending:PR1-03H"},
-	{"cfg:system:policy_audit", "core/configsvc", "global-id", "open-finding:PR1-03E-F1"},
+	{"cfg:system:policy_audit", "core/configsvc", "tenant-in-value", "TestTenantIsolationPolicyAuditList"},
 	// Config-document collections use the owner's literal field prefix or scope ID.
 	{"tenant:{tenant}:{name}", "core/controlplane/topicregistry", "tenant-in-key", "pending:PR1-03H"},
 	{"workers", "core/controlplane/workercredentials", "tenant-in-value", "TestTenantIsolationGatewayWorkerCredential"},
