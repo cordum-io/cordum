@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+- The workflow engine's accepted-result consumer checks the scheduler service
+  token at `bus.PublishedAt` when JetStream delivery metadata is present,
+  otherwise at receive time.
+
 - The audit consumer checks publisher service tokens at `bus.PublishedAt`
   when JetStream delivery metadata is present, otherwise at receive time.
 
