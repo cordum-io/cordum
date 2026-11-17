@@ -112,17 +112,38 @@ the audit chain. A retry is allowed only when the chain contains an approved
 a pending-review signal, not proof of approval.
 
 The wrapper enables local/demo inline approval wait for convenience. The wait
-ends 1s before the hook's agentd budget, so it lasts about 3 seconds. Rejection
-denies the action. An approval still pending then, or a wait error, gets the
-same deny as without inline wait: `approval_ref` plus retry guidance.
+ends 1s before the hook's agentd budget, so it lasts about 3 seconds.
+The contract's gateway-from-edge/approval [a] probes cover enterprise-strict:
+rejection returns DENY (`TestAgentdDecisionFromEvaluateInlineWaitRejectedDenies`);
+an unresolved wait returns REQUIRE_APPROVAL with `approval_ref`, as with inline
+wait off (`TestAgentdDecisionFromEvaluateInlineWaitUnresolvedReturnsPendingApproval`).
+Other modes are not measured. See the failure contract linked below.
 
 ## Fail modes
 
-| Mode | Gateway/agentd unavailable | Intended use |
+| Mode | Measured outage result | Intended use |
 | --- | --- | --- |
-| `observe` | Allow degraded and write evidence where possible. | Discovery/local visibility. |
-| `enforce` | Allow only known-safe degraded actions; deny risky/unknown actions. The wrapper renders `CORDUM_AGENTD_FAIL_CLOSED=true` and `"onFailure": "block"` on the blocking hooks (Claude Code v2.1.295+), so agentd errors/timeouts and a failed hook process block too. | Developer enforcement and demos. |
-| `enterprise-strict` | Fail closed. | Managed enterprise rollout. |
+| `observe` | Hook emits empty allow/no-op output with a degraded warning when agentd is unavailable (gateway-from-edge/low [b]). | Discovery/local visibility. |
+| `enforce` | In the enforce `PreToolUse` probes, the hook emits deny on a safe-command agentd timeout without `CORDUM_AGENTD_FAIL_CLOSED`, or a degraded agentd answer for Edit (gateway-from-edge/low [a], protected [a]). | Developer enforcement and demos. |
+| `enterprise-strict` | agentd returns degraded DENY in Gateway/policy-unavailable probes (gateway-from-edge/low [c]); the hook emits deny for a malformed agentd response (protected [b]). | Managed enterprise rollout. |
+
+Measured cells in the [failure and partition behavior contract](../contract/failure-behavior.md#behavior-table):
+
+- gateway-from-edge/low [a]: `TestRunEnforceModeDeniesPreToolUseOnAgentdTimeoutWithoutFailClosed`;
+  protected [a]: `TestRunEnforceDeniesDegradedPreToolUse`.
+- gateway-from-edge/low [b]: `TestRunObserveModeAllowsNoopWhenAgentdUnavailable`.
+- gateway-from-edge/low [c]: the enterprise-strict cases of
+  `TestApplyFailModeMatrixCoversObserveEnforceEnterpriseStrict`;
+  protected [b]: `TestRunEnterpriseStrictDeniesMalformedAgentdResponse`.
+
+These are component probes, not a full hook-to-Gateway outage qualification.
+agentd's Gateway-outage handling in enforce and observe is not measured (G04).
+The contract's Scope paragraph also marks agent-runtime compliance with hook
+decisions as not measured; observe does not guarantee evidence survives an outage.
+
+For every mode except `observe`, the wrapper generates
+`CORDUM_AGENTD_FAIL_CLOSED=true` and `"onFailure": "block"` on blocking hooks.
+The settings are not evidence of agent-runtime compliance during an outage.
 
 Before launching Claude Code in any mode except `observe`, the wrapper runs
 `claude --version`. On a version older than 2.1.295, `enterprise-strict`
@@ -130,9 +151,10 @@ refuses to launch and the other modes print a warning, because those versions
 ignore `"onFailure": "block"`. A version that cannot be read only produces a
 warning.
 
-Malformed hook input fails closed with redacted stderr. Hook timeout values must
-stay below the command-hook `"timeout": 5` the wrapper generates (Claude Code's
-own default is 600 seconds); generated settings use `4.5s`.
+Malformed-input behavior is not measured by the failure contract. Hook timeout
+must stay below the command-hook `"timeout": 5` the wrapper generates;
+generated settings use `4.5s`. Agent-runtime deadline handling is not measured
+(contract Scope paragraph).
 
 ## Token tradeoffs
 

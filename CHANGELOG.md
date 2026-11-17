@@ -104,6 +104,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Docs: Edge overview, Claude Code, CLI and runbook outage statements now follow
+  the failure and partition behavior contract's measured hook and Gateway probes.
+  The P0 decision table is labeled design intent; agentd Gateway-outage handling
+  in enforce and observe remains not measured (M0-06-DOCS-EDGE-OVERVIEW, task-0a0d8d11).
 - Guardrails demo: `tools/scripts/demo_guardrails_run.sh` reads `CORDUM_API_KEY`
   (then `API_KEY`) and `REDIS_PASSWORD` from the repository's `.env` when the
   environment does not set them, taking a key's last definition as Docker
