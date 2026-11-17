@@ -195,7 +195,7 @@ func TestManagedKeyPrincipal_HeaderPrincipalIgnoredInProduction(t *testing.T) {
 
 func TestManagedKeyPrincipal_GRPCSubmitRecordsKeyPrincipal(t *testing.T) {
 	f := newManagedKeyPrincipalFixture(t)
-	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("x-api-key", f.secret, "x-principal-id", "worker-b"))
+	ctx := metadata.NewIncomingContext(withGRPCMethod(pb.CordumApi_SubmitJob_FullMethodName), metadata.Pairs("x-api-key", f.secret, "x-principal-id", "worker-b"))
 	ac, err := f.provider.AuthenticateGRPC(ctx)
 	if err != nil {
 		t.Fatalf("AuthenticateGRPC() error = %v, want nil", err)
