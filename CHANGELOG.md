@@ -216,6 +216,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Artifacts: tenant-scoped, write-once SHA-256 content storage rechecks bytes on reads and supports extend-only retention; no service uses it yet (task-0e661014).
+
 - Decision records: for a job dispatched under a delegation token, the Policy
   Decision Log record and the job's stored safety decision carry
   `delegation_issuer_chain`, the issuer agent ids of the job's delegation lineage,

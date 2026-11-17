@@ -118,3 +118,39 @@ func TestContentStoreRetainCoversGrantLifetime(t *testing.T) {
 	require.ErrorIs(t, s.RetainContent(ctx, "tenant-a", sha256.Sum256(nil), t0.Add(5*time.Hour)), ErrArtifactNotFound)
 	require.Empty(t, srv.Keys(), "retaining an unknown digest must not create bytes")
 }
+
+func TestContentStoreUnavailable(t *testing.T) {
+	for _, s := range []*RedisStore{nil, {}} {
+		digest, err := s.PutContent(context.Background(), "tenant-a", []byte("input"), RetentionShort)
+		require.Error(t, err)
+		require.Equal(t, [sha256.Size]byte{}, digest)
+		got, err := s.GetContent(context.Background(), "tenant-a", digest)
+		require.Error(t, err)
+		require.Nil(t, got)
+		require.Error(t, s.RetainContent(context.Background(), "tenant-a", digest, time.Now()))
+	}
+}
+
+func TestContentStoreRedisErrors(t *testing.T) {
+	s, srv := newContentTestStore(t)
+	srv.SetError("ERR storage unavailable")
+	digest, err := s.PutContent(context.Background(), "tenant-a", []byte("input"), RetentionShort)
+	require.ErrorContains(t, err, "put content")
+	require.Equal(t, [sha256.Size]byte{}, digest)
+	got, err := s.GetContent(context.Background(), "tenant-a", digest)
+	require.ErrorContains(t, err, "get content")
+	require.Nil(t, got)
+	require.ErrorContains(t, s.RetainContent(context.Background(), "tenant-a", digest, time.Now()), "retain content")
+	require.Empty(t, srv.Keys())
+}
+
+func TestContentStoreEmptyContentWithNilContext(t *testing.T) {
+	s, _ := newContentTestStore(t)
+	digest, err := s.PutContent(nil, "tenant-a", nil, RetentionShort)
+	require.NoError(t, err)
+	require.Equal(t, sha256.Sum256(nil), digest)
+	got, err := s.GetContent(nil, "tenant-a", digest)
+	require.NoError(t, err)
+	require.Empty(t, got)
+	require.NoError(t, s.RetainContent(nil, "tenant-a", digest, time.Now().Add(time.Hour)))
+}
