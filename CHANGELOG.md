@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Config: documents at team, workflow and step scope are stored per tenant,
+  under `cfg:{scope}:{tenant}/{id}` with the tenant path-escaped.
+  `GET /api/v1/config` and `PUT`/`POST /api/v1/config` at those scopes use
+  the caller's tenant; a caller with cross-tenant access selects one with
+  `X-Tenant-ID`. Effective config merges only the documents of the tenant it
+  is computed for. Documents stored at `cfg:{scope}:{id}` are not read; write
+  them again from their tenant (task-80a785cd).
+
 - Edge managed settings: managed-settings verification fails closed on
   unsupported conditional or background hook modifiers, and command hooks
   must have the correct type and tool-event coverage (#492, task-99f50a3d).

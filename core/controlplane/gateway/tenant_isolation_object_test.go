@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/auth/delegation"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	wf "github.com/cordum/cordum/core/workflow"
 )
@@ -34,27 +35,79 @@ func checkTenantObjectRead(t *testing.T, handler http.HandlerFunc, path, id, mar
 }
 
 func TestTenantIsolationGatewayConfigScopes(t *testing.T) {
-	const scope = "org"
-	for _, effective := range []bool{false, true} {
-		t.Run(fmt.Sprintf("%s/effective=%t", scope, effective), func(t *testing.T) {
+	for _, scope := range []string{"org", "team", "workflow", "step"} {
+		for _, effective := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/effective=%t", scope, effective), func(t *testing.T) {
+				s, _, _ := newTestGateway(t)
+				s.auth = newBasicAuthForTest(t, nil)
+				id := "private-config-b"
+				if scope == "org" {
+					id = "tenant-b"
+				}
+				r := tenantObjectRequest(http.MethodPost, "/api/v1/config", "tenant-b", id)
+				r.Body = io.NopCloser(strings.NewReader(fmt.Sprintf(`{"scope":%q,"scope_id":%q,"data":{"secret":"private-config-b"}}`, scope, id)))
+				seed := httptest.NewRecorder()
+				s.handleSetConfig(seed, r)
+				if seed.Code != http.StatusOK && seed.Code != http.StatusNoContent {
+					t.Fatalf("seed config: %d %s", seed.Code, seed.Body.String())
+				}
+				tenantObjectUnchanged(t, s)
+				path := "/api/v1/config?scope=" + scope + "&scope_id=" + id
+				handler := s.handleGetConfig
+				if effective {
+					path = "/api/v1/config/effective?" + scope + "_id=" + id
+					handler = s.handleGetEffectiveConfig
+				}
+				checkTenantObjectRead(t, handler, path, id, "private-config-b")
+			})
+		}
+	}
+}
+
+func checkTenantConfig(t *testing.T, s *server, scope, method, tenant, target, value string, cross bool, status int) {
+	t.Helper()
+	r := tenantObjectRequest(method, "/api/v1/config?scope="+scope+"&scope_id=shared", tenant, "shared")
+	r.Header.Set("X-Tenant-ID", target)
+	auth.FromRequest(r).AllowCrossTenant = cross
+	r.Body = io.NopCloser(strings.NewReader(fmt.Sprintf(`{"scope":%q,"scope_id":"shared","data":{"value":%q}}`, scope, value)))
+	rr := httptest.NewRecorder()
+	if method == http.MethodGet {
+		s.handleGetConfig(rr, r)
+	} else {
+		s.handleSetConfig(rr, r)
+	}
+	if rr.Code != status {
+		t.Fatalf("%s %s as %s: status %d, want %d: %s", method, target, tenant, rr.Code, status, rr.Body.String())
+	}
+	if method == http.MethodGet && status == http.StatusOK && strings.TrimSpace(rr.Body.String()) != fmt.Sprintf(`{"value":%q}`, value) {
+		t.Errorf("config data = %s, want value %q", rr.Body.String(), value)
+	}
+	if status == http.StatusForbidden && strings.Contains(rr.Body.String(), "private-") {
+		t.Errorf("refusal contains config data: %s", rr.Body.String())
+	}
+}
+
+func TestTenantIsolationGatewayConfigScopeWrites(t *testing.T) {
+	for _, scope := range []string{"team", "workflow", "step"} {
+		t.Run(scope, func(t *testing.T) {
 			s, _, _ := newTestGateway(t)
 			s.auth = newBasicAuthForTest(t, nil)
-			id := "tenant-b"
-			r := tenantObjectRequest(http.MethodPost, "/api/v1/config", "tenant-b", id)
-			r.Body = io.NopCloser(strings.NewReader(fmt.Sprintf(`{"scope":%q,"scope_id":%q,"data":{"secret":"private-config-b"}}`, scope, id)))
-			seed := httptest.NewRecorder()
-			s.handleSetConfig(seed, r)
-			if seed.Code != http.StatusOK && seed.Code != http.StatusNoContent {
-				t.Fatalf("seed config: %d %s", seed.Code, seed.Body.String())
+			for _, tenant := range []string{"tenant-b", "tenant-a"} {
+				checkTenantConfig(t, s, scope, http.MethodPut, tenant, tenant, "private-"+tenant, false, http.StatusNoContent)
 			}
-			tenantObjectUnchanged(t, s)
-			path := "/api/v1/config?scope=" + scope + "&scope_id=" + id
-			handler := s.handleGetConfig
-			if effective {
-				path = "/api/v1/config/effective?" + scope + "_id=" + id
-				handler = s.handleGetEffectiveConfig
+			for _, tenant := range []string{"tenant-b", "tenant-a"} {
+				checkTenantConfig(t, s, scope, http.MethodGet, tenant, tenant, "private-"+tenant, false, http.StatusOK)
 			}
-			checkTenantObjectRead(t, handler, path, id, "private-config-b")
+			t.Run("tenant-header-refused", func(t *testing.T) {
+				tenantObjectUnchanged(t, s)
+				for _, method := range []string{http.MethodGet, http.MethodPut} {
+					checkTenantConfig(t, s, scope, method, "tenant-a", "tenant-b", "private-denied", false, http.StatusForbidden)
+				}
+			})
+			checkTenantConfig(t, s, scope, http.MethodGet, "tenant-a", "tenant-b", "private-tenant-b", true, http.StatusOK)
+			checkTenantConfig(t, s, scope, http.MethodPut, "tenant-a", "tenant-b", "private-selected", true, http.StatusNoContent)
+			checkTenantConfig(t, s, scope, http.MethodGet, "tenant-b", "tenant-b", "private-selected", false, http.StatusOK)
+			checkTenantConfig(t, s, scope, http.MethodGet, "tenant-a", "tenant-a", "private-tenant-a", false, http.StatusOK)
 		})
 	}
 }
