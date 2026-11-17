@@ -845,6 +845,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Config: `PUT` and `POST /api/v1/config` accept only the scopes `system`,
+  `org`, `team`, `workflow` and `step`, the same set `GET /api/v1/config`
+  accepts. Any other `scope` string gets 400 `CONFIG_REQUEST_INVALID`
+  ("invalid scope"), and the config store is neither read nor written. The
+  gateway reads its MCP argument-redaction rules from scope `gateway`; that
+  scope is not written through this endpoint (task-13eb1d1e).
 - Jobs: a submit whose idempotency key matches a legacy unscoped key
   (`job:idempotency:{key}`) reuses that key's job only when the job's stored
   tenant equals the caller's tenant. When the job's tenant cannot be read,
