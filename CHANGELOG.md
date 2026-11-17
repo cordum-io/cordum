@@ -43,6 +43,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   use the `legalhold` resource: `audit:write` and `audit:*` keys no longer
   authorize those routes. Static keys are unchanged.
 
+- Managed API key scopes now apply to the gateway gRPC API, matched as on the
+  HTTP routes: `SubmitJob` requires a scope covering `jobs:write`, and
+  `GetJobStatus` a scope covering `jobs:read`. A managed key with scopes is
+  refused on any other gRPC method. Scoped keys whose scopes do not cover
+  `jobs:write`, such as `policy:write` keys, can no longer submit jobs over
+  gRPC, and scoped keys whose scopes do not cover `jobs:read`, such as
+  `jobs:write` keys, can no longer read job status over gRPC. Managed keys
+  without scopes, static keys and JWT callers are unchanged.
+
 - With `AUDIT_TRANSPORT=nats`, the gateway's audit consumer chains and exports
   only `sys.audit.export` packets that carry a valid audit-publisher service
   token: `api-gateway` or `cordum-scheduler` signed by a key in

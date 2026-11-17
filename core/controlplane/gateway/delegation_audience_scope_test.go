@@ -195,7 +195,7 @@ func TestDelegationAudienceOverrideHTTPEmptyAPIKeyRole(t *testing.T) {
 
 func TestDelegationAudienceOverrideGRPCStripsLabels(t *testing.T) {
 	f, key, secret := newDelegationAudienceScopeFixture(t, "jobs:write")
-	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("x-api-key", secret))
+	ctx := metadata.NewIncomingContext(withGRPCMethod(pb.CordumApi_SubmitJob_FullMethodName), metadata.Pairs("x-api-key", secret))
 	caller, err := f.provider.AuthenticateGRPC(ctx)
 	f.provider.DrainUsage()
 	if err != nil {

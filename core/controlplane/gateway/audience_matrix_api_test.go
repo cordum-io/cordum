@@ -191,7 +191,7 @@ func (m *audienceMatrix) matrixPresentGRPC(t *testing.T, c identity.Credential) 
 	var trail []string
 	for _, sd := range m.matrixGRPCSends(c) {
 		m.s.auth = sd.d.auth
-		ctx := metadata.NewIncomingContext(context.Background(), sd.md)
+		ctx := metadata.NewIncomingContext(withGRPCMethod(pb.CordumApi_SubmitJob_FullMethodName), sd.md)
 		info := &grpc.UnaryServerInfo{FullMethod: pb.CordumApi_SubmitJob_FullMethodName}
 		_, err := apiKeyUnaryInterceptor(sd.d.auth)(ctx, &pb.SubmitJobRequest{Prompt: "audience matrix", Topic: "job.test", OrgId: matrixTenant}, info,
 			func(ctx context.Context, req any) (any, error) { return m.s.SubmitJob(ctx, req.(*pb.SubmitJobRequest)) })
