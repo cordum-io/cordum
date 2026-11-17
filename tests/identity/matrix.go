@@ -48,10 +48,10 @@ const (
 	GatewayJWT                 Credential = "gateway_jwt"                   // gateway JWT issuer, CORDUM_JWT_AUDIENCE audience
 	GatewayJWTWrongAudience    Credential = "gateway_jwt_wrong_audience"    // gateway JWT issuer, another audience
 	OIDCBearer                 Credential = "oidc_bearer"                   // OIDC provider, CORDUM_OIDC_AUDIENCE audience
-	OIDCBearerWrongAudience    Credential = "oidc_bearer_wrong_audience"    // OIDC provider, another audience
+	OIDCBearerWrongAudience    Credential = "oidc_bearer_wrong_audience"    // #nosec G101 -- credential-kind label, not a credential. OIDC provider, another audience
 	DelegationToken            Credential = "delegation_token"              // core/auth/delegation
 	ServiceToken               Credential = "service_token"                 // servicetoken.MintService, typ cordum-service
-	WorkerCredential           Credential = "worker_credential"             // core/controlplane/workercredentials
+	WorkerCredential           Credential = "worker_credential"             // #nosec G101 -- credential-kind label, not a credential. core/controlplane/workercredentials
 	WorkerSession              Credential = "worker_session"                // worker handshake, bound typ cordum-session
 	WorkerSessionWrongAudience Credential = "worker_session_wrong_audience" // worker handshake, another audience
 	SCIMBearer                 Credential = "scim_bearer"                   // SCIM bearer token

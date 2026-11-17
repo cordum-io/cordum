@@ -15,6 +15,7 @@ import (
 
 	"github.com/cordum/cordum/core/infra/env"
 	"github.com/gorilla/websocket"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -274,7 +275,10 @@ func (b *BasicAuthProvider) AuthenticateGRPC(ctx context.Context) (*AuthContext,
 	if b.jwtRequired {
 		return nil, errors.New("jwt required")
 	}
-	return b.authenticate(ctx, key, principalID)
+	// A context without a method name maps to no scope, so it fails closed.
+	method, _ := grpc.Method(ctx)
+	required, mapped := GRPCMethodToScope(method)
+	return b.authenticateWithScope(ctx, key, principalID, required, mapped)
 }
 
 // roleFromScopes maps API key scopes to a role, using the highest privilege
@@ -300,15 +304,15 @@ func roleFromScopes(scopes []string) string {
 	return role
 }
 
-func (b *BasicAuthProvider) authenticate(ctx context.Context, key, principalID string) (*AuthContext, error) {
-	return b.authenticateWithScope(ctx, key, principalID, "", "", false)
-}
-
 func (b *BasicAuthProvider) authenticateHTTP(ctx context.Context, key, principalID, method, path string) (*AuthContext, error) {
-	return b.authenticateWithScope(ctx, key, principalID, method, path, true)
+	required, mapped := PathToScope(method, path)
+	return b.authenticateWithScope(ctx, key, principalID, required, mapped)
 }
 
-func (b *BasicAuthProvider) authenticateWithScope(ctx context.Context, key, principalID, method, path string, enforceScopes bool) (*AuthContext, error) {
+// authenticateWithScope checks a managed key's scopes against required, the
+// scope of the request; mapped=false means the request has no scope, which
+// refuses every scoped key.
+func (b *BasicAuthProvider) authenticateWithScope(ctx context.Context, key, principalID, required string, mapped bool) (*AuthContext, error) {
 	if b == nil {
 		return &AuthContext{}, nil
 	}
@@ -355,9 +359,8 @@ func (b *BasicAuthProvider) authenticateWithScope(ctx context.Context, key, prin
 				if tenant == "" {
 					tenant = b.defaultTenant
 				}
-				if enforceScopes && len(mk.Scopes) > 0 {
-					required, ok := PathToScope(method, path)
-					matched := ""
+				if len(mk.Scopes) > 0 {
+					matched, ok := "", mapped
 					if ok {
 						matched, ok = MatchedScope(mk.Scopes, required)
 					}
