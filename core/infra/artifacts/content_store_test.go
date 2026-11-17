@@ -146,11 +146,13 @@ func TestContentStoreRedisErrors(t *testing.T) {
 
 func TestContentStoreEmptyContentWithNilContext(t *testing.T) {
 	s, _ := newContentTestStore(t)
-	digest, err := s.PutContent(nil, "tenant-a", nil, RetentionShort)
-	require.NoError(t, err)
-	require.Equal(t, sha256.Sum256(nil), digest)
-	got, err := s.GetContent(nil, "tenant-a", digest)
-	require.NoError(t, err)
-	require.Empty(t, got)
-	require.NoError(t, s.RetainContent(nil, "tenant-a", digest, time.Now().Add(time.Hour)))
+	for _, ctx := range []context.Context{context.Background(), nil} {
+		digest, err := s.PutContent(ctx, "tenant-a", nil, RetentionShort)
+		require.NoError(t, err)
+		require.Equal(t, sha256.Sum256(nil), digest)
+		got, err := s.GetContent(ctx, "tenant-a", digest)
+		require.NoError(t, err)
+		require.Empty(t, got)
+		require.NoError(t, s.RetainContent(ctx, "tenant-a", digest, time.Now().Add(time.Hour)))
+	}
 }
