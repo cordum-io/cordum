@@ -150,3 +150,24 @@ func TestEdgeSessionValidateRejectsUnknownAssuranceState(t *testing.T) {
 		}
 	}
 }
+
+func TestSIEMEventForSessionAssuranceState(t *testing.T) {
+	started := time.Date(2026, 11, 17, 10, 0, 0, 0, time.UTC)
+	ended := started.Add(time.Minute)
+	for _, state := range []AssuranceState{AssuranceStateHookMediated, ""} {
+		session := validEdgeSession(started)
+		session.AssuranceState = state
+		startExtra := SIEMEventForSessionStarted(session).Extra
+		session.Status, session.EndedAt = SessionStatusEnded, &ended
+		endExtra := SIEMEventForSessionEnded(session).Extra
+		for event, extra := range map[string]map[string]string{"started": startExtra, "ended": endExtra} {
+			got, ok := extra["assurance_state"]
+			if state == "" && ok {
+				t.Fatalf("session_%s: assurance_state %q present for an unset state", event, got)
+			}
+			if state != "" && got != string(state) {
+				t.Fatalf("session_%s: assurance_state %q, want %q", event, got, state)
+			}
+		}
+	}
+}
