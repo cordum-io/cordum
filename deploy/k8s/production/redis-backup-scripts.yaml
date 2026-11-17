@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cordum-redis-backup-scripts
+  namespace: cordum
+data:
+  guards.sh: |
+    redis_client() {
+      timeout 900 redis-cli --tls --cacert /etc/cordum/tls/client/ca.crt \
+        --cert /etc/cordum/tls/client/tls.crt --key /etc/cordum/tls/client/tls.key "$@"
+    }
+    redis_topology() (
+      set -eu
+      topology=$(mktemp)
+      trap 'rm -f "$topology"' EXIT
+      for ordinal in 0 1 2 3 4 5; do
+        nodes=$(redis_client -h "cordum-redis-$ordinal.cordum-redis.cordum.svc" -p 6379 CLUSTER NODES)
+        printf '%s\n' "$nodes" | awk -v node="node$ordinal" '
+          /myself/ {
+            found++
+            if ($3 != "myself,master" && $3 != "myself,slave") exit 1
+            if ($8 != "connected") exit 1
+            if ($3 == "myself,master") {
+              printf "%s %s %s", node, $1, $7
+              for (i = 9; i <= NF; i++) printf " %s", $i
+              print ""
+            }
+          }
+          END { if (found != 1) exit 1 }
+        ' >> "$topology"
+      done
+      awk -f /etc/cordum/backup/coverage.awk "$topology"
+      LC_ALL=C sort "$topology"
+    )
+    redis_import_password_check() {
+      case ${REDISCLI_AUTH:?Redis password is required} in
+        *%*|*' '*) echo 'Redis 7 cluster import cannot safely pass percent signs or ASCII spaces in passwords; stop before FLUSHALL.' >&2; return 1 ;;
+      esac
+    }
+  coverage.awk: |
+    # node ordinal, Redis node ID, configuration epoch, then slot ranges.
+    {
+      if ($1 !~ /^node[0-5]$/ || length($2) != 40 || $2 !~ /^[0-9a-f]+$/ || $3 !~ /^[0-9]+$/ || NF < 4) bad = 1
+      if (nodes[$1]++ || ids[$2]++) bad = 1
+      for (i = 4; i <= NF; i++) {
+        if ($i !~ /^[0-9]+(-[0-9]+)?$/) { bad = 1; continue }
+        split($i, range, "-")
+        first = range[1] + 0; last = (index($i, "-") ? range[2] : range[1]) + 0
+        if (first > last || last > 16383) { bad = 1; continue }
+        for (slot = first; slot <= last; slot++) if (slots[slot]++) bad = 1
+      }
+    }
+    END {
+      if (NR != 3) bad = 1
+      for (slot = 0; slot < 16384; slot++) if (slots[slot] != 1) bad = 1
+      if (bad) { print "Expected three distinct primaries covering every slot exactly once" > "/dev/stderr"; exit 1 }
+    }
