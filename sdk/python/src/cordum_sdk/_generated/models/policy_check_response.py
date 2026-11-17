@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 from typing import List
 
@@ -45,7 +45,6 @@ class PolicyCheckResponse:
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.safety_decision import SafetyDecision
         from ..models.policy_check_response_constraints_type_0 import (
             PolicyCheckResponseConstraintsType0,
         )

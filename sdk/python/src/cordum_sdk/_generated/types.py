@@ -1,7 +1,7 @@
 """Contains some shared types for properties"""
 
 from http import HTTPStatus
-from typing import Any, BinaryIO, Generic, MutableMapping, Optional, Tuple, TypeVar, Literal
+from typing import BinaryIO, Generic, MutableMapping, Optional, Tuple, TypeVar, Literal
 
 from attrs import define
 

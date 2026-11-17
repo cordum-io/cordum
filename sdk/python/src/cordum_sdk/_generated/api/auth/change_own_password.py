@@ -1,14 +1,13 @@
 from http import HTTPStatus
-from typing import Any, Dict, List, Optional, Union, cast
+from typing import Any, Dict, Optional, Union
 
 import httpx
 
 from ...client import AuthenticatedClient, Client
-from ...types import Response, UNSET
+from ...types import Response
 from ... import errors
 
 from ...models.change_password_request import ChangePasswordRequest
-from typing import cast
 from typing import Dict
 
 

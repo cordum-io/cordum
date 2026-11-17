@@ -2,7 +2,14 @@
 // tool never builds it; docscheck only parses it.
 package core
 
-import "os"
+import (
+	"flag"
+	"os"
+)
+
+type config struct{}
+
+func (config) String(name, def string) string { return envOrDefault(name, def) }
 
 func envOrDefault(name, def string) string {
 	if v := os.Getenv(name); v != "" {
@@ -29,4 +36,16 @@ var (
 	_ = os.Getenv("FIX_PLAIN")
 	_ = envOrDefault("FIX_TWO", "p")
 	_ = envOrDefault("FIX_TWO", "q")
+	_ = flag.String("package-env", "FIX_ENV", "usage text")
 )
+
+func flagDefaults() {
+	fs := flag.NewFlagSet("fixture", flag.ContinueOnError)
+	fs.String(
+		"x-env", "FIX_ENV", "usage text",
+	)
+	var p string
+	fs.StringVar(&p, "y-env", "FIX_ENV_VAR", "usage text")
+	var cfg config
+	cfg.String("FIX_HELPER", "h")
+}
