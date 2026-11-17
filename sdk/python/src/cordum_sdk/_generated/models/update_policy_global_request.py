@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 from typing import List
 
@@ -9,7 +9,6 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 from ..types import UNSET, Unset
-from typing import cast
 from typing import Dict
 from typing import Union
 
@@ -39,8 +38,6 @@ class UpdatePolicyGlobalRequest:
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.update_policy_global_request_sections import UpdatePolicyGlobalRequestSections
-
         sections = self.sections.to_dict()
 
         snapshot_version = self.snapshot_version

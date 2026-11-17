@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 from typing import List
 
@@ -63,20 +63,8 @@ class GetApprovalContextResponse200:
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.get_approval_context_response_200_prior_approvals_item import (
-            GetApprovalContextResponse200PriorApprovalsItem,
-        )
         from ..models.get_approval_context_response_200_constraints_type_0 import (
             GetApprovalContextResponse200ConstraintsType0,
-        )
-        from ..models.get_approval_context_response_200_approval import (
-            GetApprovalContextResponse200Approval,
-        )
-        from ..models.get_approval_context_response_200_policy_snapshot_summary import (
-            GetApprovalContextResponse200PolicySnapshotSummary,
-        )
-        from ..models.get_approval_context_response_200_blast_radius import (
-            GetApprovalContextResponse200BlastRadius,
         )
 
         approval: Union[Unset, Dict[str, Any]] = UNSET

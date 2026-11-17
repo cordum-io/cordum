@@ -684,10 +684,10 @@ The production overlay includes hourly CronJob backups for both Redis and NATS.
 ### Redis Backup
 
 - **Schedule**: `0 * * * *` (hourly)
-- **Method**: `redis-cli --rdb` against every node that `INFO replication` reports as a primary
+- **Method**: `redis-cli --rdb` against primaries from a stable `CLUSTER NODES` topology covering every slot exactly once
 - **Storage**: `cordum-backups` PVC (20Gi)
 - **Retention**: 7 days (`cordum-backup-retention`, daily at 03:30 UTC); the CronJob keeps its last 2 successful + 2 failed jobs
-- **File format**: `redis-YYYYMMDDTHHMMSSZ-node<N>.rdb`, one per primary, `N` being the pod ordinal
+- **File format**: `redis-YYYYMMDDTHHMMSSZ-node<N>.rdb`, one per primary, plus `.topology` and `.sha256` completion metadata
 
 ### NATS JetStream Backup
 
@@ -695,6 +695,7 @@ The production overlay includes hourly CronJob backups for both Redis and NATS.
 - **Method**: `nats stream snapshot` for `CORDUM_SYS` and `CORDUM_JOBS` streams
 - **Storage**: Same `cordum-backups` PVC
 - **File format**: `nats-YYYYMMDDTHHMMSSZ/{stream}.snapshot`
+- **Integrity**: each complete run writes `SHA256SUMS`; retain its printed digest in the external backup catalog before Job logs expire
 
 ### Restore Procedures
 
@@ -721,8 +722,11 @@ ignores `dump.rdb`, and each backup file holds only one primary's slots.
 All Cordum Deployments use the default `RollingUpdate` strategy. To upgrade:
 
 1. Update image tags in `production/kustomization.yaml`
-2. Re-apply: `kubectl apply -k deploy/k8s/production`
-3. Watch rollout: `kubectl rollout status deployment/cordum-api-gateway -n cordum`
+2. Delete the retained init Job before changing its immutable pod template:
+   `kubectl delete job cordum-redis-cluster-init -n cordum --ignore-not-found --cascade=foreground --wait --timeout=5m`.
+   The replacement checks for an already healthy cluster and does not reinitialize it.
+3. Re-apply: `kubectl apply -k deploy/k8s/production`
+4. Watch rollout: `kubectl rollout status deployment/cordum-api-gateway -n cordum`
 
 ### Pre-Upgrade Checklist
 

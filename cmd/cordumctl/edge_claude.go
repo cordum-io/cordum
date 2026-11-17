@@ -159,7 +159,7 @@ func loadEdgeClaudeConfigForRun() (EdgeClaudeConfig, map[string]configSource, er
 	cwd, _ := os.Getwd()
 	home, _ := os.UserHomeDir()
 	env := os.Environ()
-	if _, ok := os.LookupEnv("CORDUM_API_KEY"); !ok && cwd != "" {
+	if strings.TrimSpace(os.Getenv("CORDUM_API_KEY")) == "" && cwd != "" {
 		if val := readEnvFile(filepath.Join(cwd, ".env"), "CORDUM_API_KEY", "API_KEY"); val != "" {
 			env = append(env, "CORDUM_API_KEY="+val)
 		}
