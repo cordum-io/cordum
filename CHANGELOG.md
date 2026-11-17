@@ -12,9 +12,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Documentation
 
+- Enforcement matrix: `docs/contract/enforcement-matrix.yaml` has a `ref_tests` section that links each code ref of an enforced cell to existing tests, or records a gap where none exists (three today: the agentd throttle mapping, the scheduler throttle requeue and the `budgets.max_concurrent_jobs` limit). `tests/contract` rejects a missing or orphan entry, an unknown test, an empty list without a gap and a gap alongside tests (task-4c0b9fe8).
 - MCP docs: `docs/mcp/approval_hold.md` and `docs/mcp-server.md` now state that a policy-gated `tools/call` with a blank agent ID answers `-32098` `no_identity` before any approval access, and that missing tenant, session or execution metadata answers `-32097` `missing_mcp_metadata` for plain and ref-bearing calls (task-850c7a0e).
 
 ### Breaking changes
+
+- Delegation tokens: child issuance requires the parent's tenant and caps expiry
+  at the parent's expiry. Chain-link expiry checks use the configured clock leeway.
+  Upgrade note: a token with an expired chain link beyond that leeway is no longer
+  accepted (PR1-25).
 
 - Production recovery now requires a completed backup checksum manifest and
   its digest from a trusted external catalog before deleting data. Redis
@@ -209,6 +215,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Decision records: for a job dispatched under a delegation token, the Policy
+  Decision Log record and the job's stored safety decision carry
+  `delegation_issuer_chain`, the issuer agent ids of the job's delegation lineage,
+  root issuer first. Jobs without delegation produce the same records as before
+  (task-be2a9f2e).
+
 - Gateway: MCP env defaults (from PR #591). When the stored system config has no
   `mcp.enabled`, `mcp.transport` or `mcp.policy_gate_enabled` key, the gateway reads
   `CORDUM_MCP_ENABLED`, `CORDUM_MCP_TRANSPORT` and `CORDUM_MCP_POLICY_GATE_ENABLED`
@@ -345,6 +357,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- Agent identities: an agent can no longer exempt its own mutating MCP calls from human approval. `POST /api/v1/agents` and `PUT /api/v1/agents/{id}` answer 403 `AGENT_SELF_PREAPPROVAL_DENIED` when the caller's own principal would set `preapproved_mutating_tools` on the identity it is linked to, or link itself (`agent_id`) to an identity that has or gets such tools. Another admin can still grant them (task-2f34e241).
 - Edge: `cordumctl edge managed-settings verify` now applies generate's
   secret-pattern check to the trusted and configured MCP gateway URLs, so a
   credential such as `access_token=` or `api_key=` in the query string fails
@@ -890,6 +903,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - MCP: JSON-RPC errors no longer expose execution ids. Errors caused by
   Cordum's own stores carry a fixed message, such as `internal error`, and
   the detail is in the gateway log (#492, task-e489e0c5).
+- Delegation issuance: a parent-token tenant mismatch returns HTTP 400 with
+  `DELEGATION_REQUEST_INVALID` and `tenant_mismatch` (task-9b21101b).
 
 - The Python SDK's mypy target is now 3.10, the SDK's supported minimum. mypy
   no longer prints its "Python 3.9 is not supported" configuration warning
@@ -1073,6 +1088,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 - MCP approvals: a re-ask returns the caller's pending approval instead of
   minting another (#492, task-2a9d0a7c).
+
+- MCP approvals: a repeat of a gated call whose legacy approval is still
+  pending, such as a redelivered or concurrent duplicate, gets the caller's
+  pending approval back instead of queuing a second one, as re-asks already
+  did under the policy gate. `cordum_create_workflow` called with an
+  `idempotency_key` and no `id` writes one workflow per key, so a repeated
+  delivery returns the same `workflow_id` instead of creating a second
+  workflow (task-1bf8c325).
 
 - MCP server: a policy-gate call without metadata gets `-32097`, as
   documented (#492, task-11710a81).

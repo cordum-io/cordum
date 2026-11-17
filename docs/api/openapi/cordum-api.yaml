@@ -7670,6 +7670,7 @@ paths:
       x-cordum-error-codes:
       - AGENT_REQUEST_INVALID
       - AGENT_WORKER_CONFLICT
+      - AGENT_SELF_PREAPPROVAL_DENIED
       summary: Create an agent identity
       tags:
       - Agents
@@ -7777,6 +7778,7 @@ paths:
       - AGENT_REQUEST_INVALID
       - AGENT_NOT_FOUND
       - AGENT_WORKER_CONFLICT
+      - AGENT_SELF_PREAPPROVAL_DENIED
       summary: Update an agent identity
       tags:
       - Agents

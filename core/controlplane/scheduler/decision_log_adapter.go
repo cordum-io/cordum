@@ -35,7 +35,21 @@ func buildDecisionLogRecord(req *pb.JobRequest, record SafetyDecisionRecord) mod
 		ApprovalStatus:   record.ApprovalStatus,
 		ApprovalDecision: record.ApprovalDecision,
 		Timestamp:        decisionLogTimestampMillis(record.CheckedAt),
+
+		DelegationIssuerChain: record.DelegationIssuerChain,
 	}
+}
+
+// delegationIssuerChain returns the issuer agent ids of a dispatch-time
+// delegation lineage, root issuer first, or nil when it names none.
+func delegationIssuerChain(lineage model.DelegationLineage) []string {
+	var chain []string
+	for _, link := range lineage.IssuerChain {
+		if agentID := strings.TrimSpace(link.AgentID); agentID != "" {
+			chain = append(chain, agentID)
+		}
+	}
+	return chain
 }
 
 func decisionLogAgentID(req *pb.JobRequest) string {
