@@ -115,6 +115,10 @@ type SafetyDecisionRecord struct {
 	// nil for purely rule-based decisions. Cardinality-bounded:
 	// IDs/hashes/refs only, never raw tokens / prompts / payloads.
 	Governance *GovernanceDecisionEvidence `json:"governance,omitempty"`
+	// DelegationIssuerChain holds the issuer agent ids of the job's
+	// dispatch-time delegation lineage, root issuer first. Empty when the
+	// job was dispatched without a delegation token.
+	DelegationIssuerChain []string `json:"delegation_issuer_chain,omitempty"`
 }
 
 // GovernanceDecisionEvidence is the compact non-secret audit record
