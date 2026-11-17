@@ -18,6 +18,10 @@ import (
 // document between Get and Set. Callers should re-read and retry.
 var ErrRevisionConflict = errors.New("config revision conflict: document was modified by another writer")
 
+// ErrTenantMismatch is returned by Set when the team, workflow or step
+// document stored at the key does not record the tenant of its id.
+var ErrTenantMismatch = errors.New("config document does not record the tenant of its id")
+
 // Scope levels for configuration inheritance.
 type Scope string
 
@@ -43,10 +47,37 @@ func TenantScopeID(scope Scope, tenant, id string) string {
 	}
 }
 
+// scopeIDTenant returns the tenant of a team, workflow or step id in
+// TenantScopeID's exact form, and "" for any other id or scope.
+func scopeIDTenant(scope Scope, id string) string {
+	escaped, rest, ok := strings.Cut(id, "/")
+	if !ok {
+		return ""
+	}
+	tenant, err := url.PathUnescape(escaped)
+	if err != nil || TenantScopeID(scope, tenant, rest) != id {
+		return ""
+	}
+	return tenant
+}
+
+// isDocumentAt reports whether stored is the document at (scope, id). At team,
+// workflow and step scope its scope, scope_id and tenant must all match.
+func isDocumentAt(stored *Document, scope Scope, id string) bool {
+	switch scope {
+	case ScopeTeam, ScopeWorkflow, ScopeStep:
+		tenant := scopeIDTenant(scope, id)
+		return tenant != "" && stored.Tenant == tenant && stored.Scope == scope && stored.ScopeID == id
+	default:
+		return true
+	}
+}
+
 // Document is a config fragment at a given scope.
 type Document struct {
 	Scope    Scope             `json:"scope"`
-	ScopeID  string            `json:"scope_id"` // system may use "default"
+	ScopeID  string            `json:"scope_id"`         // system may use "default"
+	Tenant   string            `json:"tenant,omitempty"` // team, workflow and step only; Set records it from ScopeID
 	Data     map[string]any    `json:"data"`
 	Revision int64             `json:"revision"`
 	Updated  time.Time         `json:"updated_at"`
@@ -96,7 +127,9 @@ func (s *Service) Close() error {
 
 // Set stores a config document with optimistic locking. If another writer
 // modified the document since it was read, ErrRevisionConflict is returned.
-// The caller should re-read with Get and retry.
+// The caller should re-read with Get and retry. Set records doc.Tenant from
+// doc.ScopeID, and returns ErrTenantMismatch rather than replace a stored
+// document that is not the one at (doc.Scope, doc.ScopeID).
 func (s *Service) Set(ctx context.Context, doc *Document) error {
 	if doc == nil || doc.Scope == "" {
 		return fmt.Errorf("scope required")
@@ -104,6 +137,7 @@ func (s *Service) Set(ctx context.Context, doc *Document) error {
 	if doc.Scope != ScopeSystem && doc.ScopeID == "" {
 		return fmt.Errorf("scope_id required for non-system scope")
 	}
+	doc.Tenant = scopeIDTenant(doc.Scope, doc.ScopeID)
 	key := cfgKey(doc.Scope, doc.ScopeID)
 	expectedRevision := doc.Revision
 
@@ -117,6 +151,9 @@ func (s *Service) Set(ctx context.Context, doc *Document) error {
 			var existing Document
 			if err := json.Unmarshal(stored, &existing); err != nil {
 				return fmt.Errorf("unmarshal existing config: %w", err)
+			}
+			if !isDocumentAt(&existing, doc.Scope, doc.ScopeID) {
+				return ErrTenantMismatch
 			}
 			if existing.Revision != expectedRevision {
 				return ErrRevisionConflict
@@ -162,7 +199,8 @@ func (s *Service) Set(ctx context.Context, doc *Document) error {
 	return nil
 }
 
-// Get fetches a config document at a given scope/id.
+// Get fetches a config document at a given scope/id. A stored document that
+// is not the one at (scope, id) is returned as redis.Nil.
 func (s *Service) Get(ctx context.Context, scope Scope, id string) (*Document, error) {
 	if scope == "" {
 		return nil, fmt.Errorf("scope required")
@@ -174,6 +212,9 @@ func (s *Service) Get(ctx context.Context, scope Scope, id string) (*Document, e
 	var doc Document
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("unmarshal doc: %w", err)
+	}
+	if !isDocumentAt(&doc, scope, id) {
+		return nil, redis.Nil
 	}
 	return &doc, nil
 }

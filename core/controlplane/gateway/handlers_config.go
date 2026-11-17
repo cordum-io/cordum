@@ -167,6 +167,8 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("config managed key refused", "scope", scopeStr, "scope_id", scopeID, "key", managedConfigKey(scope, scopeID), "actor", policybundles.PolicyActorID(r))
 			s.appendAuditEntryNamed(r.Context(), "config.set.rejected", "config", scopeStr+"/"+scopeID, scopeStr, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), msg)
 			writeJSONError(w, http.StatusBadRequest, errorCodeConfigKeyForbidden, "config.managed_key: "+msg)
+		} else if errors.Is(err, configsvc.ErrTenantMismatch) {
+			writeJSONError(w, http.StatusForbidden, errorCodeConfigKeyForbidden, "tenant access denied")
 		} else if errors.Is(err, configsvc.ErrRevisionConflict) {
 			writeJSONError(w, http.StatusConflict, errorCodeConfigVersionConflict, "config update conflict — retry")
 		} else {
