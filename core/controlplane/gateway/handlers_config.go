@@ -40,6 +40,16 @@ func managedConfigKey(scope configsvc.Scope, scopeID string) string {
 	}
 }
 
+// knownConfigScope reports whether scope is one the config API reads and writes.
+func knownConfigScope(scope configsvc.Scope) bool {
+	switch scope {
+	case configsvc.ScopeSystem, configsvc.ScopeOrg, configsvc.ScopeTeam, configsvc.ScopeWorkflow, configsvc.ScopeStep:
+		return true
+	default:
+		return false
+	}
+}
+
 func sameConfigJSON(a, b any) bool {
 	var canonical [2][]byte
 	for i, value := range []any{a, b} {
@@ -92,6 +102,10 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 
 	// If body has "scope" as a string, treat as wrapped Document request (backward compat).
 	if sc, ok := raw["scope"].(string); ok && sc != "" {
+		if !knownConfigScope(configsvc.Scope(sc)) {
+			writeJSONError(w, http.StatusBadRequest, errorCodeConfigRequestInvalid, "invalid scope")
+			return
+		}
 		scopeStr = sc
 		if sid, ok := raw["scope_id"].(string); ok {
 			scopeID = sid
@@ -181,10 +195,7 @@ func (s *server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		scope = string(configsvc.ScopeSystem)
 	}
 	// Reject unknown scopes before any data access.
-	switch configsvc.Scope(scope) {
-	case configsvc.ScopeSystem, configsvc.ScopeOrg, configsvc.ScopeTeam, configsvc.ScopeWorkflow, configsvc.ScopeStep:
-		// valid
-	default:
+	if !knownConfigScope(configsvc.Scope(scope)) {
 		writeJSONError(w, http.StatusBadRequest, errorCodeConfigRequestInvalid, "invalid scope")
 		return
 	}
