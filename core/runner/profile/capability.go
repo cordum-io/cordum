@@ -22,9 +22,9 @@ const (
 	CapCloneIntoCgroup      Capability = "kernel.clone_into_cgroup"
 	CapGuestTaskCeiling     Capability = "guest.task_ceiling"
 	CapInputMaterialization Capability = "fs.input_materialization"
-	CapWorkspaceQuota       Capability = "fs.workspace_quota"
+	CapWorkspaceQuota       Capability = "fs.workspace_quota" // #nosec G101 -- capability wire id, not a credential
 	CapOutputBudget         Capability = "output.byte_budget"
-	CapWorkloadIsolation    Capability = "proc.workload_isolation"
+	CapWorkloadIsolation    Capability = "proc.workload_isolation" // #nosec G101 -- capability wire id, not a credential
 	CapNetNamespace         Capability = "net.namespace"
 	CapNetDefaultDeny       Capability = "net.default_deny"
 	CapGuestSyscallPolicy   Capability = "guest.syscall_policy"
