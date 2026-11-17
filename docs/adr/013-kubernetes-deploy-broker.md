@@ -20,25 +20,22 @@ Agents, repository scripts, plugins and agent-controlled CI are untrusted.
 
 ## Decision
 
-Choose an isolated, target-local broker with a projected service-account token,
-mTLS to the authority service, namespaced RBAC plus identity-bound admission,
-conditional server-side apply for existing objects and create-only POST for
-new objects. No shell, arbitrary HTTP proxy, kube-context or Helm rendering.
+Choose a target-local broker: projected service-account token, mTLS, RBAC plus
+identity-bound admission, conditional SSA updates and create-only POST.
+No shell, arbitrary HTTP proxy, kube-context or Helm rendering.
 
 [ADR-011](./011-execution-grant-format.md) owns grant bytes, signatures,
 identities and schema evolution. Consume M2A-05 for epoch/revocation freshness,
 M2A-06 for durable claim/execution state, M2A-07 for immutable digest lookup,
-and M2A-09 for issuance and authenticated grant retrieval. Do not replace these
-with broker-local authority, a second grant format or a bearer-token shortcut.
-Missing dependencies must refuse activation.
+and M2A-09 for issuance/authenticated retrieval. No broker-local authority,
+second grant format or bearer shortcut; missing dependencies refuse activation.
 
 ## Placement
 
-M2B-03 must build `cordum-deploy-broker` (proposed entrypoint
-`cmd/cordum-deploy-broker`). Run one replica initially in a dedicated
-`reference-deploy-broker` namespace on the trusted target cluster. Cordum
-services stay in `reference-cordum-management`; applications stay in
-`reference-protected-app`; agents/CI run outside these trusted namespaces.
+M2B-03 must build `cordum-deploy-broker` at proposed `cmd/cordum-deploy-broker`.
+Run one replica in target namespace `reference-deploy-broker`; Cordum services
+stay in `reference-cordum-management`, applications in `reference-protected-app`,
+and agents/CI outside these trusted namespaces.
 This replaces M0-02's illustrative separate management cluster; separation
 by namespace, node placement, credential and network must be qualified.
 
@@ -57,8 +54,8 @@ and workload-control surface would expose target credentials to untrusted code.
 
 ## Target credential
 
-M2B-04 must use ServiceAccount `cordum-deploy-broker` in
-`reference-deploy-broker`, with explicit projected, pod-bound TokenRequest
+M2B-04 must use ServiceAccount `reference-deploy-broker/cordum-deploy-broker`
+with explicit projected, pod-bound TokenRequest
 credentials for the target API audience. Request 3600-second expiry; honor the
 issued lifetime/rotating file. Disable automount; project into the broker only.
 Do not grant the broker `serviceaccounts/token`, secrets, impersonate, bind or
@@ -70,15 +67,14 @@ service-account namespace/name. Permit only `get`, `create`, `patch` on core
 `services`, `configmaps` and apps `deployments`. Restrict get/patch by the
 operator-approved names; create needs a separate rule and admission name checks
 because [RBAC cannot name-restrict top-level creates](https://kubernetes.io/docs/reference/access-authn-authz/rbac/#referring-to-resources).
-No wildcards, list/watch, delete, update, subresources, RBAC or cluster-wide role.
+No wildcards, list/watch, delete, update, subresources, RBAC or cluster-wide mutation.
 Grant only GET of namespace `reference-protected-app` via a separate,
 resourceNames-restricted ClusterRole for namespace-UID binding; no other cluster
 resource permission. An independent observer gets separate read-only credentials.
 
-Operator configuration must bind cluster ID, HTTPS endpoint, server name, CA
-and namespace UID/name to the grant target, rejecting recreation/substitution.
-Never load user kubeconfig, exec/auth plugins, proxy settings,
-redirects, insecure TLS or impersonation headers. Lost/expired credentials deny.
+Bind operator-configured cluster ID, HTTPS endpoint/server name/CA and namespace
+UID/name to the grant target. Refuse recreation/substitution, user kubeconfig,
+exec/auth plugins, proxies, redirects, insecure TLS, impersonation or expired tokens.
 
 Rejected: an admin kubeconfig or long-lived service-account Secret, because its
 scope/lifetime and copyable delivery broaden the broker's authority and exposure.
@@ -99,11 +95,9 @@ mounted read-only; provision replacement before expiry, bound connections to
 certificate expiry and refuse new work on invalid/expired identity. Reuse Go
 TLS and [chain checks](../../core/infra/tlsutil/chain.go), not a new identity provider.
 
-Bind ADR-011 executor_id to the configured broker DNS identity and kind BROKER;
-the authority must map that identity to allowed tenants and targets. Independently
-compare tenant/principal/agent/session and action against its authenticated
-issuance record. Never derive the expected tenant solely from the grant or an
-untrusted header. No grants on the agent bus; no TLS key doubles as a grant key.
+Bind ADR-011 executor_id to broker DNS identity/kind BROKER and allowed tenants/
+targets. Check tenant/principal/agent/session/action against authenticated issuance,
+not merely grant/header values. No agent-bus grants or TLS/grant key reuse.
 
 Rejected: shared API keys or bearer grants at the broker, because possession
 would conflate proposal identity, executor identity and effect authority.
@@ -117,8 +111,7 @@ served equivalent versions. For create/update of protected Deployments,
 Services and ConfigMaps require request.userInfo.username equal to
 `system:serviceaccount:reference-deploy-broker:cordum-deploy-broker` and the
 operator-owned name/kind allowlist. Deny deletes of those protected objects.
-Do not trust an identity annotation, fieldManager or HTTP User-Agent. See
-[admission policy semantics](https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/).
+Use [authenticated identity](https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/), not annotations, fieldManager or User-Agent.
 
 One narrow controller exception is required: the trusted deployment controller
 may update only `deployment.kubernetes.io/revision` metadata while preserving
@@ -195,19 +188,15 @@ Cap each API request at 10 seconds and the operation at the lesser of 60 seconds
 or remaining grant lifetime. Disable automatic mutation retries, including 429
 and transport retry paths. Never refresh a grant's inputs or preconditions.
 
-Choose per-object results: NOT_ATTEMPTED, CONFIRMED_APPLIED, CONFIRMED_REJECTED,
-OUTCOME_UNKNOWN. A received successful API response establishes an apply result,
-not rollout health. A known API rejection establishes failure of that request;
-timeout, disconnect, crash or uncertain server response is unknown. Stop after
-the first rejected/unknown result, retaining prior effects. Overall success
-requires all objects confirmed; known partial failure must enumerate applied
-and untouched objects; any uncertain object makes the execution unknown.
-No multi-object atomicity, rollback, prune or blind retry is promised.
+Per-object results: NOT_ATTEMPTED, CONFIRMED_APPLIED, CONFIRMED_REJECTED,
+OUTCOME_UNKNOWN. API success confirms apply, not rollout health; known rejection
+confirms that request's failure. Timeout/disconnect/crash/uncertain response is
+unknown. Stop on rejection/unknown, preserving prior effects. Success requires
+all objects confirmed; partial failure lists applied/untouched objects, and any
+uncertain object makes execution unknown. No atomicity, rollback, prune or replay.
 
-Rejected: unconditional SSA upsert for MUST_NOT_EXIST, because a racing create
-could become an unauthorized update. Rejected GET-only preconditions are racy.
-Rejected: client-side apply or kubectl, because mutable context, rendering and
-implicit retries expand the authorized operation.
+Rejected: SSA upsert for MUST_NOT_EXIST and GET-only preconditions are racy.
+Rejected: kubectl/client-side apply expands authority via context, rendering and retries.
 
 ## Receipt
 
@@ -239,17 +228,14 @@ Signatures prove attribution/integrity, not honesty, persistence or health.
 
 ## Reconciliation
 
-M2B-07 must load the durable execution record and immutable grant/input/receipt,
-then issue uncached named GETs to the bound target with read-only credentials.
-Compare UID, resourceVersion, approved fields and field ownership against saved
-API responses and the pre-write record. Join independent target audit records
-by request correlation, object identity, broker identity and bounded time window.
-Matching desired state alone does not prove that this attempt caused it.
+M2B-07 must load durable execution and immutable grant/input/receipt, then use
+uncached named GETs with read-only credentials. Compare UID, resourceVersion,
+approved fields and ownership to saved responses/pre-write state. Join independent
+audit by request, object, broker and time window; desired-state equality is not causality.
 
-Resolve unknown to confirmed applied only with attributable target commit
-evidence and matching readback. A later change/deletion, mismatched UID, missing
-audit interval, unavailable target or ambiguous response must stay unknown or
-record drift, not success. Current absence cannot prove no transient effect.
+Resolve unknown only with attributable commit evidence and matching readback.
+Later change/deletion, UID mismatch, missing audit, unavailable target or ambiguous
+response means unknown/drift, not success. Absence cannot exclude transient effects.
 Historical apply evidence is not current health. Reconciliation must not resume
 writes or reissue authority: subsequent writes need fresh M2A authorization,
 current state/preconditions and approval as required.
@@ -269,16 +255,15 @@ for default-deny NetworkPolicy. M2B-10 must lock manifest/image digests, Docker,
 kernel, chart/configuration, broker/issuer artifacts and corpus in its evidence;
 untested CNI/version compatibility must refuse qualification, not fall back.
 
-Capture target API audit to an operator-only sink and before/during/after state
-with an independent observer. Exercise AP01-AP05 and M0-02 SC01-SC06, including
+Capture audit to an operator-only sink and independent before/during/after state.
+Exercise AP01-AP05 and M0-02 SC01-SC06, including
 lost responses, partial applies, stale UID/version, revocation and a substituted
 second cluster/namespace. Require an approved benign create and update positive
 control on the same reachable target. Correlate negative attempts with zero
 unauthorized mutations, including delayed/transient effects; denial codes alone
 are insufficient. Missing observations are inconclusive. No cluster is run here.
 
-Rejected: fake-client-only or kind-default-network tests, because neither alone
-measures real admission, API storage races, credential isolation or egress denial.
+Rejected: fake clients/default networking do not measure storage/admission/isolation.
 
 ## Alternate paths
 
@@ -294,13 +279,11 @@ All mechanisms are planned, not measured; administrators remain outside the boun
 
 ## Dependencies
 
-The [go.mod](../../go.mod) pin `k8s.io/client-go v0.35.10`, with matching
-`k8s.io/api` and `k8s.io/apimachinery`, is enough for the selected Kubernetes
-REST calls, projected-token transport and typed objects. Reuse these, Go TLS,
-protobuf and core/policysign. No new Go module, kubectl, Helm execution library,
-controller-runtime or identity framework is required for the broker. Calico
-and kind are qualification infrastructure, not broker library dependencies.
-Grant checks, durable execution and admission remain mandatory implementation work.
+The [go.mod](../../go.mod) pin `k8s.io/client-go v0.35.10`, matching `k8s.io/api`
+and `k8s.io/apimachinery`, suffices for REST, token transport and typed objects.
+Reuse these, Go TLS, protobuf and core/policysign: no new Go module, kubectl,
+Helm execution library, controller-runtime or identity framework. Calico/kind
+are qualification infrastructure, not broker library dependencies.
 
 ## Open questions
 
