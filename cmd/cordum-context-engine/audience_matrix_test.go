@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,7 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
@@ -24,35 +26,23 @@ import (
 
 func TestAudienceMatrixGRPCContextEngine(t *testing.T) {
 	t.Setenv(env.EnvMode, "production")
+	f := newServerTLSFixture(t)
+	t.Setenv("CONTEXT_ENGINE_TLS_CERT", f.cert)
+	t.Setenv("CONTEXT_ENGINE_TLS_KEY", f.key)
+	t.Setenv("CONTEXT_ENGINE_TLS_CLIENT_CA", f.ca)
 	present := func(t *testing.T, c identity.Credential) identity.Result {
-		return audienceContextPresent(t, c, audienceCredential(t, c))
+		return audienceContextPresent(t, c, audienceCredential(t, c), f)
 	}
 	probe := func(t *testing.T) identity.Result {
-		result := audienceContextCall(t, nil)
+		result := audienceContextCall(t, nil, true, f)
 		require.True(t, result.Accepted)
 		require.True(t, result.Effect, "baseline must append memory history")
 		return result
 	}
-	identity.Run(t, identity.GRPCContextEngine, present, identity.Baseline(probe),
-		identity.Skip(identity.Anonymous, "PR1-18"),
-		identity.Skip(identity.UserSession, "PR1-18"),
-		identity.Skip(identity.APIKeyStatic, "PR1-18"),
-		identity.Skip(identity.APIKeyManaged, "PR1-18"),
-		identity.Skip(identity.GatewayJWT, "PR1-18"),
-		identity.Skip(identity.GatewayJWTWrongAudience, "PR1-18"),
-		identity.Skip(identity.OIDCBearer, "PR1-18"),
-		identity.Skip(identity.OIDCBearerWrongAudience, "PR1-18"),
-		identity.Skip(identity.DelegationToken, "PR1-18"),
-		identity.Skip(identity.ServiceToken, "PR1-18"),
-		identity.Skip(identity.WorkerCredential, "PR1-18"),
-		identity.Skip(identity.WorkerSession, "PR1-18"),
-		identity.Skip(identity.WorkerSessionWrongAudience, "PR1-18"),
-		identity.Skip(identity.SCIMBearer, "PR1-18"),
-		identity.Skip(identity.AgentdNonce, "PR1-18"),
-		identity.Skip(identity.AgentIDHeader, "PR1-18"))
+	identity.Run(t, identity.GRPCContextEngine, present, identity.Baseline(probe))
 }
 
-func audienceContextPresent(t *testing.T, c identity.Credential, token string) identity.Result {
+func audienceContextPresent(t *testing.T, c identity.Credential, token string, f serverTLSFixture) identity.Result {
 	t.Helper()
 	result := identity.Result{}
 	carriers := []string{"x-api-key", "api-key", "authorization", "none"}
@@ -68,7 +58,7 @@ func audienceContextPresent(t *testing.T, c identity.Credential, token string) i
 			}
 			md = metadata.Pairs(carrier, value)
 		}
-		observed := audienceContextCall(t, md)
+		observed := audienceContextCall(t, md, false, f)
 		result.Accepted = result.Accepted || observed.Accepted
 		result.Effect = result.Effect || observed.Effect
 		result.Evidence += carrier + ": " + observed.Evidence + "; "
@@ -76,12 +66,12 @@ func audienceContextPresent(t *testing.T, c identity.Credential, token string) i
 	return result
 }
 
-func audienceContextCall(t *testing.T, md metadata.MD) identity.Result {
+func audienceContextCall(t *testing.T, md metadata.MD, baseline bool, f serverTLSFixture) identity.Result {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	svc, err := engine.NewService("redis://" + mr.Addr())
 	require.NoError(t, err)
-	conn := audienceContextConn(t, svc)
+	conn, lis, tlsCfg := audienceContextConn(t, svc, baseline, f)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	ctx = metadata.NewOutgoingContext(ctx, md)
@@ -91,18 +81,25 @@ func audienceContextCall(t *testing.T, md metadata.MD) identity.Result {
 		ModelResponse: []byte("matrix-memory-marker"),
 	})
 	after := mr.Dump()
-	if err != nil && status.Code(err) != codes.Unauthenticated && status.Code(err) != codes.PermissionDenied {
+	refusedTLS := status.Code(err) == codes.Unavailable && (strings.Contains(err.Error(), "certificate required") || strings.Contains(err.Error(), "read/write on closed pipe"))
+	if err != nil && !refusedTLS && status.Code(err) != codes.Unauthenticated && status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("unexpected RPC failure (not an authentication refusal): %v", err)
 	}
+	probe := "not run (baseline)"
+	if !baseline {
+		probe = audienceContextTLSRefusal(t, lis, tlsCfg)
+	}
 	return identity.Result{Accepted: err == nil && response != nil, Effect: before != after,
-		Evidence: fmt.Sprintf("miniredis mem:matrix-memory:events before/after snapshot changed=%t; key exists=%t",
-			before != after, mr.Exists("mem:matrix-memory:events"))}
+		Evidence: fmt.Sprintf("miniredis mem:matrix-memory:events before/after snapshot changed=%t; key exists=%t; RPC error=%v; TLS probe=%s",
+			before != after, mr.Exists("mem:matrix-memory:events"), err, probe)}
 }
 
-func audienceContextConn(t *testing.T, svc *engine.Service) *grpc.ClientConn {
+func audienceContextConn(t *testing.T, svc *engine.Service, baseline bool, f serverTLSFixture) (*grpc.ClientConn, *bufconn.Listener, *tls.Config) {
 	t.Helper()
 	lis := bufconn.Listen(1024 * 1024)
-	srv := newGRPCServer(svc, grpc.Creds(insecure.NewCredentials()))
+	creds, err := serverTransportCredentials(t.Context())
+	require.NoError(t, err)
+	srv := newGRPCServer(svc, creds)
 	done := make(chan error, 1)
 	go func() { done <- srv.Serve(lis) }()
 	t.Cleanup(func() {
@@ -114,9 +111,32 @@ func audienceContextConn(t *testing.T, svc *engine.Service) *grpc.ClientConn {
 			t.Errorf("serve: %v", err)
 		}
 	})
-	conn, err := grpc.NewClient("passthrough:///matrix", grpc.WithTransportCredentials(insecure.NewCredentials()),
+	tlsCfg := &tls.Config{RootCAs: f.roots, ServerName: "localhost", MinVersion: tls.VersionTLS12}
+	if baseline {
+		tlsCfg.Certificates = []tls.Certificate{f.client}
+	}
+	conn, err := grpc.NewClient("passthrough:///matrix", grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, conn.Close()) })
-	return conn
+	return conn, lis, tlsCfg
+}
+
+func audienceContextTLSRefusal(t *testing.T, lis *bufconn.Listener, tlsCfg *tls.Config) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	raw, err := lis.DialContext(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, raw.Close()) })
+	cfg := tlsCfg.Clone()
+	cfg.NextProtos = []string{"h2"}
+	conn := tls.Client(raw, cfg)
+	require.NoError(t, conn.HandshakeContext(ctx))
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
+	// Do not write a preface: it can race the server's TLS 1.3 refusal alert.
+	n, err := conn.Read(make([]byte, 1))
+	require.Zero(t, n, "unauthenticated TLS probe received data")
+	require.ErrorContains(t, err, "certificate required")
+	return err.Error()
 }

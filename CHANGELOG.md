@@ -5,6 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+- The workflow engine's accepted-result consumer checks the scheduler service
+  token at `bus.PublishedAt` when JetStream delivery metadata is present,
+  otherwise at receive time.
+
 - The audit consumer checks publisher service tokens at `bus.PublishedAt`
   when JetStream delivery metadata is present, otherwise at receive time.
 
@@ -18,6 +22,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Production requires `SAFETY_KERNEL_TLS_CLIENT_CA` and
+  `CONTEXT_ENGINE_TLS_CLIENT_CA`; the respective service will not start without
+  its client CA. Safety Kernel callers must set `SAFETY_KERNEL_TLS_CLIENT_CERT`
+  and `SAFETY_KERNEL_TLS_CLIENT_KEY` to a client keypair signed by that CA.
+  External Context Engine callers must present a client certificate from its CA.
+
+- Without advanced RBAC, a managed API key needs the `admin` scope to submit
+  `delegation_audience_agent_id` for an agent other than its own. Keys holding
+  only job-write scopes must use their own agent as the audience. With RBAC,
+  the existing `delegation.impersonate` permission check is unchanged.
+
 - Managed API key grants are limited to scopes held by the calling key;
   requests for other scopes return 403. A bare scope (`admin`, `write`,
   `operator`, `read` or `viewer`) is held only by a key that has the same bare
@@ -27,6 +42,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   without scopes. `/api/v1/audit/legal-hold` and `/api/v1/audit/legal-holds`
   use the `legalhold` resource: `audit:write` and `audit:*` keys no longer
   authorize those routes. Static keys are unchanged.
+
+- Managed API key scopes now apply to the gateway gRPC API, matched as on the
+  HTTP routes: `SubmitJob` requires a scope covering `jobs:write`, and
+  `GetJobStatus` a scope covering `jobs:read`. A managed key with scopes is
+  refused on any other gRPC method. Scoped keys whose scopes do not cover
+  `jobs:write`, such as `policy:write` keys, can no longer submit jobs over
+  gRPC, and scoped keys whose scopes do not cover `jobs:read`, such as
+  `jobs:write` keys, can no longer read job status over gRPC. Managed keys
+  without scopes, static keys and JWT callers are unchanged.
 
 - With `AUDIT_TRANSPORT=nats`, the gateway's audit consumer chains and exports
   only `sys.audit.export` packets that carry a valid audit-publisher service
@@ -389,6 +413,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   ruleset (task-fd34e921).
 
 ### Security
+
+#### Service client certificate requirement (2026-11-16, task-66bee998)
+
+- The Safety Kernel and Context Engine require and verify client certificates
+  against their configured client CA before serving gRPC calls. Outside
+  production, an unset client CA retains server-only TLS or plaintext behavior.
 
 - Edge: the session sweeper keeps sessions under legal hold. Before each
   deletion it checks the tenant's audit legal hold, and it keeps the

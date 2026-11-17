@@ -154,7 +154,11 @@ func (h *signedE2EHarness) start(t *testing.T, dir, addr, policyPath string) {
 // dial connects over TLS and waits up to 10s for the kernel's first answer.
 func (h *signedE2EHarness) dial(t *testing.T, addr string, pool *x509.CertPool) {
 	t.Helper()
-	creds := credentials.NewTLS(&tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12})
+	client, err := tls.LoadX509KeyPair(os.Getenv("SAFETY_KERNEL_TLS_CERT"), os.Getenv("SAFETY_KERNEL_TLS_KEY"))
+	require.NoError(t, err)
+	creds := credentials.NewTLS(&tls.Config{
+		RootCAs: pool, Certificates: []tls.Certificate{client}, MinVersion: tls.VersionTLS12,
+	})
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
@@ -235,7 +239,7 @@ func signedE2ETLS(t *testing.T, dir string) *x509.CertPool {
 		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "signed-e2e-kernel"},
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
 		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1)}, BasicConstraintsValid: true, IsCA: true,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
@@ -247,6 +251,7 @@ func signedE2ETLS(t *testing.T, dir string) *x509.CertPool {
 	require.NoError(t, os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0o600))
 	t.Setenv("SAFETY_KERNEL_TLS_CERT", certPath)
 	t.Setenv("SAFETY_KERNEL_TLS_KEY", keyPath)
+	t.Setenv("SAFETY_KERNEL_TLS_CLIENT_CA", certPath)
 	cert, err := x509.ParseCertificate(der)
 	require.NoError(t, err)
 	pool := x509.NewCertPool()

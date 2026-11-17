@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -70,7 +71,7 @@ func TestUsageRecordingDrain(t *testing.T) {
 	}
 
 	for i := 0; i < calls; i++ {
-		if _, err := b.authenticate(context.Background(), "managed-key", ""); err != nil {
+		if _, err := b.authenticateHTTP(context.Background(), "managed-key", "", http.MethodGet, "/api/v1/jobs"); err != nil {
 			t.Fatalf("authenticate() error = %v", err)
 		}
 	}
@@ -203,7 +204,7 @@ func TestManagedKeyScope_ReflectedInAuthContext(t *testing.T) {
 				defaultTenant: "default",
 				keyStore:      ks,
 			}
-			authCtx, err := b.authenticate(context.Background(), "test-key", "")
+			authCtx, err := b.authenticateHTTP(context.Background(), "test-key", "", http.MethodGet, "/api/v1/jobs")
 			if err != nil {
 				t.Fatalf("authenticate() error = %v", err)
 			}
@@ -236,7 +237,7 @@ func TestUsageRecordingErrorLogged(t *testing.T) {
 		keyStore:      ks,
 	}
 
-	if _, err := b.authenticate(context.Background(), "managed-key", ""); err != nil {
+	if _, err := b.authenticateHTTP(context.Background(), "managed-key", "", http.MethodGet, "/api/v1/jobs"); err != nil {
 		t.Fatalf("authenticate() error = %v", err)
 	}
 
@@ -341,7 +342,7 @@ func TestKeyIDAndName_PopulatedInAuthContext(t *testing.T) {
 		}
 		b := &BasicAuthProvider{defaultTenant: "default", keyStore: ks}
 
-		ac, err := b.authenticate(context.Background(), "managed-raw-secret", "")
+		ac, err := b.authenticateHTTP(context.Background(), "managed-raw-secret", "", http.MethodGet, "/api/v1/jobs")
 		if err != nil {
 			t.Fatalf("authenticate() error = %v", err)
 		}
@@ -364,7 +365,7 @@ func TestKeyIDAndName_PopulatedInAuthContext(t *testing.T) {
 			}),
 		}
 
-		ac, err := b.authenticate(context.Background(), raw, "")
+		ac, err := b.authenticateHTTP(context.Background(), raw, "", http.MethodGet, "/api/v1/jobs")
 		if err != nil {
 			t.Fatalf("authenticate() error = %v", err)
 		}

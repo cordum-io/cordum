@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
 // ScopeError reports that a managed API key is valid but not permitted for the
-// canonical resource:verb required by the current HTTP request.
+// canonical resource:verb required by the current HTTP or gRPC request.
 type ScopeError struct {
 	Required string
 	Granted  []string
@@ -127,6 +129,22 @@ func PathToScope(method, path string) (scope string, ok bool) {
 		return "", false
 	}
 	return resource + ":" + verb, true
+}
+
+// grpcMethodScopes holds the scope of every method on the gateway's gRPC
+// server, keyed by full method name.
+var grpcMethodScopes = map[string]string{
+	pb.CordumApi_SubmitJob_FullMethodName:    "jobs:write",
+	pb.CordumApi_GetJobStatus_FullMethodName: "jobs:read",
+}
+
+// GRPCMethodToScope maps a full gRPC method name, as grpc.Method returns it,
+// to a canonical resource:verb scope. Like PathToScope, ok=false means
+// unmapped: scoped API keys are refused, and empty-scope legacy keys keep
+// their role-only behavior.
+func GRPCMethodToScope(fullMethod string) (scope string, ok bool) {
+	scope, ok = grpcMethodScopes[fullMethod]
+	return scope, ok
 }
 
 func verbForMethod(method string) (string, bool) {

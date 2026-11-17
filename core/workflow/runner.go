@@ -307,7 +307,13 @@ func acceptedResultHandler(rec *reconciler, trust *policysign.TrustStore) func(c
 			return nil
 		}
 		if trust != nil {
-			claims, err := servicetoken.VerifyService(p.GetAuthToken(), trust, time.Now())
+			// A JetStream redelivery keeps its publish time, so a token that
+			// was valid when published is not refused for being delivered late.
+			at, ok := bus.PublishedAt(traceCtx)
+			if !ok {
+				at = time.Now()
+			}
+			claims, err := servicetoken.VerifyService(p.GetAuthToken(), trust, at)
 			if err != nil || claims.Subject != servicetoken.IdentityScheduler {
 				slog.Warn("workflow accepted result refused", "reason", "service_token")
 				return nil
