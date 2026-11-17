@@ -475,7 +475,7 @@ func TestHandleSubmitJobHTTPRejectsExpiredDelegationToken(t *testing.T) {
 // PermDelegationImpersonate (or the admin legacy role); otherwise the
 // submit is rejected 403 and an audit event is recorded.
 func TestHandleSubmitJobHTTPRejectsAudienceOverrideWithoutImpersonatePermission(t *testing.T) {
-	s, _, _ := newTestGateway(t)
+	s, bus, safetyClient := newTestGateway(t)
 	enableTestAuth(s)
 	setDelegationKeys(t)
 	setTestEntitlements(t, s, licensing.PlanEnterprise, func(entitlements *licensing.Entitlements) {
@@ -492,9 +492,9 @@ func TestHandleSubmitJobHTTPRejectsAudienceOverrideWithoutImpersonatePermission(
 		t.Fatalf("LinkWorker() error = %v", err)
 	}
 
-	// Role holds jobs.write (so the outer gate passes) but NOT
-	// delegation.impersonate, so the audience override gate must fire.
-	putTestRole(t, s, "relay", auth.PermJobsWrite)
+	// "user" passes the outer legacy role gate and holds jobs.write, but
+	// NOT delegation.impersonate, so the audience override gate must fire.
+	putTestRole(t, s, "user", auth.PermJobsWrite)
 
 	service, err := s.delegationTokenService()
 	if err != nil {
@@ -515,14 +515,40 @@ func TestHandleSubmitJobHTTPRejectsAudienceOverrideWithoutImpersonatePermission(
 	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/jobs", strings.NewReader(body)), &auth.AuthContext{
 		Tenant:      "default",
 		PrincipalID: "worker-b",
-		Role:        "relay",
+		Role:        "user",
 	})
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
+	audienceDenials := func() int {
+		entries, err := s.loadPolicyAudit(context.Background())
+		if err != nil {
+			t.Fatalf("loadPolicyAudit() error = %v", err)
+		}
+		count := 0
+		for _, entry := range entries {
+			if entry.Action != "submit_delegation_impersonation_denied" {
+				continue
+			}
+			count++
+			if entry.ActorID != "worker-b" || entry.Role != "user" ||
+				!strings.Contains(entry.Message, "caller agent_id agent-b requested audience agent-c") {
+				t.Errorf("unexpected audience denial: %+v", entry)
+			}
+		}
+		return count
+	}
+	published, denials := len(bus.published), audienceDenials()
+	safetyClient.recordReq(nil)
 	s.handleSubmitJobHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status=%d body=%s want 403", rec.Code, rec.Body.String())
+	}
+	if got := audienceDenials(); got != denials+1 {
+		t.Errorf("audience gate denials = %d, want %d", got, denials+1)
+	}
+	if safetyClient.lastReq != nil || len(bus.published) != published {
+		t.Errorf("refused submit reached policy = %v, publishes %d -> %d", safetyClient.lastReq != nil, published, len(bus.published))
 	}
 }
 
