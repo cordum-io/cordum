@@ -96,6 +96,35 @@ func TestMapEdgeDecisionToHookOutputPreToolUseConstrainWithoutUpdatedInputFallsB
 	}
 }
 
+// An allowing decision that carries a constraint kind the hook cannot apply
+// blocks, whatever the hook event.
+func TestMapEdgeDecisionToHookOutputConstrainUnenforceableKindBlocks(t *testing.T) {
+	reason := `Cordum Edge cannot apply the policy constraint kinds ["sandbox"] on this hook; action was not run`
+	for _, tc := range []struct{ event, decision string }{
+		{"PreToolUse", "CONSTRAIN"},
+		{"PreToolUse", "ALLOW"},
+		{"UserPromptSubmit", "CONSTRAIN"},
+	} {
+		t.Run(tc.event+"/"+tc.decision, func(t *testing.T) {
+			out, err := MapEdgeDecisionToHookOutput(tc.event, EdgeDecisionResponse{
+				Decision:     tc.decision,
+				Reason:       "allowed with constraints",
+				UpdatedInput: map[string]any{"command": "npm test"},
+				Constraints:  map[string]any{"sandbox": map[string]any{"isolated": true}},
+			})
+			if err != nil {
+				t.Fatalf("MapEdgeDecisionToHookOutput: %v", err)
+			}
+			if out.Decision != "block" || out.Reason != reason {
+				t.Fatalf("out = %+v, want block with reason %q", out, reason)
+			}
+			if hsop := out.HookSpecificOutput; tc.event == "PreToolUse" && (hsop == nil || hsop.PermissionDecision != "deny" || hsop.UpdatedInput != nil) {
+				t.Fatalf("PreToolUse output = %+v, want deny without updated input", hsop)
+			}
+		})
+	}
+}
+
 func TestMapEdgeDecisionToHookOutputUserPromptSubmitDenyBlocksWithReason(t *testing.T) {
 	out, err := MapEdgeDecisionToHookOutput("UserPromptSubmit", EdgeDecisionResponse{
 		Decision: "DENY",

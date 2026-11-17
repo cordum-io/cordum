@@ -9,9 +9,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 - Python SDK: remove template-unused imports during generation with the pinned Ruff
   cleanup hook before formatting, without changing API or version markers (task-90b8033a).
+- Edge hook: a CONSTRAIN decision that carries a constraint kind the hook cannot apply
+  now blocks the tool call before it runs, and the hook reason and the Edge event name
+  those kinds. An approved action whose consumed ALLOW still carries such a kind blocks
+  the same way. The hook applies none of the five kinds (budgets, sandbox, toolchain,
+  diff, redaction level) yet (task-aa7ceb05).
 
 ### Documentation
 
+- Protected-operation contract: `docs/contract/protected-operation.md` now points to [ADR-011](docs/adr/011-execution-grant-format.md), the proposed execution-grant format, for M2A-01's open questions and the grant issuer key row. ADR-011 is a design; it implements no schema, verifier, broker or protected operation (task-e43b5876).
+- Enforcement matrix: `docs/contract/enforcement-matrix.yaml` has a `ref_tests` section that links each code ref of an enforced cell to existing tests, or records a gap where none exists (three today: the agentd throttle mapping, the scheduler throttle requeue and the `budgets.max_concurrent_jobs` limit). `tests/contract` rejects a missing or orphan entry, an unknown test, an empty list without a gap and a gap alongside tests (task-4c0b9fe8).
 - MCP docs: `docs/mcp/approval_hold.md` and `docs/mcp-server.md` now state that a policy-gated `tools/call` with a blank agent ID answers `-32098` `no_identity` before any approval access, and that missing tenant, session or execution metadata answers `-32097` `missing_mcp_metadata` for plain and ref-bearing calls (task-850c7a0e).
 
 ### Breaking changes
@@ -214,6 +221,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Execution grant v1 schema (M2A-02A) and `core/execgrant` canonical bytes, strict
+  decoder and golden vectors; no service issues, signs or verifies grants yet (task-85bb037a).
+
+- Release-compose install: when none of `CORDUM_POLICY_SIGNING_KEY`,
+  `SAFETY_POLICY_PUBLIC_KEY` and `SAFETY_POLICY_SIGNATURE` is set, `quickstart.sh`
+  on `docker-compose.release.yml` generates an Ed25519 key with
+  `cordumctl pack keygen`, signs `config/safety.yaml` under key id `default` and
+  writes all three to `.env`. A re-run leaves `.env` unchanged, operator values
+  are kept, and a partial setting or a non-default `CORDUM_POLICY_SIGNING_KEY_ID`
+  stops with a named error before any write. `install.sh` with
+  `USE_RELEASE_IMAGES=1` now pulls images before quickstart only on a re-install.
+  `tools/scripts/quickstart_policy_bootstrap_test.sh` covers these cases
+  (task-5dc8476c).
+- Artifacts: tenant-scoped, write-once SHA-256 content storage rechecks bytes on reads and supports extend-only retention; no service uses it yet (task-0e661014).
+
 - Decision records: for a job dispatched under a delegation token, the Policy
   Decision Log record and the job's stored safety decision carry
   `delegation_issuer_chain`, the issuer agent ids of the job's delegation lineage,
@@ -355,6 +377,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   ruleset (task-fd34e921).
 
 ### Security
+
+- MCP gateway: the Edge session that `POST /api/v1/mcp/gateway/clients/connect`
+  creates, and its events, record only the principal a credential vouches
+  for. A principal named only by the `X-Principal-Id` header is no longer
+  recorded as their `principal_id` (task-a4604f76).
 
 - Agent identities: an agent can no longer exempt its own mutating MCP calls from human approval. `POST /api/v1/agents` and `PUT /api/v1/agents/{id}` answer 403 `AGENT_SELF_PREAPPROVAL_DENIED` when the caller's own principal would set `preapproved_mutating_tools` on the identity it is linked to, or link itself (`agent_id`) to an identity that has or gets such tools. Another admin can still grant them (task-2f34e241).
 - Edge: `cordumctl edge managed-settings verify` now applies generate's

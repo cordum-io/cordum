@@ -174,15 +174,17 @@ func (e *Evaluator) evaluateFreshDecision(evalCtx context.Context, req claude.Ag
 	if resp == nil {
 		return e.degradedDecision(req, evalReq, ErrEvaluateResponseMalformed, cacheReq, startedAt, writer, requireEvidence)
 	}
-	decision := AgentdDecisionFromEvaluateResponse(evalCtx, *resp, e.approvalConfig, e.approvalWaiter, e.approvalConsumer(evalReq))
-	e.recordDecisionObservability(req, evalReq, *resp, decision, startedAt)
-	_ = e.cache.Put(cacheRequestWithEvaluateResponse(cacheReq, *resp), *resp)
+	// The metrics, the cache and the evidence see the same DENY as the hook.
+	checked := denyUnenforceableConstraints(*resp)
+	decision := AgentdDecisionFromEvaluateResponse(evalCtx, checked, e.approvalConfig, e.approvalWaiter, e.approvalConsumer(evalReq))
+	e.recordDecisionObservability(req, evalReq, checked, decision, startedAt)
+	_ = e.cache.Put(cacheRequestWithEvaluateResponse(cacheReq, checked), checked)
 	// Gateway evaluate already persisted a hook.policy_decision event under
 	// resp.EventID. The agentd-side evidence event captures separate local
 	// metadata (cache lookup, fail-mode, agentd timing) and must be a distinct
 	// record — reusing resp.EventID would collide with the gateway-written
 	// event when the events/batch flush hits loadEventByIDInTx.
-	freshResp := *resp
+	freshResp := checked
 	freshResp.EventID = ""
 	if err := e.recordDecisionEvidence(writer, requireEvidence, decision, evalReq, DecisionEvidence{
 		State:      e.state,
