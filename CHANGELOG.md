@@ -5,6 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+- The audit consumer checks publisher service tokens at `bus.PublishedAt`
+  when JetStream delivery metadata is present, otherwise at receive time.
+
 - Gateway and scheduler NATS audit publishers attach a control-plane service
   token (`servicetoken`, type `cordum-service`, subjects `api-gateway` and
   `cordum-scheduler`) to events on `sys.audit.export` when
@@ -14,6 +17,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   pipeline is enabled.
 
 ### Breaking changes
+
+- Managed API key grants are limited to scopes held by the calling key;
+  requests for other scopes return 403. A bare scope (`admin`, `write`,
+  `operator`, `read` or `viewer`) is held only by a key that has the same bare
+  scope, and a `<resource>:<verb>` or `<resource>:*` scope by a key whose own
+  scopes match it. Existing `admin`, `write` and `operator` keys must request
+  held scopes when creating keys. A managed key can no longer create a key
+  without scopes. `/api/v1/audit/legal-hold` and `/api/v1/audit/legal-holds`
+  use the `legalhold` resource: `audit:write` and `audit:*` keys no longer
+  authorize those routes. Static keys are unchanged.
 
 - With `AUDIT_TRANSPORT=nats`, the gateway's audit consumer chains and exports
   only `sys.audit.export` packets that carry a valid audit-publisher service
