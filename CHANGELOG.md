@@ -859,6 +859,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Jobs: when a job's tenant cannot be read, for example after its metadata
+  expires (`JOB_META_TTL`, 7 days by default), callers without cross-tenant
+  access get `404 job not found` from `GET /api/v1/jobs/{id}/decisions`,
+  `POST /api/v1/jobs/{id}/cancel`, `DELETE /api/v1/dlq/{job_id}` and
+  `POST /api/v1/dlq/{job_id}/retry` for that job, and `NOT_FOUND` from gRPC
+  `GetJobStatus`. A failed tenant lookup returns `503` (gRPC `UNAVAILABLE`).
+  The output entries of `GET /api/v1/policy/audit?type=output` and
+  `GET /api/v1/policy/output/stats` include the job only for callers with
+  cross-tenant access, who can read its decisions and status and delete its
+  DLQ entry. The DLQ entry keeps its own expiry
+  (`CORDUM_DLQ_ENTRY_TTL_DAYS`, 30 days by default) (task-e845f244).
 - Config: `PUT` and `POST /api/v1/config` accept only the scopes `system`,
   `org`, `team`, `workflow` and `step`, the same set `GET /api/v1/config`
   accepts. Any other `scope` string gets 400 `CONFIG_REQUEST_INVALID`
