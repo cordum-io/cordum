@@ -17,8 +17,9 @@ metadata:
 automountServiceAccountToken: false
 ---
 # ResourceQuota prevents runaway pods from consuming unbounded cluster
-# resources. Values accommodate production HPA maxReplicas (36 pods) plus
-# headroom for NATS, Redis, and jobs. Adjust for larger deployments.
+# resources. Values fit the production overlay with every HPA at
+# maxReplicas, plus its StatefulSets, backup jobs and the surge pods of a
+# default rolling update. Adjust for larger deployments.
 apiVersion: v1
 kind: ResourceQuota
 metadata:
@@ -26,10 +27,10 @@ metadata:
   namespace: cordum
 spec:
   hard:
-    requests.cpu: "8"
-    requests.memory: 8Gi
-    limits.cpu: "16"
-    limits.memory: 16Gi
+    requests.cpu: "12"
+    requests.memory: 16Gi
+    limits.cpu: "48"
+    limits.memory: 48Gi
     pods: "50"
     services: "20"
     persistentvolumeclaims: "10"

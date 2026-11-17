@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 from typing import List
 
@@ -60,8 +60,6 @@ class RunDetail:
     def to_dict(self) -> Dict[str, Any]:
         from ..models.run_detail_output_type_0 import RunDetailOutputType0
         from ..models.run_summary_error_type_0 import RunSummaryErrorType0
-        from ..models.run_detail_steps import RunDetailSteps
-        from ..models.run_detail_input import RunDetailInput
 
         id = self.id
 
