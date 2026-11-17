@@ -221,13 +221,13 @@ func TestGoldenRoundTrip(t *testing.T) {
 	}
 }
 
-func assertReason(t *testing.T, err error, reason Reason) *Error {
+func assertReason(t *testing.T, err error, reason Reason) string {
 	t.Helper()
 	var rejected *Error
 	if !errors.As(err, &rejected) || rejected.Reason != reason {
 		t.Fatalf("got %v, want reason %s", err, reason)
 	}
-	return rejected
+	return rejected.Field
 }
 
 func TestGoldenMalformed(t *testing.T) {
@@ -451,8 +451,8 @@ func TestCanonicalValidate(t *testing.T) {
 			g := fullGrant(t)
 			row.change(g)
 			out, err := CanonicalBytes(g)
-			if got := assertReason(t, err, row.reason); got.Field != row.field {
-				t.Fatalf("field %q, want %q", got.Field, row.field)
+			if got := assertReason(t, err, row.reason); got != row.field {
+				t.Fatalf("field %q, want %q", got, row.field)
 			}
 			if out != nil {
 				t.Fatal("rejection released bytes")
@@ -489,8 +489,8 @@ func checkScalarBounds(t *testing.T) {
 				}
 				continue
 			}
-			if got := assertReason(t, err, row.reasons[i]); got.Field != row.field {
-				t.Fatalf("field %s, want %s", got.Field, row.field)
+			if got := assertReason(t, err, row.reasons[i]); got != row.field {
+				t.Fatalf("field %s, want %s", got, row.field)
 			}
 		}
 	}
@@ -522,8 +522,8 @@ func checkListBounds(t *testing.T) {
 			t.Fatal(err)
 		}
 		fillList(t, g, path, max+1)
-		if got := assertReason(t, Validate(g), InvalidField); got.Field != path {
-			t.Fatalf("field %s, want %s", got.Field, path)
+		if got := assertReason(t, Validate(g), InvalidField); got != path {
+			t.Fatalf("field %s, want %s", got, path)
 		}
 	}
 }
