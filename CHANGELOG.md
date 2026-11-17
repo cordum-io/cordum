@@ -9,6 +9,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 - Python SDK: remove template-unused imports during generation with the pinned Ruff
   cleanup hook before formatting, without changing API or version markers (task-90b8033a).
+- Edge hook: a CONSTRAIN decision that carries a constraint kind the hook cannot apply
+  now blocks the tool call before it runs, and the hook reason and the Edge event name
+  those kinds. An approved action whose consumed ALLOW still carries such a kind blocks
+  the same way. The hook applies none of the five kinds (budgets, sandbox, toolchain,
+  diff, redaction level) yet (task-aa7ceb05).
 
 ### Documentation
 
