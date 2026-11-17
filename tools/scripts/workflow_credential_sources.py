@@ -216,7 +216,9 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
     def report(self, code: str, rel: str, line: int, source: bool = False) -> None: self.issues.add((self.wf, self.job, f"{code}@{rel}:{line}")) if self.credential or not source else None  # SOURCE_*: credential jobs only
     def read(self, rel: str) -> tuple:  # (text, refusal): a regular in-repo file, no symlinked component, <= MAX_BYTES
         path = self.root
-        if any((path := path / part).is_symlink() for part in rel.split("/")): return "", "SYMLINK"
+        for part in rel.split("/"):
+            if (path := (parent := path) / part).parent != parent: return "", "MISSING"  # a part that is not a direct child (a Windows drive part, C:) re-anchors the path, as load()'s root.joinpath(key) would: no such file, as on Linux
+            if path.is_symlink(): return "", "SYMLINK"
         refusal = "MISSING" if not path.is_file() else "ESCAPE" if not path.resolve().is_relative_to(self.root.resolve()) else "OVERSIZE" if path.stat().st_size > MAX_BYTES else ""
         return ("", refusal) if refusal else (path.read_bytes().decode("utf-8", "replace").replace("\r\n", "\n"), "")
     def rules(self) -> object:  # ({target: (line, prerequisites, [(line, recipe)])}, default goal), or a refusal
