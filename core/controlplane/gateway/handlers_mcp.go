@@ -599,7 +599,10 @@ const mcpSessionLabel = "mcp_session_id"
 // current session and execution per SSE session if either matters.
 func (s *server) mcpEdgeTrace(ctx context.Context, tenantID, agentID, principalID, mcpSessionID string) (sessionID, executionID string, err error) {
 	caps, rotates := s.edgeStore.(mcpEdgeTraceCaps)
-	for gen := 0; ; gen++ {
+	for gen := 0; ; {
+		if err := ctx.Err(); err != nil {
+			return "", "", err
+		}
 		sessionID = mcpSessionID
 		if gen > 0 {
 			sessionID = fmt.Sprintf("%s.s%d", mcpSessionID, gen)
@@ -619,6 +622,7 @@ func (s *server) mcpEdgeTrace(ctx context.Context, tenantID, agentID, principalI
 				}
 				if events >= max(int64(maxEvents)*4/5, 1) {
 					if n >= int64(maxExecutions) {
+						gen++
 						continue
 					}
 					executionID = mcpEdgeExecutionID(sessionID, n)
@@ -627,9 +631,26 @@ func (s *server) mcpEdgeTrace(ctx context.Context, tenantID, agentID, principalI
 		}
 		err = s.ensureMCPHTTPTraceParents(ctx, tenantID, agentID, principalID, mcpSessionID, sessionID, executionID)
 		if errors.Is(err, edge.ErrSessionExecutionFanoutExceeded) {
+			gen++
 			continue
 		}
-		return sessionID, executionID, err
+		if err != nil {
+			return "", "", err
+		}
+		if rotates {
+			// The count above may be stale: another caller can create and fill
+			// its successor while this call is selecting it. Recheck the actual
+			// selected execution, then reread this session on concurrent progress.
+			_, maxEvents := caps.ExecutionCaps()
+			events, err := caps.CountExecutionEvents(ctx, tenantID, executionID)
+			if err != nil {
+				return "", "", err
+			}
+			if events >= max(int64(maxEvents)*4/5, 1) {
+				continue
+			}
+		}
+		return sessionID, executionID, nil
 	}
 }
 

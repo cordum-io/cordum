@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 from typing import List
 
@@ -80,10 +80,7 @@ class JobDetail:
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.safety_decision import SafetyDecision
         from ..models.job_detail_result_type_0 import JobDetailResultType0
-        from ..models.delegation_lineage_view import DelegationLineageView
-        from ..models.job_detail_labels import JobDetailLabels
 
         id = self.id
 

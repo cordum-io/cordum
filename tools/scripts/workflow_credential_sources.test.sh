@@ -89,6 +89,13 @@ OPTS.update({  # a redirection before the command name is not the name: bash run
 OPTS["return_condition"] = dict(before=SAFE + " || { if return 1; then :; fi; unset minted; return 1; }", head=STRICT + "main() {\n", tail="}\nmain || true\n")  # a return in a condition runs before the clear
 MINTS.update({"mint_builtin_xtrace": ("builtin set -x\n" + SAFE, ""), "mint_command_xtrace": ("command set -x\n" + SAFE, ""), "mint_condition_xtrace": ("if set -x; then :; fi\n" + SAFE, ""),  # bash runs a set behind builtin, command or a condition word in this shell
               "mint_condition_reset": ("set +e\nif set -e; then :; fi\n" + SAFE, "")})  # so a set -e there turns errexit back on
+for wrapper in ("plain", "builtin", "command"):
+    lead = "" if wrapper == "plain" else wrapper + " "
+    for boundary in ("dash", "word"):
+        end = "--" if boundary == "dash" else "positional"
+        OPTS[f"trace_{wrapper}_{boundary}"] = dict(head=STRICT + "set -x\n" + lead + f"set {end} +x\n")
+        OPTS[f"errexit_{wrapper}_{boundary}"] = dict(head="set +e\n" + lead + f"set {end} -e\n")
+        OPTS[f"reset_{wrapper}_{boundary}"] = dict(head="set -x\nset +e\n" + lead + f"set -e +x {end} -x +e\n")
 GEN = {
     "gen_openssl": "$(openssl rand -hex 16)", "gen_uuidgen": "$(uuidgen)",
     "gen_urandom": "$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \\n')", "gen_random": "syn-${RANDOM}${RANDOM}",
@@ -355,6 +362,9 @@ sourced_subshell_function sourced_errexit_window_restored clean
 sourced_function_if_return sourced_function_elif_return sourced_function_while_return sourced_function_until_return sourced_function_bang_return return_condition e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
 mint_builtin_xtrace mint_command_xtrace mint_condition_xtrace sourced_builtin_return_trace e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
 mint_condition_reset sourced_function_reset_then_return clean
+trace_plain_dash trace_builtin_dash trace_command_dash trace_plain_word trace_builtin_word trace_command_word e2e.yml:e2e-tls:CREDENTIAL_USE_BEFORE_REGISTRATION@tools/scripts/zz_synthetic_mint.sh
+errexit_plain_dash errexit_builtin_dash errexit_command_dash errexit_plain_word errexit_builtin_word errexit_command_word e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_mint.sh
+reset_plain_dash reset_builtin_dash reset_command_dash reset_plain_word reset_builtin_word reset_command_word clean
 gen_openssl gen_uuidgen gen_urandom gen_random gen_date gen_python gen_quoted_paren errexit_substitution mask_captured mask_env_captured e2e.yml:e2e-tls:CREDENTIAL_UNREGISTERED@tools/scripts/zz_synthetic_gen.sh
 gen_nested mask_fd_captured clean
 nonce_bypass_removed edge-fake-hook-e2e.yml:edge-fake-hook-e2e:CREDENTIAL_UNREGISTERED@tools/scripts/edge_fake_hook_e2e.sh
@@ -423,5 +433,14 @@ if python - "${WORK}" "${SOURCES}" <<'PY'
 import pathlib, runpy, sys; ns, root = runpy.run_path(sys.argv[2]), pathlib.Path(sys.argv[1]) / "drive-operand"; root.mkdir(); (root / "plain.rc").write_text("set -x\n"); drive = root.drive or "C:"; scans = [(ns["Scan"](root), run, cred) for run in (f"source {drive}/plain.rc", f"bash {drive}/plain.rc", f"bash --rcfile {drive}/plain.rc -ic 'true'") for cred in (True, False)]; [s.run_job("probe.yml", "job", {"steps": [{"run": run}]}, {}, {}, cred) for s, run, cred in scans]; assert all(sorted(i[2].split("@")[0] for i in s.issues) == ["SOURCE_MISSING"] * cred for s, _, cred in scans), [(run, cred, sorted(s.issues)) for s, run, cred in scans]  # a Windows host reads C:/plain.rc as the in-repo twin in read() but as absolute in load(): it reports a missing file, as Linux does, and must not raise
 PY
 then record PASS "drive-letter operand reports a missing file"; else record FAIL "drive-letter operand reports a missing file"; fi
+if python - "${SOURCES}" <<'PY'
+import runpy, sys
+ns = runpy.run_path(sys.argv[1])
+cmds, error = ns["parse"]('set -e "')
+assert error and not ns["flag"](cmds[0], True, *ns["ERREXIT"]) and ns["flag"](cmds[0], False, *ns["XTRACE"])
+assert ns["facts"]('set -e "')[1]
+PY
+then record PASS "malformed set fails closed without crashing"; else record FAIL "malformed set fails closed without crashing"; fi
+
 echo "SUMMARY: ${PASS} pass, ${FAIL} fail, ${SKIP} skip"
 [[ "${FAIL}" -eq 0 ]]

@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 from typing import List
 
@@ -10,7 +10,6 @@ from ..types import UNSET, Unset
 
 from ..models.config_document_scope import ConfigDocumentScope
 from ..types import UNSET, Unset
-from typing import cast
 from typing import Dict
 from typing import Union
 
@@ -36,8 +35,6 @@ class ConfigDocument:
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.config_document_data import ConfigDocumentData
-
         scope: Union[Unset, str] = UNSET
         if not isinstance(self.scope, Unset):
             scope = self.scope.value

@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 from typing import List
 
@@ -6,7 +6,6 @@ from typing import List
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..types import UNSET, Unset
 
 from typing import cast
 from typing import cast, List
@@ -32,8 +31,6 @@ class RoleDetailResponse:
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.role_definition import RoleDefinition
-
         role = self.role.to_dict()
 
         resolved_permissions = self.resolved_permissions

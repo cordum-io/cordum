@@ -265,11 +265,7 @@ func ProcessApprovalClaim(ctx context.Context, deps ApprovalHoldDeps, params Too
 	// would silently mint or consume against an under-attributed
 	// approval row. The EvaluateToolCall path has the symmetric check
 	// for the gate-mint side.
-	if !ok ||
-		strings.TrimSpace(meta.Tenant) == "" ||
-		strings.TrimSpace(meta.SessionID) == "" ||
-		strings.TrimSpace(meta.ExecutionID) == "" ||
-		strings.TrimSpace(meta.AgentID) == "" {
+	if !ok || !callMetadataComplete(meta) {
 		return ApprovalClaimOutcome{}, errMissingMCPMetadata
 	}
 

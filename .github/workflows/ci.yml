@@ -304,6 +304,9 @@ jobs:
         bash tools/scripts/validate_deploy_manifests.test.sh
         bash tools/scripts/validate_deploy_manifests.sh --strict
 
+    - name: Test backup and restore safety guards
+      run: python tools/scripts/redis_backup_recovery.test.py
+
     - name: Self-test workflow and production-gate contracts
       run: |
         bash tools/scripts/fetch_stargazers.test.sh

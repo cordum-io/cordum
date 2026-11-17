@@ -247,3 +247,66 @@ func dotEnvValue(v string) string {
 
 // isDotEnvSpace is Compose's in-line space: a unicode space other than \n.
 func isDotEnvSpace(r rune) bool { return strings.ContainsRune("\t\v\f\r \u0085\u00a0", r) }
+
+// fillEmptyEnvDefinitions replaces definitions whose parsed values are empty,
+// including interpolations. Evaluate against the original definitions so a
+// later empty definition cannot overwrite an earlier generated credential.
+func fillEmptyEnvDefinitions(content string, generated []string) (string, []string, error) {
+	byKey := make(map[string]string, len(generated))
+	for _, line := range generated {
+		key, _, _ := strings.Cut(line, "=")
+		byKey[key] = line
+	}
+	values := map[string]string{}
+	resolve := func(key string) (string, bool) {
+		if value, ok := composeLookupEnv(key); ok {
+			return value, true
+		}
+		value, ok := values[key]
+		return value, ok
+	}
+	placed := map[string]bool{}
+	var out strings.Builder
+	rest := strings.TrimPrefix(content, "\uFEFF")
+	out.WriteString(content[:len(content)-len(rest)])
+	for rest != "" {
+		src := strings.TrimLeftFunc(rest, unicode.IsSpace)
+		out.WriteString(rest[:len(rest)-len(src)])
+		if src == "" {
+			break
+		}
+		if src[0] == '#' {
+			_, rest, _ = strings.Cut(src, "\n")
+			out.WriteString(src[:len(src)-len(rest)])
+			continue
+		}
+		key, value, inherited, next, err := parseDotEnvStatement(src, resolve)
+		if err != nil {
+			return "", nil, err
+		}
+		if inherited {
+			value, _ = composeLookupEnv(key)
+			if v, ok := composeLookupEnv(key); ok {
+				values[key] = v
+			}
+		} else {
+			values[key] = value
+		}
+		statement := src[:len(src)-len(next)]
+		if gen, ok := byKey[key]; ok && strings.TrimSpace(value) == "" {
+			out.WriteString(gen)
+			out.WriteString(statement[len(strings.TrimRight(statement, "\r\n")):])
+			placed[key] = true
+		} else {
+			out.WriteString(statement)
+		}
+		rest = next
+	}
+	var unplaced []string
+	for _, line := range generated {
+		if key, _, _ := strings.Cut(line, "="); !placed[key] {
+			unplaced = append(unplaced, line)
+		}
+	}
+	return out.String(), unplaced, nil
+}

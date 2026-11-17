@@ -1,8 +1,7 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 
 from attrs import define as _attrs_define
-from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
@@ -11,8 +10,7 @@ from ..models.edge_llm_event_envelope_kind import EdgeLLMEventEnvelopeKind
 from ..models.edge_llm_event_envelope_outcome_status import EdgeLLMEventEnvelopeOutcomeStatus
 from ..types import UNSET, Unset
 from dateutil.parser import isoparse
-from typing import cast
-from typing import cast, List
+from typing import List
 from typing import Dict
 from typing import Union
 import datetime
@@ -88,11 +86,6 @@ class EdgeLLMEventEnvelope:
     final: Union[Unset, bool] = UNSET
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.edge_llm_tokens import EdgeLLMTokens
-        from ..models.edge_llm_event_envelope_labels import EdgeLLMEventEnvelopeLabels
-        from ..models.edge_llm_message import EdgeLLMMessage
-        from ..models.edge_artifact_pointer import EdgeArtifactPointer
-
         tenant_id = self.tenant_id
 
         session_id = self.session_id
