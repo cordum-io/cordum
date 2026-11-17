@@ -9,9 +9,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 - Python SDK: remove template-unused imports during generation with the pinned Ruff
   cleanup hook before formatting, without changing API or version markers (task-90b8033a).
+- Edge hook: a CONSTRAIN decision that carries a constraint kind the hook cannot apply
+  now blocks the tool call before it runs, and the hook reason and the Edge event name
+  those kinds. An approved action whose consumed ALLOW still carries such a kind blocks
+  the same way. The hook applies none of the five kinds (budgets, sandbox, toolchain,
+  diff, redaction level) yet (task-aa7ceb05).
 
 ### Documentation
 
+- Protected-operation contract: `docs/contract/protected-operation.md` now points to [ADR-011](docs/adr/011-execution-grant-format.md), the proposed execution-grant format, for M2A-01's open questions and the grant issuer key row. ADR-011 is a design; it implements no schema, verifier, broker or protected operation (task-e43b5876).
 - Enforcement matrix: `docs/contract/enforcement-matrix.yaml` has a `ref_tests` section that links each code ref of an enforced cell to existing tests, or records a gap where none exists (three today: the agentd throttle mapping, the scheduler throttle requeue and the `budgets.max_concurrent_jobs` limit). `tests/contract` rejects a missing or orphan entry, an unknown test, an empty list without a gap and a gap alongside tests (task-4c0b9fe8).
 - MCP docs: `docs/mcp/approval_hold.md` and `docs/mcp-server.md` now state that a policy-gated `tools/call` with a blank agent ID answers `-32098` `no_identity` before any approval access, and that missing tenant, session or execution metadata answers `-32097` `missing_mcp_metadata` for plain and ref-bearing calls (task-850c7a0e).
 
