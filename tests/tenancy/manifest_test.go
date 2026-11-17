@@ -176,7 +176,7 @@ var storeKeyManifest = []storeKeyEntry{
 	{"session:revoked:{tenant}:{jti}", "core/controlplane/scheduler", "tenant-in-key", "TestTenantIsolationSchedulerRevocationReadOnly"},
 	{"session:handshake:{kind}:{worker}:{value}", "core/controlplane/scheduler", "global-id", "pending:PR1-03D"},
 	{"session:handshake:challenge:{challenge}", "core/controlplane/scheduler", "global-id", "pending:PR1-03D"},
-	{"saga:{workflow}:stack", "core/controlplane/scheduler", "global-id", "pending:PR1-03H"},
+	{"saga:{workflow}:stack", "core/controlplane/scheduler", "global-id", "TestSagaRollbackFollowsWorkflowID"},
 	{"saga:{workflow}:recorded", "core/controlplane/scheduler", "global-id", "pending:PR1-03D"},
 	{"cordum:audit:delegation_lineage:{job}:{jti}", "core/controlplane/scheduler", "global-id", "pending:PR1-03E"},
 	{"cordum:workers:count", "core/controlplane/scheduler", "global-id", "pending:PR1-03C"},
