@@ -481,6 +481,10 @@ bootstrap_policy_signing() {
     if [[ "${file##*/}" == "docker-compose.release.yml" ]]; then release=1; fi
   done
   [[ "${release}" == "1" ]] || return 0
+  # Git Bash rewrites an environment value that starts with / (a base64 key can)
+  # into a Windows path for native children such as cordumctl.exe and
+  # docker.exe. Linux and macOS ignore this variable.
+  export MSYS2_ENV_CONV_EXCL="CORDUM_POLICY_SIGNING_KEY;SAFETY_POLICY_PUBLIC_KEY${MSYS2_ENV_CONV_EXCL:+;${MSYS2_ENV_CONV_EXCL}}"
   for name in CORDUM_POLICY_SIGNING_KEY SAFETY_POLICY_PUBLIC_KEY SAFETY_POLICY_SIGNATURE; do
     if [[ -n "$(policy_setting "${name}")" ]]; then set_names+=" ${name}"; else unset_names+=" ${name}"; fi
   done
