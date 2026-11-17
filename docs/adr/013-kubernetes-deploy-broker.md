@@ -215,11 +215,11 @@ Use [core/policysign](../../core/policysign/policysign.go) Sign/Verify with a
 dedicated broker Ed25519 receipt key and separate verifier trust store, never
 the grant issuer, TLS, policy or audit key. Sign domain-prefixed exact stored
 payload bytes (`CORDUM-K8S-DEPLOY-RECEIPT-V1` plus NUL). Choose UTF-8 JSON from
-fixed Go structs: no maps/floats, integer times/version, hex digests, ordered
+fixed Go structs: no maps/floats, Unix-millisecond times, version 1, hex digests, ordered
 object arrays and explicit null for absent evidence. Envelope: base64 payload
 plus policysign.Signature. Verify preserved bytes before strict decoding, never
 reconstructed JSON. M2B-06 must pin vectors and reject duplicate/unknown fields
-and versions; this is neither a grant format nor portable canonicalization.
+and unsupported versions; this is neither a grant format nor portable canonicalization.
 Persist receipt with the M2A-06 terminal transition before reporting completion;
 failure to persist leaves a recoverable unknown, not a replayable grant.
 
