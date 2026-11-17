@@ -845,6 +845,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Jobs: a submit whose idempotency key matches a legacy unscoped key
+  (`job:idempotency:{key}`) reuses that key's job only when the job's stored
+  tenant equals the caller's tenant. When the job's tenant cannot be read,
+  for example after its metadata expires (`JOB_META_TTL`, 7 days by default),
+  the submit is handled as a new job under the caller's tenant-scoped key
+  (task-e9209d0e).
+
 - Policy audit: each entry records a tenant: the job's tenant for job
   entries, otherwise the tenant of a caller without cross-tenant access.
   For callers without cross-tenant access, `GET /api/v1/policy/audit` lists
