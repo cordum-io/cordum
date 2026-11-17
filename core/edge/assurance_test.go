@@ -80,7 +80,7 @@ func TestDeriveAssuranceStateCombinations(t *testing.T) {
 								t.Fatalf("%s: got %q, stale=%v", name, got, stale)
 							}
 							enforcing := mode == PolicyModeEnforce || mode == PolicyModeEnterpriseStrict
-							if enforcing && !(hook == "true" && agentd == "true") && got == AssuranceStateHookMediated {
+							if enforcing && (hook != "true" || agentd != "true") && got == AssuranceStateHookMediated {
 								t.Fatalf("%s: hook-mediated without both hook and agentd true", name)
 							}
 							healthy := !stale && status == SessionStatusRunning && !extraLayer && hook == "true"
