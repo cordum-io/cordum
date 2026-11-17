@@ -14,7 +14,7 @@ import (
 	"google.golang.org/protobuf/types/descriptorpb"
 )
 
-// fieldShape is a field's kind, cardinality and message or enum name below cordum.v1.
+// fieldShape is a field's kind, cardinality and message or enum name below cordum.v1.ExecutionGrant.
 type fieldShape struct {
 	kind protoreflect.Kind
 	card protoreflect.Cardinality
@@ -27,20 +27,18 @@ func grantFieldTable() map[string]fieldShape {
 	sc := func(k protoreflect.Kind) fieldShape { return fieldShape{k, protoreflect.Optional, ""} }
 	str, byt, i64 := sc(protoreflect.StringKind), sc(protoreflect.BytesKind), sc(protoreflect.Int64Kind)
 	strs := fieldShape{protoreflect.StringKind, protoreflect.Repeated, ""}
-	msg := func(typ string) fieldShape { return fieldShape{protoreflect.MessageKind, protoreflect.Optional, "ExecutionGrant." + typ} }
-	msgs := func(typ string) fieldShape { return fieldShape{protoreflect.MessageKind, protoreflect.Repeated, "ExecutionGrant." + typ} }
-	enum := func(typ string) fieldShape { return fieldShape{protoreflect.EnumKind, protoreflect.Optional, "ExecutionGrant." + typ} }
+	msg := func(t string) fieldShape { return fieldShape{protoreflect.MessageKind, protoreflect.Optional, t} }
+	msgs := func(t string) fieldShape { return fieldShape{protoreflect.MessageKind, protoreflect.Repeated, t} }
+	enum := func(t string) fieldShape { return fieldShape{protoreflect.EnumKind, protoreflect.Optional, t} }
 	k8s := "action.kubernetes_manifest_apply."
 	return map[string]fieldShape{
 		"envelope.grant": byt, "envelope.signature": byt, "envelope.algorithm": str, "envelope.key_id": str,
 		"schema_version": sc(protoreflect.Uint32Kind), "issuer_id": str, "issuer_key_id": str, "tenant_id": str,
 		"principal_id": str, "agent_id": str, "session_id": str, "delegation_chain": msgs("DelegationLink"),
 		"delegation_chain.agent_id": str, "delegation_chain.token_jti": str, "delegation_chain.parent_jti": str,
-		"action": msg("Action"), "action.operation": str,
-		"action.kubernetes_manifest_apply": msg("KubernetesManifestApply"),
-		k8s + "manifest_input": str, k8s + "objects": msgs("KubernetesObjectRef"),
-		k8s + "objects.api_group": str, k8s + "objects.api_version": str, k8s + "objects.kind": str,
-		k8s + "objects.namespace": str, k8s + "objects.name": str,
+		"action": msg("Action"), "action.operation": str, "action.kubernetes_manifest_apply": msg("KubernetesManifestApply"),
+		k8s + "manifest_input": str, k8s + "objects": msgs("KubernetesObjectRef"), k8s + "objects.api_group": str,
+		k8s + "objects.api_version": str, k8s + "objects.kind": str, k8s + "objects.namespace": str, k8s + "objects.name": str,
 		"action.target": msg("Target"), "action.target.account": str,
 		"action.target.environment": str, "action.target.resource": str,
 		"action.preconditions": msgs("Precondition"), "action.preconditions.resource": str,
@@ -62,10 +60,10 @@ func grantFieldTable() map[string]fieldShape {
 
 // grantEnumValues pins each enum's values in declaration order.
 var grantEnumValues = map[string][]string{
-	"ExecutionGrant.PreconditionKind": {"PRECONDITION_KIND_UNSPECIFIED=0", "PRECONDITION_KIND_MUST_EXIST=1",
+	"PreconditionKind": {"PRECONDITION_KIND_UNSPECIFIED=0", "PRECONDITION_KIND_MUST_EXIST=1",
 		"PRECONDITION_KIND_MUST_NOT_EXIST=2", "PRECONDITION_KIND_VERSION_EQUALS=3"},
-	"ExecutionGrant.ApprovalState": {"APPROVAL_STATE_UNSPECIFIED=0", "APPROVAL_STATE_NOT_REQUIRED=1", "APPROVAL_STATE_APPROVED=2"},
-	"ExecutionGrant.ExecutorKind":  {"EXECUTOR_KIND_UNSPECIFIED=0", "EXECUTOR_KIND_BROKER=1", "EXECUTOR_KIND_RUNNER=2"},
+	"ApprovalState": {"APPROVAL_STATE_UNSPECIFIED=0", "APPROVAL_STATE_NOT_REQUIRED=1", "APPROVAL_STATE_APPROVED=2"},
+	"ExecutorKind":  {"EXECUTOR_KIND_UNSPECIFIED=0", "EXECUTOR_KIND_BROKER=1", "EXECUTOR_KIND_RUNNER=2"},
 }
 
 // collectShapes records every field path under md, and each enum's values as NAME=number.
@@ -77,10 +75,10 @@ func collectShapes(prefix string, md protoreflect.MessageDescriptor, shapes map[
 		shape := fieldShape{kind: fd.Kind(), card: fd.Cardinality()}
 		switch {
 		case fd.Message() != nil:
-			shape.typ = strings.TrimPrefix(string(fd.Message().FullName()), "cordum.v1.")
+			shape.typ = strings.TrimPrefix(string(fd.Message().FullName()), "cordum.v1.ExecutionGrant.")
 			collectShapes(path+".", fd.Message(), shapes, enums)
 		case fd.Enum() != nil:
-			shape.typ = strings.TrimPrefix(string(fd.Enum().FullName()), "cordum.v1.")
+			shape.typ = strings.TrimPrefix(string(fd.Enum().FullName()), "cordum.v1.ExecutionGrant.")
 			var values []string
 			for j := range fd.Enum().Values().Len() {
 				v := fd.Enum().Values().Get(j)
@@ -211,7 +209,9 @@ func enumViolations(e *descriptorpb.EnumDescriptorProto) []string {
 
 type fileProto = descriptorpb.FileDescriptorProto
 
-func grantMessage(fd *fileProto) *descriptorpb.DescriptorProto { return findMessage(fd.MessageType, "ExecutionGrant") }
+func grant(fd *fileProto) *descriptorpb.DescriptorProto {
+	return findMessage(fd.MessageType, "ExecutionGrant")
+}
 
 func findMessage(msgs []*descriptorpb.DescriptorProto, name string) *descriptorpb.DescriptorProto {
 	return msgs[slices.IndexFunc(msgs, func(m *descriptorpb.DescriptorProto) bool { return m.GetName() == name })]
@@ -222,15 +222,15 @@ func findMessage(msgs []*descriptorpb.DescriptorProto, name string) *descriptorp
 var ruleMutations = map[string]func(*fileProto){
 	"import": func(fd *fileProto) { fd.Dependency = append(fd.Dependency, "google/protobuf/any.proto") },
 	"map": func(fd *fileProto) {
-		g := grantMessage(fd)
+		g := grant(fd)
 		g.NestedType = append(g.NestedType, &descriptorpb.DescriptorProto{Options: &descriptorpb.MessageOptions{MapEntry: proto.Bool(true)}})
 	},
-	"float":           func(fd *fileProto) { grantMessage(fd).Field[0].Type = descriptorpb.FieldDescriptorProto_TYPE_DOUBLE.Enum() },
-	"group":           func(fd *fileProto) { grantMessage(fd).Field[0].Type = descriptorpb.FieldDescriptorProto_TYPE_GROUP.Enum() },
-	"proto3_optional": func(fd *fileProto) { grantMessage(fd).Field[1].Proto3Optional = proto.Bool(true) },
-	"enum-zero":       func(fd *fileProto) { grantMessage(fd).EnumType[0].Value[0].Name = proto.String("PRECONDITION_KIND_NONE") },
-	"enum-prefix":     func(fd *fileProto) { grantMessage(fd).EnumType[0].Value[1].Name = proto.String("UNPREFIXED") },
-	"oneof-order": func(fd *fileProto) { findMessage(grantMessage(fd).NestedType, "Action").Field[4].Number = proto.Int32(7) },
+	"float":           func(fd *fileProto) { grant(fd).Field[0].Type = descriptorpb.FieldDescriptorProto_TYPE_DOUBLE.Enum() },
+	"group":           func(fd *fileProto) { grant(fd).Field[0].Type = descriptorpb.FieldDescriptorProto_TYPE_GROUP.Enum() },
+	"proto3_optional": func(fd *fileProto) { grant(fd).Field[1].Proto3Optional = proto.Bool(true) },
+	"enum-zero":       func(fd *fileProto) { grant(fd).EnumType[0].Value[0].Name = proto.String("PRECONDITION_KIND_NONE") },
+	"enum-prefix":     func(fd *fileProto) { grant(fd).EnumType[0].Value[1].Name = proto.String("UNPREFIXED") },
+	"oneof-order":     func(fd *fileProto) { findMessage(grant(fd).NestedType, "Action").Field[4].Number = proto.Int32(7) },
 }
 
 func TestExecutionGrantDescriptorRules(t *testing.T) {
