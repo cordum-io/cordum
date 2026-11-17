@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/auth/delegation"
+	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	wf "github.com/cordum/cordum/core/workflow"
@@ -109,6 +110,91 @@ func TestTenantIsolationGatewayConfigScopeWrites(t *testing.T) {
 			checkTenantConfig(t, s, scope, http.MethodGet, "tenant-b", "tenant-b", "private-selected", false, http.StatusOK)
 			checkTenantConfig(t, s, scope, http.MethodGet, "tenant-a", "tenant-a", "private-tenant-a", false, http.StatusOK)
 		})
+	}
+}
+
+// seedUnownedConfig stores, at tenant-a's key for scope_id shared, a document
+// that records no tenant, and returns its key and bytes.
+func seedUnownedConfig(t *testing.T, s *server, scope string) (string, string) {
+	t.Helper()
+	key := "cfg:" + scope + ":tenant-a/shared"
+	raw, err := json.Marshal(configsvc.Document{Scope: configsvc.Scope(scope), ScopeID: "tenant-a/shared", Revision: 1,
+		Data: map[string]any{"value": "private-legacy-b"}, Meta: map[string]string{"tenant": "tenant-a"}})
+	if err == nil {
+		err = s.jobStore.Client().Set(context.Background(), key, raw, 0).Err()
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return key, string(raw)
+}
+
+func TestTenantIsolationGatewayConfigUnownedDocuments(t *testing.T) {
+	cross := configCaller{tenant: "tenant-b", target: "tenant-a", cross: true}
+	for _, scope := range []string{"team", "workflow", "step"} {
+		effective := "/api/v1/config/effective?" + scope + "_id=shared"
+		t.Run(scope+"/raw", func(t *testing.T) {
+			s, _, mux := newConfigAdmissionGateway(t)
+			seedUnownedConfig(t, s, scope)
+			tenantObjectUnchanged(t, s)
+			for _, c := range []configCaller{configOther, cross} {
+				rr := c.do(mux, http.MethodGet, "/api/v1/config?envelope=true&scope="+scope+"&scope_id=shared", "")
+				if rr.Code != http.StatusNotFound || strings.Contains(rr.Body.String(), "private-") {
+					t.Errorf("GET as %s for tenant-a: %d %s", c.tenant, rr.Code, rr.Body.String())
+				}
+			}
+		})
+		t.Run(scope+"/effective", func(t *testing.T) {
+			s, _, mux := newConfigAdmissionGateway(t)
+			before := configOther.do(mux, http.MethodGet, effective, "")
+			seedUnownedConfig(t, s, scope)
+			after := configOther.do(mux, http.MethodGet, effective, "")
+			if before.Code != http.StatusOK || after.Code != http.StatusOK || after.Body.String() != before.Body.String() {
+				t.Errorf("effective config: %d %s, then %d %s", before.Code, before.Body.String(), after.Code, after.Body.String())
+			}
+		})
+		t.Run(scope+"/write", func(t *testing.T) {
+			s, bus, mux := newConfigAdmissionGateway(t)
+			key, stored := seedUnownedConfig(t, s, scope)
+			tenantObjectUnchanged(t, s)
+			published := publishedCount(bus)
+			rr := configOther.write(mux, http.MethodPut, scope, "shared", "private-a")
+			var body struct{ Code string }
+			_ = json.Unmarshal(rr.Body.Bytes(), &body)
+			if rr.Code != http.StatusForbidden || body.Code != errorCodeConfigKeyForbidden || strings.Contains(rr.Body.String(), "private-") {
+				t.Errorf("PUT: %d %s", rr.Code, rr.Body.String())
+			}
+			if got, err := s.jobStore.Client().Get(context.Background(), key).Result(); err != nil || got != stored {
+				t.Errorf("stored document = %s, %v; want %s", got, err, stored)
+			}
+			if n := publishedCount(bus); n != published {
+				t.Errorf("config-changed published %d messages", n-published)
+			}
+		})
+		t.Run(scope+"/current", func(t *testing.T) { checkCurrentConfig(t, scope) })
+	}
+}
+
+// checkCurrentConfig writes and reads tenant-a's document at scope_id own, then
+// at scope_id shared once the document stored at that key is deleted.
+func checkCurrentConfig(t *testing.T, scope string) {
+	s, _, mux := newConfigAdmissionGateway(t)
+	key, _ := seedUnownedConfig(t, s, scope)
+	for _, id := range []string{"own", "shared"} {
+		if id == "shared" {
+			if err := s.jobStore.Client().Del(context.Background(), key).Err(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		value := "private-a-" + id
+		if rr := configOther.write(mux, http.MethodPut, scope, id, value); rr.Code != http.StatusNoContent {
+			t.Fatalf("PUT %s: %d %s", id, rr.Code, rr.Body.String())
+		}
+		for _, path := range []string{"/api/v1/config?envelope=true&scope=" + scope + "&scope_id=" + id, "/api/v1/config/effective?" + scope + "_id=" + id} {
+			if rr := configOther.do(mux, http.MethodGet, path, ""); rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), value) {
+				t.Errorf("GET %s: %d %s", path, rr.Code, rr.Body.String())
+			}
+		}
 	}
 }
 
