@@ -9,6 +9,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 - Python SDK: remove template-unused imports during generation with the pinned Ruff
   cleanup hook before formatting, without changing API or version markers (task-90b8033a).
+- Edge hook: a CONSTRAIN decision that carries a constraint kind the hook cannot apply
+  now blocks the tool call before it runs, and the hook reason and the Edge event name
+  those kinds. An approved action whose consumed ALLOW still carries such a kind blocks
+  the same way. The hook applies none of the five kinds (budgets, sandbox, toolchain,
+  diff, redaction level) yet (task-aa7ceb05).
 
 ### Documentation
 
@@ -226,6 +231,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `USE_RELEASE_IMAGES=1` now pulls images before quickstart only on a re-install.
   `tools/scripts/quickstart_policy_bootstrap_test.sh` covers these cases
   (task-5dc8476c).
+- Artifacts: tenant-scoped, write-once SHA-256 content storage rechecks bytes on reads and supports extend-only retention; no service uses it yet (task-0e661014).
 
 - Decision records: for a job dispatched under a delegation token, the Policy
   Decision Log record and the job's stored safety decision carry
