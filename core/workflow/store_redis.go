@@ -2,6 +2,8 @@ package workflow
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -237,7 +239,7 @@ func (s *RedisStore) CreateRun(ctx context.Context, run *WorkflowRun) error {
 		return fmt.Errorf("create run: %w", err)
 	}
 	if run.IdempotencyKey != "" {
-		if _, err := s.TrySetRunIdempotencyKey(ctx, run.IdempotencyKey, run.ID); err != nil {
+		if _, err := s.TrySetRunIdempotencyKey(ctx, run.OrgID, run.WorkflowID, run.IdempotencyKey, run.ID); err != nil {
 			slog.Warn("workflow: idempotency key set failed", "key", run.IdempotencyKey, "run_id", run.ID, "error", err)
 		}
 	}
@@ -942,28 +944,79 @@ func pendingAuditHashKey(jobID string) string {
 	return "wf:run:pending_audit_hash:" + jobID
 }
 
-func (s *RedisStore) TrySetRunIdempotencyKey(ctx context.Context, key, runID string) (bool, error) {
+// TrySetRunIdempotencyKey reserves key for runID within one tenant and
+// workflow. It returns false when the key is already held in that scope.
+func (s *RedisStore) TrySetRunIdempotencyKey(ctx context.Context, orgID, workflowID, key, runID string) (bool, error) {
 	if key == "" || runID == "" {
 		return false, fmt.Errorf("idempotency key and run id required")
 	}
-	return s.client.SetNX(ctx, runIdempotencyKey(key), runID, 0).Result()
+	holder, err := s.legacyRunIdempotencyHolder(ctx, orgID, workflowID, key)
+	if err != nil {
+		return false, err
+	}
+	if holder != "" {
+		return false, nil
+	}
+	return s.client.SetNX(ctx, runIdempotencyKey(orgID, workflowID, key), runID, 0).Result()
 }
 
-func (s *RedisStore) GetRunByIdempotencyKey(ctx context.Context, key string) (string, error) {
+// GetRunByIdempotencyKey returns the run id that holds key within one tenant
+// and workflow, or redis.Nil when none does.
+func (s *RedisStore) GetRunByIdempotencyKey(ctx context.Context, orgID, workflowID, key string) (string, error) {
 	if key == "" {
 		return "", fmt.Errorf("idempotency key required")
 	}
-	return s.client.Get(ctx, runIdempotencyKey(key)).Result()
+	runID, err := s.client.Get(ctx, runIdempotencyKey(orgID, workflowID, key)).Result()
+	if !errors.Is(err, redis.Nil) {
+		return runID, err
+	}
+	holder, legacyErr := s.legacyRunIdempotencyHolder(ctx, orgID, workflowID, key)
+	if legacyErr != nil {
+		return "", legacyErr
+	}
+	if holder == "" {
+		return "", err
+	}
+	return holder, nil
 }
 
-func (s *RedisStore) DeleteRunIdempotencyKey(ctx context.Context, key string) error {
+func (s *RedisStore) DeleteRunIdempotencyKey(ctx context.Context, orgID, workflowID, key string) error {
 	if key == "" {
 		return fmt.Errorf("idempotency key required")
 	}
-	return s.client.Del(ctx, runIdempotencyKey(key)).Err()
+	return s.client.Del(ctx, runIdempotencyKey(orgID, workflowID, key)).Err()
 }
 
-func runIdempotencyKey(key string) string {
+// legacyRunIdempotencyHolder reads a key stored under the unscoped
+// "wf:run:idempotency:" prefix. It returns that key's run id only when the run
+// exists and belongs to orgID and workflowID. It never writes or deletes.
+func (s *RedisStore) legacyRunIdempotencyHolder(ctx context.Context, orgID, workflowID, key string) (string, error) {
+	runID, err := s.client.Get(ctx, legacyRunIdempotencyKey(key)).Result()
+	if errors.Is(err, redis.Nil) || (err == nil && runID == "") {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("get run idempotency key: %w", err)
+	}
+	run, err := s.GetRun(ctx, runID)
+	if errors.Is(err, redis.Nil) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if run.OrgID != orgID || run.WorkflowID != workflowID {
+		return "", nil
+	}
+	return runID, nil
+}
+
+func runIdempotencyKey(orgID, workflowID, key string) string {
+	sum := sha256.Sum256([]byte(orgID + "\x00" + workflowID + "\x00" + key))
+	return "wf:run:idem:" + hex.EncodeToString(sum[:])
+}
+
+func legacyRunIdempotencyKey(key string) string {
 	return "wf:run:idempotency:" + key
 }
 

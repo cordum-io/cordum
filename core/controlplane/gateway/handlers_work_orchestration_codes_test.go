@@ -3,6 +3,8 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -173,8 +175,9 @@ func TestHandleRunStart_IdempotencyConflictReturnsCode(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	workflow := seedWorkflowRunForCode(t, s, "run-idem-holder", wf.RunStatusSucceeded)
 	const idemKey = "run-start-empty-owner"
+	sum := sha256.Sum256([]byte("default\x00" + workflow.ID + "\x00" + idemKey))
 	if err := s.jobStore.Client().
-		Set(context.Background(), "wf:run:idempotency:"+idemKey, "", 0).
+		Set(context.Background(), "wf:run:idem:"+hex.EncodeToString(sum[:]), "", 0).
 		Err(); err != nil {
 		t.Fatalf("seed run idempotency conflict: %v", err)
 	}
