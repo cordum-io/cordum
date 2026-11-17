@@ -24,8 +24,13 @@ Derive the WebSocket URL from the gateway HTTP base URL:
 
 | HTTP Base | WebSocket URL |
 |-----------|--------------|
-| `http://localhost:8081` | `ws://localhost:8081/api/v1/stream` |
+| `https://localhost:8081` | `wss://localhost:8081/api/v1/stream` |
 | `https://cordum.example.com` | `wss://cordum.example.com/api/v1/stream` |
+
+The default stack serves `https://localhost:8081` with a development CA in
+`./certs/ca/ca.crt`; the client examples below show how each client trusts it.
+A gateway on plain HTTP (only when it runs without `GATEWAY_HTTP_TLS_CERT`,
+outside production) uses `ws://`.
 
 ### Authentication
 
@@ -215,7 +220,7 @@ Edge `edge.event` envelopes are not CAP BusPackets and are not synthesized as `s
 Connect to `/api/v1/jobs/{id}/stream` to receive only events for a specific job:
 
 ```
-ws://localhost:8081/api/v1/jobs/job-abc123/stream
+wss://localhost:8081/api/v1/jobs/job-abc123/stream
 ```
 
 Server-side filtering:
@@ -326,7 +331,8 @@ const encoded = btoa(apiKey)
   .replace(/=+$/, "");
 const subprotocol = `cordum-api-key.${encoded}`;
 
-const ws = new WebSocket("ws://localhost:8081/api/v1/stream", [subprotocol]);
+// The browser must trust ./certs/ca/ca.crt (add it to the OS or browser trust store).
+const ws = new WebSocket("wss://localhost:8081/api/v1/stream", [subprotocol]);
 
 ws.onopen = () => console.log("Connected");
 
@@ -357,7 +363,8 @@ const apiKey = process.env.CORDUM_API_KEY;
 const encoded = Buffer.from(apiKey).toString("base64url");
 const subprotocol = `cordum-api-key.${encoded}`;
 
-const ws = new WebSocket("ws://localhost:8081/api/v1/stream", [subprotocol]);
+// Node: start with NODE_EXTRA_CA_CERTS=./certs/ca/ca.crt to trust the dev CA.
+const ws = new WebSocket("wss://localhost:8081/api/v1/stream", [subprotocol]);
 
 ws.on("open", () => console.log("Connected"));
 
@@ -377,9 +384,10 @@ ws.on("close", () => console.log("Disconnected"));
 # Install wscat
 npm install -g wscat
 
-# Connect (API key as subprotocol)
+# Connect (API key as subprotocol; wscat runs on Node, so
+# NODE_EXTRA_CA_CERTS makes it trust the dev CA)
 KEY=$(echo -n "$CORDUM_API_KEY" | base64 | tr '+/' '-_' | tr -d '=')
-wscat -c "ws://localhost:8081/api/v1/stream" \
+NODE_EXTRA_CA_CERTS=./certs/ca/ca.crt wscat -c "wss://localhost:8081/api/v1/stream" \
   -s "cordum-api-key.$KEY"
 ```
 
@@ -392,10 +400,19 @@ apiKey := os.Getenv("CORDUM_API_KEY")
 encoded := base64.RawURLEncoding.EncodeToString([]byte(apiKey))
 subprotocol := "cordum-api-key." + encoded
 
-dialer := websocket.Dialer{
-    Subprotocols: []string{subprotocol},
+// Trust the default stack's development CA.
+caPEM, err := os.ReadFile("./certs/ca/ca.crt")
+if err != nil {
+    log.Fatal(err)
 }
-conn, _, err := dialer.Dial("ws://localhost:8081/api/v1/stream", nil)
+roots := x509.NewCertPool()
+roots.AppendCertsFromPEM(caPEM)
+
+dialer := websocket.Dialer{
+    Subprotocols:    []string{subprotocol},
+    TLSClientConfig: &tls.Config{RootCAs: roots},
+}
+conn, _, err := dialer.Dial("wss://localhost:8081/api/v1/stream", nil)
 if err != nil {
     log.Fatal(err)
 }

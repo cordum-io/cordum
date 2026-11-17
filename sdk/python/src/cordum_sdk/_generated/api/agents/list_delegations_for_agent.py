@@ -1,5 +1,5 @@
 from http import HTTPStatus
-from typing import Any, Dict, List, Optional, Union, cast
+from typing import Any, Dict, Optional, Union, cast
 
 import httpx
 
@@ -11,7 +11,6 @@ from ...models.delegation_list_response import DelegationListResponse
 from ...models.error import Error
 from ...models.list_delegations_for_agent_status import ListDelegationsForAgentStatus
 from ...types import UNSET, Unset
-from dateutil.parser import isoparse
 from typing import cast
 from typing import Dict
 from typing import Union

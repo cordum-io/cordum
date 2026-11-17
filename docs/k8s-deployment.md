@@ -116,13 +116,15 @@ The base manifest includes a `ResourceQuota` and `LimitRange` for the `cordum` n
 
 | Quota | Value | Notes |
 |-------|-------|-------|
-| `requests.cpu` | 8 | Total CPU requests across all pods |
-| `limits.cpu` | 16 | Total CPU limits |
-| `requests.memory` | 8Gi | Total memory requests |
-| `limits.memory` | 16Gi | Total memory limits |
+| `requests.cpu` | 12 | Total CPU requests across all pods |
+| `limits.cpu` | 48 | Total CPU limits |
+| `requests.memory` | 16Gi | Total memory requests |
+| `limits.memory` | 48Gi | Total memory limits |
 | `pods` | 50 | Max pod count (accommodates HPA max replicas + headroom) |
 | `services` | 20 | Max Service count |
 | `persistentvolumeclaims` | 10 | Max PVC count |
+
+These values fit the production overlay with every HPA at `maxReplicas`, together with its NATS and Redis StatefulSets, the backup CronJobs, the Redis cluster init Job and the extra pods of a default rolling update, so ResourceQuota admission does not refuse a full install, an upgrade or an HPA scale-out.
 
 The `LimitRange` assigns default resource requests (100m CPU, 128Mi memory) and limits (500m CPU, 256Mi memory) to containers that don't specify them.
 
@@ -139,7 +141,7 @@ The `LimitRange` assigns default resource requests (100m CPU, 128Mi memory) and 
       value: "100"
     - op: replace
       path: /spec/hard/limits.cpu
-      value: "32"
+      value: "96"
 ```
 
 ### Resource Requests/Limits
@@ -330,8 +332,13 @@ The production overlay deploys a 3-node NATS cluster as a StatefulSet.
   they are ready (`publishNotReadyAddresses: true`). A server alone fails `/healthz` until
   JetStream has a meta leader, which needs the routes, so ordered startup would never get past
   `cordum-nats-0`. Kubernetes cannot change `podManagementPolicy` in place: if an older
-  `cordum-nats` StatefulSet exists, delete it first (`kubectl delete statefulset cordum-nats -n cordum`;
-  the PVCs stay).
+  `cordum-nats` StatefulSet exists, delete it without deleting its pods:
+  `kubectl delete statefulset cordum-nats -n cordum --cascade=orphan`. The pods keep serving and
+  the PVCs stay. Never delete it without `--cascade=orphan`: that deletes all three pods and
+  stops NATS until the replacements start. Then re-apply the overlay with
+  `kubectl apply -k deploy/k8s/production`. The new StatefulSet adopts the running pods and
+  replaces any pod whose template changed, one at a time (`nats.yaml` sets no `updateStrategy`,
+  so the default `RollingUpdate` applies).
 
 ### NATS ConfigMap (production)
 
@@ -387,7 +394,10 @@ The production overlay deploys a 6-node Redis cluster (3 masters + 3 replicas).
 - **TLS**: Full TLS with `tls-auth-clients yes`
 - **Persistence**: AOF enabled (`appendonly yes`), 20Gi PVC per node
 - **Cluster mode**: `cluster-enabled yes`, `cluster-node-timeout 5000`
-- **Cluster bus**: port 16379 (`cluster-port 16379`; with `port 0` it would default to 10000)
+- **Cluster bus**: TLS (`tls-cluster yes`) on port 16379 (`cluster-port 16379`;
+  with `port 0` it would default to 10000), using the existing certificates.
+  For a running cluster, follow [Runbook H](./redis-operations.md#runbook-h-turn-on-tls-for-the-cluster-bus)
+  to switch every node before any Redis pod restarts.
 - **Replication**: replicas connect to their primary's TLS port (`tls-replication yes`),
   presenting the `cordum-client-tls` certificate and authenticating with `masterauth`
 - **Exporter sidecar**: `oliver006/redis_exporter:v1.58.0` on port 9121
@@ -408,7 +418,9 @@ kubectl logs job/cordum-redis-cluster-init -n cordum
 The init job:
 1. Waits for all 6 nodes to respond to `PING`, authenticating with the
    `REDIS_PASSWORD` key of `cordum-redis-secret` (passed as `REDISCLI_AUTH`)
-2. Runs `redis-cli --cluster create ... --cluster-replicas 1 --cluster-yes`
+2. Exits 0 without changing anything when all 6 nodes already report
+   `cluster_state:ok` (an upgrade keeps the PVCs, so the retained nodes already form a cluster)
+3. Otherwise runs `redis-cli --cluster create ... --cluster-replicas 1 --cluster-yes`
 
 ### Pre-Flight Checks
 
@@ -437,7 +449,8 @@ kubectl get secret cordum-redis-secret -n cordum -o jsonpath='{.data.REDIS_PASSW
 | `ERR Invalid node address` | DNS not resolving | Verify headless service `cordum-redis` exists |
 | `ERR Nodes don't agree about configuration` | Partial previous init | Delete all pods (`kubectl delete pods -l app=redis -n cordum`), wait for restart, re-run |
 
-**Re-running**: Delete the job and re-create it if you need to re-initialize:
+**Re-running**: Delete the job and re-apply the overlay. When all 6 nodes report `cluster_state:ok`,
+the new job exits 0 without changes, and it never resets a node:
 ```bash
 kubectl delete job cordum-redis-cluster-init -n cordum
 kubectl apply -k deploy/k8s/production
@@ -671,10 +684,10 @@ The production overlay includes hourly CronJob backups for both Redis and NATS.
 ### Redis Backup
 
 - **Schedule**: `0 * * * *` (hourly)
-- **Method**: `redis-cli --rdb` creates an RDB snapshot from `cordum-redis-0`
+- **Method**: `redis-cli --rdb` against primaries from a stable `CLUSTER NODES` topology covering every slot exactly once
 - **Storage**: `cordum-backups` PVC (20Gi)
-- **Retention**: Last 2 successful + 2 failed jobs kept
-- **File format**: `redis-YYYYMMDDTHHMMSSZ.rdb`
+- **Retention**: 7 days (`cordum-backup-retention`, daily at 03:30 UTC); the CronJob keeps its last 2 successful + 2 failed jobs
+- **File format**: `redis-YYYYMMDDTHHMMSSZ-node<N>.rdb`, one per primary, plus `.topology` and `.sha256` completion metadata
 
 ### NATS JetStream Backup
 
@@ -682,54 +695,23 @@ The production overlay includes hourly CronJob backups for both Redis and NATS.
 - **Method**: `nats stream snapshot` for `CORDUM_SYS` and `CORDUM_JOBS` streams
 - **Storage**: Same `cordum-backups` PVC
 - **File format**: `nats-YYYYMMDDTHHMMSSZ/{stream}.snapshot`
+- **Integrity**: each complete run writes `SHA256SUMS`; retain its printed digest in the external backup catalog before Job logs expire
 
 ### Restore Procedures
 
-**Redis:**
-```bash
-# Stop the cluster, copy RDB to data dir, restart
-kubectl cp backup/redis-20260213T120000Z.rdb cordum/cordum-redis-0:/data/dump.rdb
-kubectl delete pod cordum-redis-0 -n cordum  # Pod restarts and loads RDB
-```
+**Base manifest (`deploy/k8s/base.yaml`)**: there is nothing to restore from. Its
+single Redis pod has no persistent volume, NATS keeps JetStream on an `emptyDir`,
+and there are no backup jobs, so the data lasts only as long as the pods. Use the
+production overlay, or add PVCs and backups of your own, for data you need to keep.
 
-**NATS:**
-
-The NATS server image has no `nats` CLI, so restore from your machine with the
-CLI through a port-forward. The overlay's NATS requires a client certificate,
-and its server certificate names `cordum-nats`, not `localhost`, so point that
-name at the forward first (for example, add `127.0.0.1 cordum-nats` to
-`/etc/hosts`). A restore refuses to overwrite an existing stream ("stream name
-already in use"), so stop the consumers and remove the stream first.
-
-```bash
-# 1. Copy the snapshot directory off the cordum-backups PVC through a
-#    temporary pod that mounts it
-kubectl run nats-restore-files -n cordum --restart=Never --image=busybox:1.36 \
-  --overrides='{"spec":{"containers":[{"name":"nats-restore-files","image":"busybox:1.36","command":["sleep","3600"],"volumeMounts":[{"name":"backup","mountPath":"/backup"}]}],"volumes":[{"name":"backup","persistentVolumeClaim":{"claimName":"cordum-backups"}}]}}'
-kubectl wait -n cordum --for=condition=Ready pod/nats-restore-files
-kubectl exec -n cordum nats-restore-files -- ls /backup   # pick a nats-<timestamp>
-kubectl cp cordum/nats-restore-files:/backup/nats-<timestamp>/CORDUM_JOBS.snapshot ./CORDUM_JOBS.snapshot
-kubectl delete pod -n cordum nats-restore-files
-
-# 2. Client certificate from the cordum-client-tls Secret
-kubectl get secret -n cordum cordum-client-tls -o jsonpath='{.data.ca\.crt}' | base64 -d > ca.crt
-kubectl get secret -n cordum cordum-client-tls -o jsonpath='{.data.tls\.crt}' | base64 -d > client.crt
-kubectl get secret -n cordum cordum-client-tls -o jsonpath='{.data.tls\.key}' | base64 -d > client.key
-
-# 3. Stop the consumers, then replace the stream through a port-forward
-#    (newer CLIs also call the restore `nats backup restore stream`)
-kubectl scale deployment cordum-scheduler cordum-workflow-engine --replicas=0 -n cordum
-kubectl port-forward -n cordum cordum-nats-0 4222:4222 >/dev/null &
-sleep 2
-nats stream rm CORDUM_JOBS --force --server tls://cordum-nats:4222 \
-  --tlsca ca.crt --tlscert client.crt --tlskey client.key
-nats stream restore ./CORDUM_JOBS.snapshot --server tls://cordum-nats:4222 \
-  --tlsca ca.crt --tlscert client.crt --tlskey client.key
-kill %1
-
-# 4. Bring the consumers back (2 is the HPA minimum)
-kubectl scale deployment cordum-scheduler cordum-workflow-engine --replicas=2 -n cordum
-```
+**Production overlay**: follow [Backup + Restore](./production.md#restore-procedures).
+Stop the services, suspend the backup and retention CronJobs, and delete active backup and retention Jobs
+with foreground deletion and wait for their pods to stop before creating a restore pod. Restore Redis by importing the backup
+into the running cluster, which sends each key to the primary that owns its slot
+([Restore From Backup](./redis-operations.md#restore-from-backup)),
+and restore the NATS streams from a nats-box pod. Do not copy an RDB into a running
+Redis pod and restart it: with `appendonly yes`, Redis loads its AOF on startup and
+ignores `dump.rdb`, and each backup file holds only one primary's slots.
 
 ---
 
@@ -740,8 +722,11 @@ kubectl scale deployment cordum-scheduler cordum-workflow-engine --replicas=2 -n
 All Cordum Deployments use the default `RollingUpdate` strategy. To upgrade:
 
 1. Update image tags in `production/kustomization.yaml`
-2. Re-apply: `kubectl apply -k deploy/k8s/production`
-3. Watch rollout: `kubectl rollout status deployment/cordum-api-gateway -n cordum`
+2. Delete the retained init Job before changing its immutable pod template:
+   `kubectl delete job cordum-redis-cluster-init -n cordum --ignore-not-found --cascade=foreground --wait --timeout=5m`.
+   The replacement checks for an already healthy cluster and does not reinitialize it.
+3. Re-apply: `kubectl apply -k deploy/k8s/production`
+4. Watch rollout: `kubectl rollout status deployment/cordum-api-gateway -n cordum`
 
 ### Pre-Upgrade Checklist
 
@@ -790,9 +775,10 @@ kubectl get events -n cordum --sort-by=.lastTimestamp | tail -20
 # Logs for a specific service
 kubectl logs -n cordum deployment/cordum-api-gateway --tail=100
 
-# Check Redis cluster status (production overlay: TLS client certs + password)
-kubectl exec -n cordum cordum-redis-0 -c redis -- \
-  sh -c 'redis-cli --tls --cacert /etc/redis/tls/ca.crt --cert /etc/redis/tls/tls.crt --key /etc/redis/tls/tls.key -a "$REDIS_PASSWORD" cluster info'
+# Check Redis cluster status (with the client certificate and the password)
+kubectl exec -n cordum cordum-redis-0 -c redis -- sh -c 'redis-cli --tls \
+  --cacert /etc/redis/tls/ca.crt --cert /etc/redis/client-tls/tls.crt \
+  --key /etc/redis/client-tls/tls.key -a "$REDIS_PASSWORD" --no-auth-warning cluster info'
 
 # Check NATS JetStream streams (production overlay). The NATS image has no
 # nats CLI. Read the monitoring port (8222, plain HTTP) instead: a port-forward
