@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -272,5 +274,277 @@ func TestCanonicalWireOrder(t *testing.T) {
 		if v.Reject == "" {
 			checkWireOrder(t, vectorBytes(t, v), new(pb.ExecutionGrant).ProtoReflect().Descriptor())
 		}
+	}
+}
+
+type mutation struct {
+	path   string
+	value  protoreflect.Value
+	reject Reason
+}
+
+func mutations() []mutation {
+	s, b, u, i, e := protoreflect.ValueOfString, protoreflect.ValueOfBytes, protoreflect.ValueOfUint64, protoreflect.ValueOfInt64, protoreflect.ValueOfEnum
+	return []mutation{
+		{"schema_version", protoreflect.ValueOfUint32(2), UnknownVersion},
+		{"issuer_id", s("issuer-2"), ""}, {"issuer_key_id", s("grant-2"), ""},
+		{"tenant_id", s("tenant-2"), ""}, {"principal_id", s("principal-2"), ""},
+		{"agent_id", s("agent-2"), ""}, {"session_id", s("session-2"), ""},
+		{"delegation_chain.0.agent_id", s("root-2"), ""}, {"delegation_chain.0.token_jti", s("jti-2"), ""},
+		{"delegation_chain.0.parent_jti", s("parent-2"), ""},
+		{"action.operation", s("operation-2"), ""},
+		{"action.target.account", s("cluster-2"), ""}, {"action.target.environment", s("env-2"), ""}, {"action.target.resource", s("ns-2"), ""},
+		{"action.preconditions.0.resource", s("aa"), ""}, {"action.preconditions.0.kind", e(2), ""}, {"action.preconditions.0.expected_version", s("2"), ""},
+		{"action.inputs.0.name", s("manifest-2"), ""}, {"action.inputs.0.media_type", s("text/yaml"), ""},
+		{"action.inputs.0.sha256", b(bytes.Repeat([]byte{6}, 32)), ""}, {"action.inputs.0.size_bytes", u(124), ""},
+		{"action.runtime.tool_id", s("tool-2"), ""}, {"action.runtime.tool_version", s("version-2"), ""}, {"action.runtime.image_sha256", b(bytes.Repeat([]byte{6}, 32)), ""},
+		{"action.kubernetes_manifest_apply.manifest_input", s("values"), ""},
+		{"action.kubernetes_manifest_apply.objects.0.api_group", s("a"), ""}, {"action.kubernetes_manifest_apply.objects.0.api_version", s("v2"), ""},
+		{"action.kubernetes_manifest_apply.objects.0.kind", s("Secret"), ""}, {"action.kubernetes_manifest_apply.objects.0.namespace", s("ns-2"), ""},
+		{"action.kubernetes_manifest_apply.objects.0.name", s("b"), ""},
+		{"policy_digest", b(bytes.Repeat([]byte{6}, 32)), ""}, {"authority_epoch", u(2), ""},
+		{"approval.state", e(1), ""}, {"approval.approval_ref", s("approval-2"), ""},
+		{"approval.approver_ids.0", s("amy"), ""}, {"approval.action_commitment", b(bytes.Repeat([]byte{6}, 32)), ""},
+		{"enforcement_profile.profile_id", s("profile-2"), ""}, {"enforcement_profile.required_capabilities.0", s("cap-2"), ""},
+		{"grant_id", b(bytes.Repeat([]byte{6}, 16)), ""}, {"execution_id", s("execution-2"), ""},
+		{"issued_at_unix", i(1700000001), ""}, {"not_before_unix", i(1700000001), ""}, {"expires_at_unix", i(1700000061), ""},
+		{"max_uses", protoreflect.ValueOfUint32(2), InvalidField}, {"executor.executor_id", s("broker-2"), ""}, {"executor.executor_kind", e(2), ""},
+	}
+}
+
+func leafPaths(md protoreflect.MessageDescriptor, parent string) []string {
+	var paths []string
+	for i := 0; i < md.Fields().Len(); i++ {
+		fd := md.Fields().Get(i)
+		path := string(fd.Name())
+		if parent != "" {
+			path = parent + "." + path
+		}
+		if fd.IsList() {
+			path += ".0"
+		}
+		if fd.Kind() == protoreflect.MessageKind {
+			paths = append(paths, leafPaths(fd.Message(), path)...)
+		} else {
+			paths = append(paths, path)
+		}
+	}
+	return paths
+}
+
+func locate(t *testing.T, m protoreflect.Message, path string) (protoreflect.Message, protoreflect.FieldDescriptor) {
+	t.Helper()
+	parts := strings.Split(path, ".")
+	for i := 0; i < len(parts); i++ {
+		fd := m.Descriptor().Fields().ByName(protoreflect.Name(parts[i]))
+		if fd == nil {
+			t.Fatalf("unknown test path %s", path)
+		}
+		if i == len(parts)-1 || fd.Kind() != protoreflect.MessageKind {
+			return m, fd
+		}
+		if fd.IsList() {
+			m = m.Get(fd).List().Get(0).Message()
+			i++
+		} else {
+			m = m.Get(fd).Message()
+		}
+	}
+	t.Fatalf("invalid test path %s", path)
+	return nil, nil
+}
+
+func TestCanonicalBytesMutations(t *testing.T) {
+	base := fullGrant(t)
+	before := marshal(t, base)
+	covered := make(map[string]bool)
+	for _, row := range mutations() {
+		if covered[row.path] {
+			t.Fatalf("duplicate mutation: %s", row.path)
+		}
+		covered[row.path] = true
+		t.Run(row.path, func(t *testing.T) {
+			g := proto.Clone(base).(*pb.ExecutionGrant)
+			m, fd := locate(t, g.ProtoReflect(), row.path)
+			if fd.IsList() {
+				m.Get(fd).List().Set(0, row.value)
+			} else {
+				m.Set(fd, row.value)
+			}
+			got, err := CanonicalBytes(g)
+			if row.reject != "" {
+				assertReason(t, err, row.reject)
+				if got != nil {
+					t.Fatal("rejection released bytes")
+				}
+				return
+			}
+			if err != nil || bytes.Equal(before, got) {
+				t.Fatalf("mutation did not change canonical bytes: %v", err)
+			}
+			if !bytes.Equal(got, marshal(t, g)) {
+				t.Fatal("encoder normalized the mutation")
+			}
+		})
+	}
+	paths := leafPaths(base.ProtoReflect().Descriptor(), "")
+	for _, path := range paths {
+		if !covered[path] {
+			t.Errorf("uncovered leaf: %s", path)
+		}
+	}
+	if len(covered) != len(paths) {
+		t.Fatal("mutation paths do not match descriptor")
+	}
+	t.Logf("covered %d leaf paths", len(paths))
+}
+
+type invalidCase struct {
+	name   string
+	change func(*pb.ExecutionGrant)
+	reason Reason
+	field  string
+}
+
+func invalidCases() []invalidCase {
+	return []invalidCase{
+		{"empty-grant-id", func(g *pb.ExecutionGrant) { g.GrantId = nil }, MissingField, "grant_id"},
+		{"short-grant-id", func(g *pb.ExecutionGrant) { g.GrantId = []byte{1} }, InvalidField, "grant_id"},
+		{"empty-authority", func(g *pb.ExecutionGrant) { g.AuthorityEpoch = 0 }, MissingField, "authority_epoch"},
+		{"negative-time", func(g *pb.ExecutionGrant) { g.IssuedAtUnix = -1 }, InvalidField, "issued_at_unix"},
+		{"empty-time", func(g *pb.ExecutionGrant) { g.ExpiresAtUnix = 0 }, MissingField, "expires_at_unix"},
+		{"empty-action", func(g *pb.ExecutionGrant) { g.Action = nil }, MissingField, "action"},
+		{"empty-oneof", func(g *pb.ExecutionGrant) { g.Action.Parameters = nil }, MissingField, "action.kubernetes_manifest_apply"},
+		{"nil-oneof-message", func(g *pb.ExecutionGrant) { g.Action.Parameters = &pb.ExecutionGrant_Action_KubernetesManifestApply{} }, MissingField, "action.kubernetes_manifest_apply"},
+		{"nil-oneof-wrapper", func(g *pb.ExecutionGrant) {
+			g.Action.Parameters = (*pb.ExecutionGrant_Action_KubernetesManifestApply)(nil)
+		}, MissingField, "action.kubernetes_manifest_apply"},
+		{"nil-list-message", func(g *pb.ExecutionGrant) { g.Action.Inputs[0] = nil }, MissingField, "action.inputs.0"},
+		{"empty-inputs", func(g *pb.ExecutionGrant) { g.Action.Inputs = nil }, MissingField, "action.inputs"},
+		{"empty-input-name", func(g *pb.ExecutionGrant) { g.Action.Inputs[0].Name = "" }, MissingField, "action.inputs.0.name"},
+		{"empty-input-size", func(g *pb.ExecutionGrant) { g.Action.Inputs[0].SizeBytes = 0 }, MissingField, "action.inputs.0.size_bytes"},
+		{"large-input", func(g *pb.ExecutionGrant) { g.Action.Inputs[0].SizeBytes = MaxInputSizeBytes + 1 }, InvalidField, "action.inputs.0.size_bytes"},
+		{"short-input-digest", func(g *pb.ExecutionGrant) { g.Action.Inputs[0].Sha256 = []byte{1} }, InvalidField, "action.inputs.0.sha256"},
+		{"short-image", func(g *pb.ExecutionGrant) { g.Action.Runtime.ImageSha256 = []byte{1} }, InvalidField, "action.runtime.image_sha256"},
+		{"short-commitment", func(g *pb.ExecutionGrant) { g.Approval.ActionCommitment = []byte{1} }, InvalidField, "approval.action_commitment"},
+		{"empty-approver", func(g *pb.ExecutionGrant) { g.Approval.ApproverIds[0] = "" }, MissingField, "approval.approver_ids.0"},
+		{"unsorted-approvers", func(g *pb.ExecutionGrant) { g.Approval.ApproverIds = []string{"b", "a"} }, InvalidField, "approval.approver_ids"},
+		{"duplicate-capabilities", func(g *pb.ExecutionGrant) { g.EnforcementProfile.RequiredCapabilities = []string{"a", "a"} }, InvalidField, "enforcement_profile.required_capabilities"},
+		{"duplicate-jti", func(g *pb.ExecutionGrant) { g.DelegationChain[2].TokenJti = g.DelegationChain[0].TokenJti }, InvalidField, "delegation_chain"},
+		{"unsorted-preconditions", func(g *pb.ExecutionGrant) { g.Action.Preconditions[0].Resource = "z" }, InvalidField, "action.preconditions"},
+		{"numeric-precondition-order", func(g *pb.ExecutionGrant) {
+			g.Action.Preconditions[0].Resource = "b"
+			g.Action.Preconditions[0].Kind = 3
+		}, InvalidField, "action.preconditions"},
+		{"unknown-oneof-field", func(g *pb.ExecutionGrant) {
+			g.Action.GetKubernetesManifestApply().ProtoReflect().SetUnknown(wireInt(99, 1))
+		}, UnknownField, "action.kubernetes_manifest_apply"},
+		{"version-before-unknown", func(g *pb.ExecutionGrant) { g.SchemaVersion = 2; g.ProtoReflect().SetUnknown(wireInt(99, 1)) }, UnknownVersion, "schema_version"},
+		{"unknown-before-missing", func(g *pb.ExecutionGrant) { g.TenantId = ""; g.Executor.ExecutorKind = 99 }, UnknownField, "executor.executor_kind"},
+	}
+}
+
+func TestCanonicalValidate(t *testing.T) {
+	assertReason(t, Validate(nil), UnknownVersion)
+	for _, row := range invalidCases() {
+		t.Run(row.name, func(t *testing.T) {
+			g := fullGrant(t)
+			row.change(g)
+			out, err := CanonicalBytes(g)
+			if got := assertReason(t, err, row.reason); got.Field != row.field {
+				t.Fatalf("field %q, want %q", got.Field, row.field)
+			}
+			if out != nil {
+				t.Fatal("rejection released bytes")
+			}
+		})
+	}
+	t.Run("scalar-boundaries", checkScalarBounds)
+	t.Run("list-boundaries", checkListBounds)
+	t.Run("byte-cap", checkByteCap)
+}
+
+func checkScalarBounds(t *testing.T) {
+	rows := []struct {
+		field   string
+		values  []protoreflect.Value
+		reasons []Reason
+	}{
+		{"tenant_id", []protoreflect.Value{protoreflect.ValueOfString(strings.Repeat("~", MaxStringBytes)), protoreflect.ValueOfString(strings.Repeat("x", MaxStringBytes+1)), protoreflect.ValueOfString("\x7f"), protoreflect.ValueOfString("é")}, []Reason{"", InvalidField, InvalidField, InvalidField}},
+		{"issuer_key_id", []protoreflect.Value{protoreflect.ValueOfString("grant-" + strings.Repeat("x", MaxKeyIDBytes-6)), protoreflect.ValueOfString("grant-" + strings.Repeat("x", MaxKeyIDBytes-5)), protoreflect.ValueOfString("grant-"), protoreflect.ValueOfString("grant-X"), protoreflect.ValueOfString("wrong-key")}, []Reason{"", InvalidField, InvalidField, InvalidField, InvalidField}},
+		{"action.inputs.0.size_bytes", []protoreflect.Value{protoreflect.ValueOfUint64(MaxInputSizeBytes)}, []Reason{""}},
+		{"approval.state", []protoreflect.Value{protoreflect.ValueOfEnum(0)}, []Reason{MissingField}},
+		{"executor.executor_kind", []protoreflect.Value{protoreflect.ValueOfEnum(0)}, []Reason{MissingField}},
+		{"action.preconditions.0.kind", []protoreflect.Value{protoreflect.ValueOfEnum(0)}, []Reason{MissingField}},
+	}
+	for _, row := range rows {
+		for i, value := range row.values {
+			g := fullGrant(t)
+			m, fd := locate(t, g.ProtoReflect(), row.field)
+			m.Set(fd, value)
+			err := Validate(g)
+			if row.reasons[i] == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				continue
+			}
+			if got := assertReason(t, err, row.reasons[i]); got.Field != row.field {
+				t.Fatalf("field %s, want %s", got.Field, row.field)
+			}
+		}
+	}
+}
+
+func fillList(t *testing.T, g *pb.ExecutionGrant, path string, size int) {
+	m, fd := locate(t, g.ProtoReflect(), path)
+	list := m.Get(fd).List()
+	first := list.Get(0)
+	list.Truncate(0)
+	key := map[protoreflect.Name]protoreflect.Name{"delegation_chain": "token_jti", "inputs": "name", "objects": "name", "preconditions": "resource"}[fd.Name()]
+	for i := 0; i < size; i++ {
+		value := protoreflect.ValueOfString(fmt.Sprintf("item-%03d", i))
+		if fd.Kind() == protoreflect.MessageKind {
+			msg := proto.Clone(first.Message().Interface()).ProtoReflect()
+			msg.Set(msg.Descriptor().Fields().ByName(key), value)
+			value = protoreflect.ValueOfMessage(msg)
+		}
+		list.Append(value)
+	}
+}
+
+func checkListBounds(t *testing.T) {
+	for path, max := range map[string]int{"delegation_chain": MaxDelegationLinks, "action.inputs": MaxInputs, "action.kubernetes_manifest_apply.objects": MaxObjects,
+		"action.preconditions": MaxPreconditions, "approval.approver_ids": MaxApprovers, "enforcement_profile.required_capabilities": MaxCapabilities} {
+		g := fullGrant(t)
+		fillList(t, g, path, max)
+		if err := Validate(g); err != nil {
+			t.Fatal(err)
+		}
+		fillList(t, g, path, max+1)
+		if got := assertReason(t, Validate(g), InvalidField); got.Field != path {
+			t.Fatalf("field %s, want %s", got.Field, path)
+		}
+	}
+}
+
+func checkByteCap(t *testing.T) {
+	g, err := Decode(make([]byte, MaxGrantBytes+1))
+	assertReason(t, err, TooLarge)
+	if g != nil {
+		t.Fatal("oversized input released a grant")
+	}
+	g = fullGrant(t)
+	fillList(t, g, "action.kubernetes_manifest_apply.objects", 40)
+	for _, object := range g.Action.GetKubernetesManifestApply().Objects {
+		object.Name += strings.Repeat("x", 2000)
+	}
+	if err := Validate(g); err != nil {
+		t.Fatal(err)
+	}
+	out, err := CanonicalBytes(g)
+	assertReason(t, err, TooLarge)
+	if out != nil {
+		t.Fatal("oversized grant released bytes")
 	}
 }

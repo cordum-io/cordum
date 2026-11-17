@@ -106,7 +106,7 @@ func validateValue(fd protoreflect.FieldDescriptor, v protoreflect.Value, path s
 		return validateMessage(v.Message(), path)
 	case protoreflect.StringKind:
 		s := v.String()
-		if s == "" && !optional(fd.Name()) {
+		if s == "" && (fd.IsList() || !optional(fd.Name())) {
 			return &Error{MissingField, path}
 		}
 		valid = len(s) <= MaxStringBytes

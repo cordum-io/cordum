@@ -221,6 +221,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Execution grant v1 schema (M2A-02A) and `core/execgrant` canonical bytes, strict
+  decoder and golden vectors; no service issues, signs or verifies grants yet (task-85bb037a).
+
 - Release-compose install: when none of `CORDUM_POLICY_SIGNING_KEY`,
   `SAFETY_POLICY_PUBLIC_KEY` and `SAFETY_POLICY_SIGNATURE` is set, `quickstart.sh`
   on `docker-compose.release.yml` generates an Ed25519 key with
