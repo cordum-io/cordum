@@ -7,6 +7,9 @@ set -euo pipefail
 for name in $(compgen -e); do
   case "${name}" in CORDUM_POLICY_* | SAFETY_POLICY_*) unset "${name}" ;; esac
 done
+# Git Bash: with MSYS_NO_PATHCONV=1, a /tmp path handed to a native exe
+# (go.exe, cordumctl.exe) resolves to <drive>:\tmp, not to bash's /tmp.
+unset MSYS_NO_PATHCONV
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORK="$(mktemp -d)"
