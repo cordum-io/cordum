@@ -18,8 +18,8 @@ func helperCmd(mode string) string {
 const (
 	catInput = `cat "$ESCAPE_INPUT_DIR/` + inputName + `" > "$ESCAPE_WORKSPACE/consumed"`
 	// Each background job sleeps, then writes "late" into the workspace.
-	lateJob    = `'sleep 1; : > "$ESCAPE_WORKSPACE/late"' </dev/null >/dev/null 2>&1`
-	spawnLoop  = `i=0
+	lateJob   = `'sleep 1; : > "$ESCAPE_WORKSPACE/late"' </dev/null >/dev/null 2>&1`
+	spawnLoop = `i=0
 while [ "$i" -lt "$ESCAPE_PROC_CAP" ]; do
 	(: > "$ESCAPE_WORKSPACE/p.$i"; exec sleep 1) &
 	i=$((i + 1))

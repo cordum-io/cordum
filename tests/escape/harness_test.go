@@ -111,9 +111,10 @@ func Register(name string, r Runner, tg Targets) {
 
 // World is one case's host-side layout, all under the case's t.TempDir().
 type World struct {
-	Workspace, Inputs, Outside, Secrets string
-	Marker     string            // ESCAPE_MARKER value every process of the case inherits
-	Secret     string            // synthetic credential the case must not be able to emit
+	Workspace, Inputs, Outside, Secrets string // the case's host directories
+
+	Marker     string // ESCAPE_MARKER value every process of the case inherits
+	Secret     string // synthetic credential the case must not be able to emit
 	Targets    Targets
 	Env        []string          // ESCAPE_* variables handed to the case
 	Digests    map[string]string // approved input name -> sha256 hex

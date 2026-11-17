@@ -230,7 +230,8 @@ func consumed(_ *testing.T, w *World) (func() string, error) {
 	}, nil
 }
 
-// spawned trips when the case started ProcCap processes that each marked their start.
+// spawned trips when ProcCap processes of the spawn loop each marked their start.
+// Each one sleeps a second, so a fast loop holds them all at the same time.
 func spawned(_ *testing.T, w *World) (func() string, error) {
 	limit := w.Targets.ProcCap
 	w.Env = append(w.Env, "ESCAPE_PROC_CAP="+strconv.Itoa(limit))
@@ -239,7 +240,7 @@ func spawned(_ *testing.T, w *World) (func() string, error) {
 		if len(started) < limit {
 			return ""
 		}
-		return fmt.Sprintf("%d processes ran at once (cap %d)", len(started), limit)
+		return fmt.Sprintf("the spawn loop started %d processes (cap %d)", len(started), limit)
 	}, nil
 }
 
