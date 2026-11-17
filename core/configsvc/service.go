@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/cordum/cordum/core/infra/redisutil"
@@ -26,6 +28,20 @@ const (
 	ScopeWorkflow Scope = "workflow"
 	ScopeStep     Scope = "step"
 )
+
+// TenantScopeID qualifies team, workflow and step ids with their tenant.
+func TenantScopeID(scope Scope, tenant, id string) string {
+	switch scope {
+	case ScopeTeam, ScopeWorkflow, ScopeStep:
+		tenant, id = strings.TrimSpace(tenant), strings.TrimSpace(id)
+		if tenant == "" || id == "" {
+			return ""
+		}
+		return url.PathEscape(tenant) + "/" + id
+	default:
+		return id
+	}
+}
 
 // Document is a config fragment at a given scope.
 type Document struct {
@@ -183,9 +199,9 @@ func (s *Service) EffectiveSnapshot(ctx context.Context, orgID, teamID, workflow
 	}{
 		{ScopeSystem, "default"},
 		{ScopeOrg, orgID},
-		{ScopeTeam, teamID},
-		{ScopeWorkflow, workflowID},
-		{ScopeStep, stepID},
+		{ScopeTeam, TenantScopeID(ScopeTeam, orgID, teamID)},
+		{ScopeWorkflow, TenantScopeID(ScopeWorkflow, orgID, workflowID)},
+		{ScopeStep, TenantScopeID(ScopeStep, orgID, stepID)},
 	}
 	result := make(map[string]any)
 	revisions := make(map[Scope]int64, len(order))

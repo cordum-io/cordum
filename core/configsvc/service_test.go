@@ -2,6 +2,7 @@ package configsvc
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	miniredis "github.com/alicebob/miniredis/v2"
@@ -61,7 +62,7 @@ func TestSetGetEffective(t *testing.T) {
 	// team override
 	_ = svc.Set(ctx, &Document{
 		Scope:   ScopeTeam,
-		ScopeID: "team-1",
+		ScopeID: TenantScopeID(ScopeTeam, "org-1", "team-1"),
 		Data:    map[string]any{"budget": 100},
 	})
 
@@ -77,6 +78,69 @@ func TestSetGetEffective(t *testing.T) {
 	}
 	if budget, ok := asInt(eff["budget"]); !ok || budget != 100 {
 		t.Fatalf("expected team budget, got %v", eff["budget"])
+	}
+}
+
+func TestEffectiveSnapshotTenantScopes(t *testing.T) {
+	svc, srv := newSvcWithServer(t)
+	defer srv.Close()
+	defer func() { _ = svc.Close() }()
+	ctx := context.Background()
+	for _, scope := range []Scope{ScopeTeam, ScopeWorkflow, ScopeStep} {
+		for i, tenant := range []string{"a", "b", ""} {
+			id := "shared"
+			if tenant != "" {
+				id = tenant + "/" + id
+			}
+			doc := &Document{Scope: scope, ScopeID: id, Revision: int64(i), Data: map[string]any{string(scope): tenant}}
+			if err := svc.Set(ctx, doc); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for i, tenant := range []string{"a", "b", ""} {
+		t.Run("tenant="+tenant, func(t *testing.T) {
+			want := map[string]any{}
+			revisions := map[Scope]int64{}
+			if tenant != "" {
+				for _, scope := range []Scope{ScopeTeam, ScopeWorkflow, ScopeStep} {
+					want[string(scope)] = tenant
+					revisions[scope] = int64(i + 1)
+				}
+			}
+			hash, err := snapshotHash(want)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := svc.EffectiveSnapshot(ctx, tenant, "shared", "shared", "shared")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got.Data, want) || got.Hash != hash || got.Version != snapshotVersion(revisions) {
+				t.Fatalf("snapshot = %+v, want data=%v hash=%s version=%s", got, want, hash, snapshotVersion(revisions))
+			}
+		})
+	}
+}
+
+func TestTenantScopeID(t *testing.T) {
+	for _, scope := range []Scope{ScopeTeam, ScopeWorkflow, ScopeStep} {
+		for _, tc := range []struct{ tenant, id, want string }{
+			{" a/b ", " c ", "a%2Fb/c"},
+			{"a", "b/c", "a/b/c"},
+			{"a%2Fb", "c", "a%252Fb/c"},
+			{" ", "c", ""},
+			{"a", " ", ""},
+		} {
+			if got := TenantScopeID(scope, tc.tenant, tc.id); got != tc.want {
+				t.Errorf("%s (%q, %q) = %q, want %q", scope, tc.tenant, tc.id, got, tc.want)
+			}
+		}
+	}
+	for _, scope := range []Scope{ScopeSystem, ScopeOrg, "other"} {
+		if got := TenantScopeID(scope, "a/b", " raw "); got != " raw " {
+			t.Errorf("%s id = %q, want unchanged id", scope, got)
+		}
 	}
 }
 
