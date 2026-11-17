@@ -139,12 +139,32 @@ func testServerTLSCall(t *testing.T, creds grpc.ServerOption, roots *x509.CertPo
 	resp, err := healthpb.NewHealthClient(conn).Check(ctx, &healthpb.HealthCheckRequest{})
 	if refused {
 		require.Equal(t, codes.Unavailable, status.Code(err))
-		require.ErrorContains(t, err, "certificate")
 		require.Nil(t, resp)
 		require.Zero(t, probe.calls.Load(), "refusal must precede the handler")
+		requireTLSRefusal(t, lis.Addr().String(), cfg)
 		return
 	}
 	require.NoError(t, err)
 	require.Equal(t, healthpb.HealthCheckResponse_SERVING, resp.GetStatus())
 	require.EqualValues(t, 1, probe.calls.Load())
+}
+
+// requireTLSRefusal reads the server's certificate alert on a connection that
+// writes nothing after the handshake. Under TLS 1.3 a gRPC client preface races
+// that alert, so the RPC above can fail on a reset write instead.
+func requireTLSRefusal(t *testing.T, addr string, cfg *tls.Config) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	raw, err := (&net.Dialer{}).DialContext(ctx, "tcp", addr)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, raw.Close()) })
+	probeCfg := cfg.Clone()
+	probeCfg.NextProtos = []string{"h2"}
+	conn := tls.Client(raw, probeCfg)
+	require.NoError(t, conn.HandshakeContext(ctx))
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
+	n, err := conn.Read(make([]byte, 1))
+	require.Zero(t, n, "refused TLS probe received data")
+	require.ErrorContains(t, err, "certificate")
 }

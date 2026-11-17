@@ -168,10 +168,13 @@ func serverTransportCredentials(ctx context.Context) (grpc.ServerOption, error) 
 		}
 		tlsCfg := &tls.Config{
 			GetCertificate: reloader.GetCertificate,
-			MinVersion:     env.TLSMinVersion(),
+			MinVersion:     tls.VersionTLS12,
+		}
+		if env.TLSMinVersion() == tls.VersionTLS13 {
+			tlsCfg.MinVersion = tls.VersionTLS13
 		}
 		if clientCA != "" {
-			pem, err := os.ReadFile(clientCA)
+			pem, err := os.ReadFile(clientCA) // #nosec G304 -- the client CA path is configured by the operator.
 			if err != nil {
 				return nil, fmt.Errorf("read CONTEXT_ENGINE_TLS_CLIENT_CA: %w", err)
 			}
