@@ -316,7 +316,15 @@ Supply `--mcp-gateway-url` from trusted deployment configuration, independently
 of the file being inspected. The verifier never derives it from that file,
 its environment, a sibling `managed-mcp.json`, or the control-plane `--gateway`.
 Both the expected URL and the allowlist entry must be absolute HTTP(S) URLs
-with a non-root path, without credentials, wildcards or variable placeholders.
+with a non-root path, without credentials, wildcards or variable
+placeholders. Credentials means userinfo (`user:pass@host`) and anything
+`managedMCPCredentialPattern` flags, such as `access_token=` or `api_key=` in the
+query string and recognized provider-token formats. `generate` and `verify`
+share the URL-decoding and credential check through `validateManagedMCPGatewayURL`
+in `core/edge/claude/managed_settings.go`; the verifier applies it to both
+URLs. The check is a heuristic, not a general secret detector: non-sensitive
+query parameters, including opaque or hexadecimal tenant IDs, pass. Keep credentials out of the
+URL; the MCP client gets them from `headersHelper`.
 They must match literally after trimming surrounding whitespace: ports,
 paths, trailing slashes, queries and fragments are not silently rewritten.
 Missing baseline fails verification; a missing CLI flag is a configuration

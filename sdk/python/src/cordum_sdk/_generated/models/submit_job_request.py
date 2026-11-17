@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 from typing import List
 
@@ -87,9 +87,6 @@ class SubmitJobRequest:
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.submit_job_request_context import SubmitJobRequestContext
-        from ..models.submit_job_request_labels import SubmitJobRequestLabels
-
         prompt = self.prompt
 
         topic = self.topic

@@ -358,6 +358,66 @@ func TestPackArchiveRefusesInvalidEntries(t *testing.T) {
 	})
 }
 
+func TestPackArchiveCountsOnlyRegularFiles(t *testing.T) {
+	// fill adds regular files to root until it holds exactly want of them,
+	// each in its own directory when nested is true.
+	fill := func(t *testing.T, root string, want int, nested bool) {
+		t.Helper()
+		have, err := packServerFiles(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := len(have); i < want; i++ {
+			dir := root
+			if nested {
+				dir = filepath.Join(root, fmt.Sprintf("d%04d", i))
+				if err := os.Mkdir(dir, 0o750); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("f%04d.txt", i)), []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	t.Run("directories_do_not_count", func(t *testing.T) {
+		root := writeTestPack(t)
+		fill(t, root, maxPackFiles, true)
+		archive, err := packArchive(root)
+		if err != nil {
+			t.Fatalf("pack with %d regular files and their directories: %v", maxPackFiles, err)
+		}
+		if err := packServerArchiveMatches(root, bytes.NewReader(archive)); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(t.TempDir(), "pack.tgz")
+		if err := os.WriteFile(path, archive, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		bundle, err := loadPackBundle(path, nil)
+		if err != nil {
+			t.Fatalf("extract round trip: %v", err)
+		}
+		defer bundle.Cleanup()
+		want, err := packServerFiles(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := packServerFiles(bundle.Dir)
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Fatalf("round trip: %d files, want %d (err %v)", len(got), len(want), err)
+		}
+	})
+	t.Run("regular_files_over_limit_refused", func(t *testing.T) {
+		root := writeTestPack(t)
+		fill(t, root, maxPackFiles+1, false)
+		data, err := packArchive(root)
+		if err == nil || data != nil || !strings.Contains(err.Error(), "pack archive limit exceeded") {
+			t.Fatalf("%d regular files: bytes=%d err=%v", maxPackFiles+1, len(data), err)
+		}
+	})
+}
+
 type packRoundTrip func(*http.Request) (*http.Response, error)
 
 func (f packRoundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

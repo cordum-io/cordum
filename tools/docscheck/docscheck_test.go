@@ -198,26 +198,38 @@ func TestCheckFixture(t *testing.T) {
 	}
 	want := []Issue{
 		{File: fixtureDoc, Line: 6, Kind: "env-default", Key: "FIX_VAR", Detail: "FIX_VAR: documented default `b`, code default \"a\""},
-		{File: fixtureDoc, Line: 15, Kind: "endpoint", Key: "GET /api/v1/missing", Detail: "GET /api/v1/missing not in the OpenAPI description"},
+		{File: fixtureDoc, Line: 18, Kind: "endpoint", Key: "GET /api/v1/missing", Detail: "GET /api/v1/missing not in the OpenAPI description"},
 	}
 	if !reflect.DeepEqual(r.Failures, want) {
 		t.Fatalf("failures =\n%#v\nwant\n%#v", r.Failures, want)
 	}
-	// Exact counts pin the passes: FIX_OK and FIX_NONE are the two passing
+	// Exact counts pin the passes: FIX_OK, FIX_NONE and FIX_HELPER are passing
 	// defaults (FIX_OK stays single-valued although firstEnv names it), and
 	// GET /api/v1/things/{id} is the passing endpoint.
-	checked := map[string]int{"env-name": 6, "env-default": 3, "endpoint": 2}
+	checked := map[string]int{"env-name": 9, "env-default": 4, "endpoint": 2}
 	unchecked := map[string]int{
 		"default cell is prose":                       1,
-		"code default not in a recognized form":       1,
+		"code default not in a recognized form":       3,
 		"ambiguous code default":                      1,
 		reasonCommand:                                 1,
 		"skip: needs a live cluster to run":           1,
 		"endpoints block holds no recognized example": 1,
 	}
-	if r.Blocks != 4 || r.Passed != 9 || len(r.Known) != 0 ||
+	if r.Blocks != 4 || r.Passed != 13 || len(r.Known) != 0 ||
 		!reflect.DeepEqual(r.Checked, checked) || !reflect.DeepEqual(r.Unchecked, unchecked) {
 		t.Fatalf("report = %s", r.Summary())
+	}
+	idx, err := indexProduct(fixtureConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"FIX_ENV", "FIX_ENV_VAR"} {
+		if len(idx.defaults[name]) != 0 {
+			t.Errorf("%s defaults = %v, want none", name, idx.defaults[name])
+		}
+	}
+	if want := map[string]bool{"h": true}; !reflect.DeepEqual(idx.defaults["FIX_HELPER"], want) {
+		t.Errorf("FIX_HELPER defaults = %v, want %v", idx.defaults["FIX_HELPER"], want)
 	}
 
 	t.Run("names come from code roots or text sources", func(t *testing.T) {
@@ -233,7 +245,7 @@ func TestCheckFixture(t *testing.T) {
 			t.Fatalf("failures = %#v, want first %#v", r.Failures, miss)
 		}
 		cfg.TextSources = []string{"co*"}
-		if r, err = Check(cfg); err != nil || r.Checked["env-name"] != 6 || hasKind(r.Failures, "env-name") {
+		if r, err = Check(cfg); err != nil || r.Checked["env-name"] != 9 || hasKind(r.Failures, "env-name") {
 			t.Fatalf("with text sources: err = %v, %s", err, r.Summary())
 		}
 	})

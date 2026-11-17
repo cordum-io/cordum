@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/internal/testredis"
+	"github.com/redis/go-redis/v9"
 )
 
 func newTestLegalHoldStore(t *testing.T) (*LegalHoldStore, *miniredis.Miniredis) {
@@ -237,6 +240,57 @@ func TestIsUnderHold_EmptyTenant(t *testing.T) {
 	}
 	if held {
 		t.Fatal("empty tenant should not be under hold")
+	}
+}
+
+// TestDeleteUnlessHeld queues a DEL of a marker key; inside writes through a
+// second client while the transaction is open.
+func TestDeleteUnlessHeld(t *testing.T) {
+	ctx := context.Background()
+	active := `{"id":"h-1","tenant_id":"t-1"}`
+	tests := []struct {
+		name    string
+		index   bool   // the tenant's hold index lists h-1
+		record  string // h-1's stored record, if any
+		inside  func(other *LegalHoldStore) error
+		wantErr string // "" when the marker is deleted
+	}{
+		{name: "no_hold"},
+		{name: "active_hold", index: true, record: active, wantErr: ErrUnderHold.Error()},
+		{name: "unreadable_record", index: true, record: "{not json", wantErr: "unmarshal hold"},
+		{name: "hold_created_before_exec", wantErr: redis.TxFailedErr.Error(), inside: func(other *LegalHoldStore) error {
+			_, err := other.CreateHold(ctx, "t-1", "litigation", "admin")
+			return err
+		}},
+		{name: "record_written_before_exec", index: true, wantErr: redis.TxFailedErr.Error(), inside: func(other *LegalHoldStore) error {
+			return other.client.Set(ctx, legalHoldKeyPrefix+"h-1", active, 0).Err()
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store, srv := newTestLegalHoldStore(t)
+			other := NewLegalHoldStoreFromClient(testredis.NewClient(t, srv.Addr()))
+			if tc.index {
+				_, _ = srv.SAdd(legalHoldSetPrefix+"t-1", "h-1")
+			}
+			if tc.record != "" {
+				_ = srv.Set(legalHoldKeyPrefix+"h-1", tc.record)
+			}
+			_ = srv.Set("marker", "1")
+			var insideErr error
+			err := store.DeleteUnlessHeld(ctx, "t-1", func(pipe redis.Pipeliner) {
+				if tc.inside != nil {
+					insideErr = tc.inside(other)
+				}
+				pipe.Del(ctx, "marker")
+			})
+			if insideErr != nil || (err == nil) != (tc.wantErr == "") || !strings.Contains(fmt.Sprint(err), tc.wantErr) {
+				t.Fatalf("DeleteUnlessHeld error = %v (inside: %v), want %q", err, insideErr, tc.wantErr)
+			}
+			if kept := srv.Exists("marker"); kept != (tc.wantErr != "") {
+				t.Fatalf("marker kept = %v, want %v", kept, tc.wantErr != "")
+			}
+		})
 	}
 }
 

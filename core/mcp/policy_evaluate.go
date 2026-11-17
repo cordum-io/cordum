@@ -133,6 +133,19 @@ type CallMetadata struct {
 	AgentID     string
 	SessionID   string
 	ExecutionID string
+	// MCPSessionID is the client's MCP session when it differs from the Edge
+	// session (SessionID): a session-less POST runs in a one-shot Edge
+	// session but keeps one MCP session per caller and agent. The session
+	// taint is kept per MCP session. Empty means SessionID.
+	MCPSessionID string
+}
+
+// taintSession is the session a prompt-injection taint is kept for.
+func (m CallMetadata) taintSession() string {
+	if m.MCPSessionID != "" {
+		return m.MCPSessionID
+	}
+	return m.SessionID
 }
 
 type callMetadataKey struct{}
@@ -408,6 +421,13 @@ func PolicyPreEventFromContext(ctx context.Context) (PolicyPreEvent, bool) {
 // the contract — tests grep for it.
 var errMissingMCPMetadata = errors.New("missing_mcp_metadata: CallMetadata not in context")
 
+func callMetadataComplete(meta CallMetadata) bool {
+	return strings.TrimSpace(meta.Tenant) != "" &&
+		strings.TrimSpace(meta.SessionID) != "" &&
+		strings.TrimSpace(meta.ExecutionID) != "" &&
+		strings.TrimSpace(meta.AgentID) != ""
+}
+
 // BuildActionDescriptorFromToolCall maps an MCP tools/call into the
 // structured descriptor the action-gate pipeline consumes.
 //
@@ -567,7 +587,7 @@ func EvaluateToolCall(ctx context.Context, deps ToolCallDeps, params ToolCallPar
 	// Fail-closed is preferred over best-effort emission with synthetic
 	// placeholders: an upstream bridge that forgot to call
 	// ContextWithCallMetadata is a bug, not a soft warning.
-	if !ok || meta.Tenant == "" || meta.SessionID == "" || meta.ExecutionID == "" || meta.AgentID == "" {
+	if !ok || !callMetadataComplete(meta) {
 		return EvaluateToolCallResult{}, errMissingMCPMetadata
 	}
 	// Reject oversized args before running the redactor so a 10 MB
@@ -613,10 +633,10 @@ func EvaluateToolCall(ctx context.Context, deps ToolCallDeps, params ToolCallPar
 	// persist path remains fail-open by design. Decision captured in
 	// Monday-demo/artifacts/taint-fail-open-decision.md (task-098b8d02).
 	if deps.TaintStore != nil {
-		if t, ok, terr := deps.TaintStore.GetTaint(ctx, meta.Tenant, meta.SessionID); terr != nil {
+		if t, ok, terr := deps.TaintStore.GetTaint(ctx, meta.Tenant, meta.taintSession()); terr != nil {
 			descriptor.TaintLookupFailed = true
 			slog.WarnContext(ctx, "mcp.session_taint.lookup_failed",
-				"tenant", meta.Tenant, "session_id", meta.SessionID, "error", terr.Error())
+				"tenant", meta.Tenant, "session_id", meta.taintSession(), "error", terr.Error())
 		} else if ok && t != nil {
 			descriptor.RiskTags = append(descriptor.RiskTags, config.RiskTagSessionPromptInjection)
 			descriptor.SessionTaint = &config.ActionSessionTaint{
@@ -1251,7 +1271,7 @@ func scanResultForSessionTaint(ctx context.Context, deps ToolCallDeps, tool stri
 	if !found {
 		return
 	}
-	if err := deps.TaintStore.Taint(ctx, meta.Tenant, meta.SessionID, SessionTaint{
+	if err := deps.TaintStore.Taint(ctx, meta.Tenant, meta.taintSession(), SessionTaint{
 		Tool:          tool,
 		Pattern:       f.Pattern,
 		Snippet:       f.Snippet,
@@ -1261,7 +1281,7 @@ func scanResultForSessionTaint(ctx context.Context, deps ToolCallDeps, tool stri
 		SourceEventID: eventID,
 	}); err != nil {
 		slog.WarnContext(ctx, "mcp.session_taint.persist_failed",
-			"tenant", meta.Tenant, "session_id", meta.SessionID, "tool", tool, "error", err.Error())
+			"tenant", meta.Tenant, "session_id", meta.taintSession(), "tool", tool, "error", err.Error())
 	}
 }
 
