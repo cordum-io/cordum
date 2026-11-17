@@ -16,6 +16,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Delegation tokens: child issuance requires the parent's tenant and caps expiry
+  at the parent's expiry. Chain-link expiry checks use the configured clock leeway.
+  Upgrade note: a token with an expired chain link beyond that leeway is no longer
+  accepted (PR1-25).
+
 - Production recovery now requires a completed backup checksum manifest and
   its digest from a trusted external catalog before deleting data. Redis
   recovery also requires complete shard topology evidence and stable primary
@@ -208,6 +213,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   instead of TanStack, without changing table behavior (task-fc8b600a).
 
 ### Added
+
+- Decision records: for a job dispatched under a delegation token, the Policy
+  Decision Log record and the job's stored safety decision carry
+  `delegation_issuer_chain`, the issuer agent ids of the job's delegation lineage,
+  root issuer first. Jobs without delegation produce the same records as before
+  (task-be2a9f2e).
 
 - Gateway: MCP env defaults (from PR #591). When the stored system config has no
   `mcp.enabled`, `mcp.transport` or `mcp.policy_gate_enabled` key, the gateway reads
@@ -886,6 +897,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - typedoc, typedoc-plugin-coverage and typedoc-plugin-markdown are removed from the install with pnpm `-` overrides. typedoc 0.28 calls `Minimatch#matchOne`, which 11.x removed. orval 8.31.0 loads typedoc only for its `docs` output, which the dashboard does not configure. Until typedoc supports minimatch 11, enabling that output fails at import. orval stays at 8.31.0.
 
 ### Fixed
+
+- Delegation issuance: a parent-token tenant mismatch returns HTTP 400 with
+  `DELEGATION_REQUEST_INVALID` and `tenant_mismatch` (task-9b21101b).
 
 - The Python SDK's mypy target is now 3.10, the SDK's supported minimum. mypy
   no longer prints its "Python 3.9 is not supported" configuration warning
