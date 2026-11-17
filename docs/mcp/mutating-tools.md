@@ -324,26 +324,34 @@ appropriate and how to audit it.
 
 ## Audit trail fields
 
-Every mutating call produces two SIEMEvents that land on the audit hash chain:
+With auditing configured, two SIEMEvent **types** describe the registry-approval
+flow on the audit hash chain; the number of events depends on the path:
 
-1. `mcp.tool_approval(outcome=enqueued)` — emitted by the gate when it enqueues.
-   Extra carries `tool_name`, `args_hash`, `approval_id`, `requester`,
-   `principal`, `reason`.
+- `mcp.tool_approval` records lifecycle transitions via Extra `outcome`:
+  `enqueued`, `approved`, `rejected`, `expired`, or `consumed`. Extra carries
+  `tool_name`, `args_hash`, `approval_id`, and `requester`; `principal`,
+  `reason`/`trigger_reason`, `resolver`, and `resolution_reason` are included
+  when present. `Decision`, `AgentID`, `TenantID`, and resolver `Identity` are
+  top-level SIEMEvent fields, not Extra fields. Expiry is a store transition,
+  not a human decision; consumption does not add a timestamp field to Extra.
+- `mcp.tool_invocation` records the inbound RPC, including an approval-required
+  response **before the handler runs**. Extra includes `tool_name`, `direction`,
+  `latency_ms`, `args_redacted`, `result_type`, `result_count`, `result_hash`,
+  and `approval_status`; `approval_id` is included when set. `AgentID`,
+  `TenantID`, and `Decision` are top-level fields. The initial RPC is marked
+  `approval_status=required`; the approved retry is marked
+  `approval_status=consumed`.
 
-2. `mcp.tool_approval(outcome=approved|rejected|expired)` — emitted by the store
-   when the human acts. Extra adds `resolver`, `resolution_reason`, `decision`.
+The default enqueue/approve/retry success loop therefore has three lifecycle
+events and two inbound invocation events (see Step 6). Rejection or expiry is
+a different path: it does not imply consumption or handler execution.
 
-3. `mcp.tool_approval(outcome=consumed)` — emitted by the gate when the LLM's
-   retry claims the approved record. Adds `consumed_at`.
-
-4. `mcp.tool_invocation(approval_status=consumed|preapproved)` — emitted by the
-   tool-invocation auditor when the handler runs. Carries `tool_name`,
-   `agent_id`, `tenant`, `duration_ms`, `result_size`, `approval_id` (absent
-   when `approval_status=preapproved`).
-
-The preapproved-bypass flow skips emissions 1-3 — no approval record exists —
-but still emits 4 with `approval_status=preapproved` so forensics can distinguish
-scope bypass from consumed human approval.
+Pure scope preapproval, without a prior consumed approval on the call, skips
+the registry-approval lifecycle and emits an invocation with
+`approval_status=preapproved` and no `approval_id`. A previously consumed
+approval with an ID takes precedence over later scope preapproval, retaining
+`approval_status=consumed` and that ID. Policy-gated/Edge and outbound audit
+streams are separate; these counts are not totals across all audit streams.
 
 ## Worked example: end-to-end create_workflow
 
@@ -396,14 +404,16 @@ the response is:
 { "workflow_id": "wf-7a6c8d", "version": "v1", "status": "created" }
 ```
 
-**Step 6.** The audit chain now carries four events:
+**Step 6.** With auditing configured, this default success loop contributes
+five events of the two types above to the audit chain:
 
 | # | event_type | Extra |
 |---|-----------|-------|
 | 1 | mcp.tool_approval | outcome=enqueued, tool_name=cordum_create_workflow, approval_id=apr-1a2b3c |
-| 2 | mcp.tool_approval | outcome=approved, resolver=operator@acme |
-| 3 | mcp.tool_approval | outcome=consumed, consumed_at=… |
-| 4 | mcp.tool_invocation | approval_status=consumed, tool_name=cordum_create_workflow, duration_ms=… |
+| 2 | mcp.tool_invocation | approval_status=required, approval_id=apr-1a2b3c, tool_name=cordum_create_workflow, result_type=error, latency_ms=… |
+| 3 | mcp.tool_approval | outcome=approved, approval_id=apr-1a2b3c, resolver=operator@acme |
+| 4 | mcp.tool_approval | outcome=consumed, approval_id=apr-1a2b3c |
+| 5 | mcp.tool_invocation | approval_status=consumed, approval_id=apr-1a2b3c, tool_name=cordum_create_workflow, latency_ms=…, result_count=…, result_hash=… |
 
 **Step 7.** Any retry of the same logical call (via
 `idempotency_key=session-0f3a-call-1`) returns the same `workflow_id` without

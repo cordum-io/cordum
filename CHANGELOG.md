@@ -887,6 +887,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- MCP mutating-tools documentation distinguishes audit event types from
+  path-dependent event counts and uses the emitted audit field names.
 - The Python SDK's mypy target is now 3.10, the SDK's supported minimum. mypy
   no longer prints its "Python 3.9 is not supported" configuration warning
   (task-ec93b7c3).
