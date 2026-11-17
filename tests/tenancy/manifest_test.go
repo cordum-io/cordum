@@ -109,6 +109,9 @@ var storeKeyManifest = []storeKeyEntry{
 	{"eval:run:{tenant}:idx:t", "core/infra/store", "tenant-in-key", "TestEvalRunTenantIsolation"},
 	{"eval:run:{tenant}:idx:ds:{dataset}", "core/infra/store", "tenant-in-key", "pending:PR1-03H"},
 	{"cap:replay:{hash}", "core/infra/replay", "tenant-in-key", "TestTenantIsolationReplayStoreKey"},
+	// Non-tenant schemas are already excluded by data-inventory.yaml:
+	// schema:{id} is the shared JSON Schema registry with no tenant ownership;
+	// schema:url:{url} is its shared URL-reference registry, not tenant data.
 	{"schema:index", "core/infra/schema", "global-id", "pending:PR1-03F"},
 	{"sys:workers:snapshot", "core/infra/registry", "global-id", "pending:PR1-03F"},
 	{"mem:{memory}:events", "core/contextwindow/engine", "global-id", "pending:PR1-03H"},
@@ -183,8 +186,6 @@ var notTenantKeys = []notTenantKey{
 	{"cfg:system:policy_snapshots", "core/configsvc", "Installation-wide policy snapshot registry."},
 	{"cfg:system:packs", "core/configsvc", "Installation-wide installed-pack registry."},
 	{"cfg:system:pack_catalogs", "core/configsvc", "Installation-wide pack catalog configuration."},
-	{"schema:{id}", "core/infra/schema", "Shared JSON Schema registry; entries have no tenant ownership."},
-	{"schema:url:{url}", "core/infra/schema", "Shared schema-reference registry keyed by URL, not by tenant."},
 	{"cordum:wf:delay:timers", "core/workflow", "Engine-wide scheduling queue; tenant-facing run reads check run ownership."},
 	{"session:{token}", "core/controlplane/gateway/auth", "Bearer credential lookup establishes identity; the token is the secret, not a public object ID."},
 	{"saml:state:{state}", "core/controlplane/gateway/auth", "Opaque pre-authentication RelayState capability, not a tenant-owned object ID."},
