@@ -121,9 +121,12 @@ rules:
     decision: allow
     reason: "Tool-less hook metadata event (config change, file changed, permission request) recorded for audit; no actionable target."
 
-  # Safe local test/build commands are Bash commands classified with
-  # command.class=safe and command.family=test or build. This rule is deliberately
-  # after denies/approvals so first-match policy evaluation remains fail-closed.
+  # Local test/build commands are Bash commands classified with
+  # command.class=arbitrary_code and command.family=test or build. They run
+  # repository-controlled code (package scripts, Makefiles, test files), and the
+  # demo policy allows them anyway; the production template requires approval.
+  # This rule is deliberately after denies/approvals so first-match policy
+  # evaluation remains fail-closed. The rule id is kept for existing installs.
   - id: claude-code.allow-safe-build-test
     match:
       topics:
@@ -134,9 +137,9 @@ rules:
         - test
         - build
       labels:
-        "command.class": safe
+        "command.class": arbitrary_code
     decision: allow
-    reason: "Safe local test/build commands are allowed by the demo policy."
+    reason: "Local test/build commands run repository code; the demo policy allows them."
 
   # Unknown high-impact hook actions are explicitly denied with a stable rule ID
   # instead of relying on the default deny fallback. The classifier marks these
