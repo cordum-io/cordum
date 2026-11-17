@@ -3,11 +3,14 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/mcp"
 	"github.com/cordum/cordum/core/model"
 	"github.com/redis/go-redis/v9"
@@ -19,8 +22,10 @@ import (
 // every claimer has read the APPROVED, unconsumed record (and, unmutated,
 // holds its WATCH) before any of them can reach MULTI/EXEC. Later arrivals are
 // CAS-retry re-reads and pass straight through. The pipeline hook is left
-// alone: MULTI/EXEC must never block.
+// alone: MULTI/EXEC must never block. cmd names another read to park after,
+// such as the index SMEMBERS an enqueue starts with; empty means GET.
 type consumeReadBarrier struct {
+	cmd      string
 	key      string
 	parties  int64
 	arrived  atomic.Int64
@@ -37,8 +42,11 @@ func (b *consumeReadBarrier) ProcessPipelineHook(next redis.ProcessPipelineHook)
 func (b *consumeReadBarrier) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 	return func(ctx context.Context, cmd redis.Cmder) error {
 		err := next(ctx, cmd) // run the GET first, then wait
-		args := cmd.Args()
-		if cmd.Name() != "get" || len(args) != 2 || args[1] != b.key {
+		args, want := cmd.Args(), b.cmd
+		if want == "" {
+			want = "get"
+		}
+		if cmd.Name() != want || len(args) != 2 || args[1] != b.key {
 			return err
 		}
 		switch n := b.arrived.Add(1); {
@@ -355,5 +363,153 @@ func TestIndexPrunesTerminalEntries(t *testing.T) {
 		if m == b.ID {
 			t.Errorf("consumed record %s still present in index %s", b.ID, idxKey)
 		}
+	}
+}
+
+// TestEnqueueMCPApprovalConcurrentDuplicatesShareOnePending: concurrent
+// duplicates of one call, such as a redelivered CAP job racing the original,
+// all get one PENDING record. The barrier lets every enqueuer read the index
+// before any can write, so without the WATCH each would add its own record.
+func TestEnqueueMCPApprovalConcurrentDuplicatesShareOnePending(t *testing.T) {
+	t.Parallel()
+	seed := newTestMCPStore(t)
+	ctx := context.Background()
+	req := testReq()
+	idxKey := mcpApprovalIndexKey(req.Tenant, req.AgentID, req.ToolName, req.ArgsHash)
+
+	const workers = 8
+	base, ok := seed.client.(*redis.Client)
+	if !ok {
+		t.Fatalf("test store client is %T; want *redis.Client", seed.client)
+	}
+	opts := testRedisOptions(base.Options().Addr)
+	opts.PoolSize = workers
+	wide := redis.NewClient(opts)
+	t.Cleanup(func() { _ = wide.Close() })
+	barrier := &consumeReadBarrier{cmd: "smembers", key: idxKey, parties: workers, release: make(chan struct{})}
+	wide.AddHook(barrier)
+	enqueuers := NewMCPApprovalStore(wide)
+
+	ids := make([]string, workers)
+	var wg sync.WaitGroup
+	for i := range ids {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			dup := *req
+			rec, err := enqueuers.EnqueueMCPApproval(ctx, &dup)
+			if err != nil {
+				t.Errorf("enqueue %d: %v", i, err)
+				return
+			}
+			ids[i] = rec.ID
+		}(i)
+	}
+	wg.Wait()
+	if n := barrier.timedOut.Load(); n != 0 {
+		t.Errorf("barrier timed out %d times; want every enqueuer to read the index before any writes", n)
+	}
+	members, err := seed.client.SMembers(ctx, idxKey).Result()
+	if err != nil || len(members) != 1 {
+		t.Fatalf("index members = %v (err %v); want exactly one PENDING record", members, err)
+	}
+	for i, id := range ids {
+		if id != members[0] {
+			t.Errorf("enqueuer %d got %q; want the shared record %q", i, id, members[0])
+		}
+	}
+}
+
+// TestEnqueueMCPApprovalReusesOnlyTheCallersLivePendingRecord: a pending record
+// goes back only to a non-Edge repeat from the same requester before the
+// record's deadline; every other request writes a record of its own.
+func TestEnqueueMCPApprovalReusesOnlyTheCallersLivePendingRecord(t *testing.T) {
+	t.Parallel()
+	edgePaired := func(r *MCPApprovalRequest) { r.ID, r.EdgeApprovalRef = "paired-record", "edge-ref" }
+	for _, tc := range []struct {
+		name         string
+		first, again func(*MCPApprovalRequest)
+		reuse        bool
+	}{
+		{"same requester", nil, nil, true},
+		{"another requester", nil, func(r *MCPApprovalRequest) { r.Requester = "someone-else" }, false},
+		{"Edge-paired repeat", nil, edgePaired, false},
+		{"repeat of an Edge-paired record", edgePaired, nil, false},
+		{"past the deadline", func(r *MCPApprovalRequest) { r.TTL = time.Millisecond }, nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, ctx := newTestMCPStore(t), context.Background()
+			first, again := testReq(), testReq()
+			if tc.first != nil {
+				tc.first(first)
+			}
+			if tc.again != nil {
+				tc.again(again)
+			}
+			a, err := s.EnqueueMCPApproval(ctx, first)
+			if err != nil {
+				t.Fatalf("first enqueue: %v", err)
+			}
+			time.Sleep(2 * time.Millisecond) // past a 1ms deadline
+			b, err := s.EnqueueMCPApproval(ctx, again)
+			if err != nil {
+				t.Fatalf("second enqueue: %v", err)
+			}
+			if (a.ID == b.ID) != tc.reuse {
+				t.Errorf("second request got %s after %s; want reuse=%v", b.ID, a.ID, tc.reuse)
+			}
+		})
+	}
+}
+
+// cwKeyArgs carries an idempotency_key, as a CAP worker's job does.
+const cwKeyArgs = `{"name":"mcp-demo","steps":{"s1":{"type":"approval"}},"idempotency_key":"cap-job-42"}`
+
+// TestMCPCreateWorkflow_DuplicateDeliveryWritesOneWorkflow: a redelivered job
+// repeats the call. While the approval is pending the repeat gets it back,
+// and once each delivery is approved both write the same workflow.
+func TestMCPCreateWorkflow_DuplicateDeliveryWritesOneWorkflow(t *testing.T) {
+	h := newCreateWorkflowMCPHarness(t)
+	first := h.requireApproval(h.call(cwAlice, cwKeyArgs))
+	again := h.call(cwAlice, cwKeyArgs)
+	if id := h.requireApproval(again); id != first || again.Error.Data["approval_ref"] != first ||
+		again.Error.Data["retry_hint"] != mcp.RetryHintSameArgs {
+		t.Fatalf("duplicate got %+v; want pending approval %s with retry_with_same_args", again.Error.Data, first)
+	}
+	if status := h.approve(cwBob, first); status != http.StatusOK {
+		t.Fatalf("approve status = %d, want 200", status)
+	}
+	created := h.toolPayload(h.call(cwAlice, cwKeyArgs), false)
+	// The duplicate's own retry: that approval is spent, so it re-gates.
+	second := h.requireApproval(h.call(cwAlice, cwKeyArgs))
+	if status := h.approve(cwBob, second); status != http.StatusOK {
+		t.Fatalf("approve status = %d, want 200", status)
+	}
+	repeat := h.toolPayload(h.call(cwAlice, cwKeyArgs), false)
+	if repeat["workflow_id"] != created["workflow_id"] {
+		t.Fatalf("repeat wrote workflow %v; want %v", repeat["workflow_id"], created["workflow_id"])
+	}
+	if n := h.workflowCount(""); n != 1 {
+		t.Fatalf("workflows = %d, want 1", n)
+	}
+}
+
+// TestMCPCreateWorkflow_PreapprovedDuplicateDeliveryWritesOneWorkflow: an agent
+// preapproved for the tool runs every delivery, and deliveries with one key
+// write one workflow; another key writes another.
+func TestMCPCreateWorkflow_PreapprovedDuplicateDeliveryWritesOneWorkflow(t *testing.T) {
+	h := newCreateWorkflowMCPHarness(t)
+	if _, err := h.s.agentIdentityStore.Update(context.Background(), "default", "agent-alice",
+		store.AgentIdentity{PreapprovedMutatingTools: []string{mcp.ToolCreateWorkflow}}); err != nil {
+		t.Fatalf("preapprove: %v", err)
+	}
+	a := h.toolPayload(h.call(cwAlice, cwKeyArgs), false)
+	b := h.toolPayload(h.call(cwAlice, cwKeyArgs), false)
+	if n := h.workflowCount(""); a["workflow_id"] != b["workflow_id"] || n != 1 {
+		t.Fatalf("deliveries wrote %v and %v (%d workflows); want one workflow", a["workflow_id"], b["workflow_id"], n)
+	}
+	c := h.toolPayload(h.call(cwAlice, strings.Replace(cwKeyArgs, "cap-job-42", "cap-job-43", 1)), false)
+	if n := h.workflowCount(""); c["workflow_id"] == a["workflow_id"] || n != 2 {
+		t.Fatalf("another key wrote %v (%d workflows); want a second workflow", c["workflow_id"], n)
 	}
 }
