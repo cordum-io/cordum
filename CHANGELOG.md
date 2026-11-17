@@ -216,6 +216,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Release-compose install: when none of `CORDUM_POLICY_SIGNING_KEY`,
+  `SAFETY_POLICY_PUBLIC_KEY` and `SAFETY_POLICY_SIGNATURE` is set, `quickstart.sh`
+  on `docker-compose.release.yml` generates an Ed25519 key with
+  `cordumctl pack keygen`, signs `config/safety.yaml` under key id `default` and
+  writes all three to `.env`. A re-run leaves `.env` unchanged, operator values
+  are kept, and a partial setting or a non-default `CORDUM_POLICY_SIGNING_KEY_ID`
+  stops with a named error before any write. `install.sh` with
+  `USE_RELEASE_IMAGES=1` now pulls images before quickstart only on a re-install.
+  `tools/scripts/quickstart_policy_bootstrap_test.sh` covers these cases
+  (task-5dc8476c).
+
 - Decision records: for a job dispatched under a delegation token, the Policy
   Decision Log record and the job's stored safety decision carry
   `delegation_issuer_chain`, the issuer agent ids of the job's delegation lineage,

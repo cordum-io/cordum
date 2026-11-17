@@ -316,6 +316,7 @@ jobs:
         bash tools/scripts/nightly_workflows.test.sh
         bash tools/scripts/soak_test_lib.test.sh
         bash tools/scripts/handshake_interop_workflow.test.sh
+        bash tools/scripts/quickstart_policy_bootstrap_test.sh
 
   dashboard-test:
     name: Dashboard Tests
