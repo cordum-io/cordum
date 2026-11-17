@@ -117,3 +117,52 @@ func TestTenantIsolationJobIdempotencyLegacyFallback(t *testing.T) {
 		t.Fatalf("tenant-a reserve = %v, %q, %v; want false, job-a-legacy", ok, got, err)
 	}
 }
+
+func TestTenantIsolationJobIdempotencyLegacyOwnerUnknown(t *testing.T) {
+	const legacyKey = "job:idempotency:" + isolationIdemKey
+	for _, tc := range []struct {
+		name string
+		seed func(t *testing.T, s *RedisJobStore, srv *miniredis.Miniredis)
+	}{
+		{"meta-expired", func(t *testing.T, s *RedisJobStore, srv *miniredis.Miniredis) {
+			seedIsolationJob(t, s, "job-legacy", "tenant-a")
+			srv.Del(jobMetaKey("job-legacy"))
+		}},
+		{"meta-without-tenant", func(t *testing.T, s *RedisJobStore, _ *miniredis.Miniredis) {
+			if err := s.SetResultPtr(context.Background(), "job-legacy", "redis://res:job-legacy"); err != nil {
+				t.Fatalf("seed meta: %v", err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, srv := newIsolationJobStore(t)
+			ctx := context.Background()
+			tc.seed(t, s, srv)
+			if err := srv.Set(legacyKey, "job-legacy"); err != nil {
+				t.Fatalf("seed legacy key: %v", err)
+			}
+			if got, err := s.GetTenant(ctx, "job-legacy"); got != "" || (err != nil && !errors.Is(err, redis.Nil)) {
+				t.Fatalf("legacy job tenant = %q, %v; want unreadable", got, err)
+			}
+
+			for _, tenant := range []string{"tenant-a", "tenant-b"} {
+				got, err := s.GetJobByIdempotencyKeyScoped(ctx, tenant, isolationIdemKey)
+				if !errors.Is(err, redis.Nil) || got != "" {
+					t.Fatalf("%s lookup = %q, %v; want redis.Nil", tenant, got, err)
+				}
+				if srv.Exists("job:idempotency:" + tenant + ":" + isolationIdemKey) {
+					t.Fatalf("%s lookup wrote a scoped key for the legacy job", tenant)
+				}
+			}
+			for _, tenant := range []string{"tenant-a", "tenant-b"} {
+				jobID := "job-new-" + tenant
+				ok, got, err := s.TrySetIdempotencyKeyScoped(ctx, tenant, isolationIdemKey, jobID)
+				if err != nil || !ok || got != jobID {
+					t.Fatalf("%s reserve = %v, %q, %v; want true, %s", tenant, ok, got, err, jobID)
+				}
+				assertIsolationMapping(t, srv, "job:idempotency:"+tenant+":"+isolationIdemKey, jobID)
+			}
+			assertIsolationMapping(t, srv, legacyKey, "job-legacy")
+		})
+	}
+}

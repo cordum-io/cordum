@@ -845,6 +845,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Jobs: a submit whose idempotency key matches a legacy unscoped key
+  (`job:idempotency:{key}`) reuses that key's job only when the job's stored
+  tenant equals the caller's tenant. When the job's tenant cannot be read,
+  for example after its metadata expires (`JOB_META_TTL`, 7 days by default),
+  the submit is handled as a new job under the caller's tenant-scoped key
+  (task-e9209d0e).
+
 - K8s restore runbooks: NATS restores run from a nats-box pod and remove each
   stream first, and `redis-operations.md` has a Redis "Restore From Backup"
   procedure. The old steps copied an RDB into a running pod, which Redis
