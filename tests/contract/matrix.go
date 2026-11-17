@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"reflect"
 	"regexp"
@@ -17,12 +18,20 @@ import (
 )
 
 // EnforcementMatrix is docs/contract/enforcement-matrix.yaml: for each entry
-// point (row) and control (column), a status and a code reference.
+// point (row) and control (column), a status and a code reference. RefTests
+// links each ref of an enforced cell to the tests that exercise it.
 type EnforcementMatrix struct {
 	SchemaVersion int    `yaml:"schema_version"`
 	ReviewedAt    string `yaml:"reviewed_at"`
 	Columns       []string
 	Rows          []MatrixRow
+	RefTests      map[string]MatrixRefTests `yaml:"ref_tests"`
+}
+
+// MatrixRefTests names existing tests for one ref, or the gap where none exists.
+type MatrixRefTests struct {
+	Tests []TestRef
+	Gap   string `yaml:"gap,omitempty"`
 }
 
 // MatrixRow is one entry point, located in the code by its anchors.
@@ -139,7 +148,42 @@ func (m *EnforcementMatrix) Validate(root string, constraints reflect.Type) []Ma
 			add("row-missing", id, "required row is absent")
 		}
 	}
+	m.validateRefTests(root, add)
 	return is
+}
+
+// validateRefTests checks that ref_tests has an entry for exactly the refs of
+// enforced cells, each naming existing tests or else a gap.
+func (m *EnforcementMatrix) validateRefTests(root string, add func(rule, row, detail string)) {
+	used := map[string]bool{}
+	for _, r := range m.Rows {
+		for _, g := range r.Cells {
+			if g.Status != "enforced" {
+				continue
+			}
+			if _, ok := m.RefTests[g.Ref]; !ok && !used[g.Ref] {
+				add("ref-tests-missing", r.ID, g.Ref+" is enforced but has no ref_tests entry")
+			}
+			used[g.Ref] = true
+		}
+	}
+	for _, ref := range slices.Sorted(maps.Keys(m.RefTests)) {
+		e := m.RefTests[ref]
+		if !used[ref] {
+			add("ref-tests-orphan", "", ref+" is not the ref of an enforced cell")
+		}
+		if len(e.Tests) == 0 && e.Gap == "" {
+			add("ref-tests-empty", "", ref+" needs a test or a gap")
+		}
+		if len(e.Tests) > 0 && e.Gap != "" {
+			add("ref-tests-gap", "", ref+" has tests, so it cannot also have a gap")
+		}
+		for _, t := range e.Tests {
+			if !hasTest(root, t.Package, t.Name) {
+				add("ref-test-missing", "", fmt.Sprintf("%s: no func %s(*testing.T) in %s", ref, t.Name, t.Package))
+			}
+		}
+	}
 }
 
 func (m *EnforcementMatrix) validateRow(root string, r MatrixRow, lines map[string]int, add func(rule, row, detail string)) {

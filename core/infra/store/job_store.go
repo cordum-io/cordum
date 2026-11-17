@@ -64,6 +64,7 @@ const (
 	metaFieldSafetyChecked         = "safety_checked_at"
 	metaFieldSafetyConstraints     = "safety_constraints"
 	metaFieldSafetyRemediations    = "safety_remediations"
+	metaFieldSafetyIssuerChain     = "safety_delegation_issuer_chain"
 	metaFieldOutputSafety          = "output_safety"
 	metaFieldApprovalRequired      = "safety_approval_required"
 	metaFieldApprovalRef           = "safety_approval_ref"
@@ -1865,6 +1866,11 @@ func (s *RedisJobStore) SetSafetyDecision(ctx context.Context, jobID string, rec
 	if remediationsJSON != "" {
 		fields[metaFieldSafetyRemediations] = remediationsJSON
 	}
+	if len(record.DelegationIssuerChain) > 0 {
+		if data, err := json.Marshal(record.DelegationIssuerChain); err == nil {
+			fields[metaFieldSafetyIssuerChain] = string(data)
+		}
+	}
 
 	var rawConstraints json.RawMessage
 	if constraintsJSON != "" {
@@ -3067,6 +3073,12 @@ func (s *RedisJobStore) GetSafetyDecision(ctx context.Context, jobID string) (mo
 		var remediations []*pb.PolicyRemediation
 		if err := json.Unmarshal([]byte(raw), &remediations); err == nil {
 			record.Remediations = remediations
+		}
+	}
+	if raw := data[metaFieldSafetyIssuerChain]; raw != "" {
+		var chain []string
+		if err := json.Unmarshal([]byte(raw), &chain); err == nil {
+			record.DelegationIssuerChain = chain
 		}
 	}
 	return record, nil

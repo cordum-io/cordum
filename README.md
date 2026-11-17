@@ -25,7 +25,7 @@
 </p>
 
 <p align="center">
-  <a href="https://discord.gg/nvHzPCcWWt">Discord</a> · <a href="https://github.com/cordum-io/cordum/discussions">Discussions</a> · <a href="docs/">Docs</a>
+  <a href="https://discord.gg/nvHzPCcWWt">Discord</a> · <a href="https://github.com/cordum-io/cordum/discussions">Discussions</a> · <a href="docs/">Docs</a> · <a href="#safety-you-can-verify">Safety Demo</a>
 </p>
 
 ---
@@ -326,6 +326,22 @@ Cordum puts a policy decision at that dispatch boundary:
 The [claim register](docs/contract/claims.yaml) records these mechanisms as
 supported: the mechanism exists; its protection is not yet qualified.
 
+### Safety you can verify
+
+Cordum lets routine agent work proceed while holding sensitive actions for
+review. An authorized operator approves the specific action, not a blanket
+permission to use the tool.
+
+- **Try it:** The [three-verdict quickstart](demo/quickstart/README.md) shows a safe action proceeding, a simulated delete being blocked, and an admin action waiting for approval.
+- **Inspect the evidence:** In the [governed CAP/MCP integration run](https://github.com/cordum-io/cordum/actions/runs/43539529144/job/132276555436), a denied job created neither an approval nor a workflow. The requester could not approve its own call. A separate operator's approval resulted in exactly one workflow. See the [test and reproduction steps](demo/cap-mcp-governed/README.md#governed-end-to-end-test).
+
+**Coverage and limits:** Cordum enforces policy only on actions routed through
+an integrated enforcement path. Deployment teams still need to restrict direct
+tool access and configure policies for their environment. The CI run uses a
+scripted worker and an internal workflow creation, not a live model or an
+irreversible external action. It tests tool-level approval, not the separate
+MCP policy-gate resume path.
+
 ## The Solution: Cordum Agent Control Plane
 
 Cordum is an **Agent Control Plane** for policy checks, approvals, and audit of actions submitted through its integrated submission, dispatch, and hook paths, whatever framework or model the agent uses.
@@ -353,7 +369,7 @@ graph TB
 
 ### Governance Across the Lifecycle
 
-Cordum's **Before/During/Across** framework provides exhaustive control over your agent operations:
+Cordum's **Before/During/Across** framework gives operators control and visibility across connected agent workflows:
 
 ```mermaid
 graph LR

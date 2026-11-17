@@ -126,6 +126,8 @@ func TestMatrixRejects(t *testing.T) {
 	row := func(m *EnforcementMatrix, id string) *MatrixRow {
 		return &m.Rows[slices.IndexFunc(m.Rows, func(r MatrixRow) bool { return r.ID == id })]
 	}
+	enforcedRef := func(m *EnforcementMatrix) string { return m.Rows[0].Cells[0].Ref } // edge-hook-observe deny
+	realTest := []TestRef{{Package: "tests/contract", Name: "TestMatrixRejects"}}
 	cases := []struct {
 		rule   string
 		mutate func(m *EnforcementMatrix)
@@ -146,6 +148,15 @@ func TestMatrixRejects(t *testing.T) {
 		{"cell-ref", func(m *EnforcementMatrix) { m.Rows[0].Cells[0].Ref = "foo" }},
 		{"cell-ref-required", func(m *EnforcementMatrix) { row(m, "scheduler-dispatch").Cells[0].Ref = "not verified" }},
 		{"finding-id", func(m *EnforcementMatrix) { m.Rows[0].Cells[0].Finding = "R16" }},
+		{"ref-tests-missing", func(m *EnforcementMatrix) { delete(m.RefTests, enforcedRef(m)) }},
+		{"ref-tests-orphan", func(m *EnforcementMatrix) { m.RefTests[m.Rows[0].Cells[3].Ref] = MatrixRefTests{Tests: realTest} }},
+		{"ref-test-missing", func(m *EnforcementMatrix) {
+			m.RefTests[enforcedRef(m)] = MatrixRefTests{Tests: []TestRef{{Package: "tests/contract", Name: "TestNope"}}}
+		}},
+		{"ref-tests-empty", func(m *EnforcementMatrix) { m.RefTests[enforcedRef(m)] = MatrixRefTests{} }},
+		{"ref-tests-gap", func(m *EnforcementMatrix) {
+			m.RefTests[enforcedRef(m)] = MatrixRefTests{Tests: realTest, Gap: "untested"}
+		}},
 		{"row-missing", func(m *EnforcementMatrix) { *m = EnforcementMatrix{} }}, // nil slices must not panic
 	}
 	for i, tc := range cases {

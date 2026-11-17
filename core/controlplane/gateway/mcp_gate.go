@@ -331,6 +331,11 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 	if err != nil {
 		return nil, fmt.Errorf("%w: mcp gate: enqueue: %w", mcp.ErrApprovalStoreUnavailable, err)
 	}
+	if rec.EdgeApprovalRef == "" {
+		// A legacy record is its own ref, and the store may have returned
+		// the caller's pending record for this call rather than req.ID's.
+		approvalRef = rec.ID
+	}
 	if expiresAt.IsZero() && rec.ExpiresAt > 0 {
 		// MCPApprovalRecord.ExpiresAt is UnixMicro (mcp_approvals.go).
 		expiresAt = time.UnixMicro(rec.ExpiresAt).UTC()

@@ -2,6 +2,9 @@
 # PolicyConstraints field. Each cell is enforced, advisory, ignored or not_applicable,
 # with the code line it was read from. Statuses and refs were read at reviewed_at.
 # Exception: the budgets.max_concurrent_jobs refs were read when task-8bab7c41 landed.
+# ref_tests has one entry per ref of an enforced cell: existing tests (package dir
+# plus Test func) that drive the code the ref names and assert that control's
+# effect, or tests: [] with a gap saying what is untested.
 schema_version: 1
 reviewed_at: 549772371995b9eb5a95a2c6c8685551e0231724
 columns:
@@ -164,3 +167,48 @@ rows:
       - {status: advisory, ref: core/controlplane/scheduler/engine.go:3120, finding: R01, cols: [budgets.max_artifact_bytes]}
       - {status: advisory, ref: core/controlplane/scheduler/engine.go:3099, finding: R01, cols: [sandbox.isolated, sandbox.network_allowlist, sandbox.fs_read_only, sandbox.fs_read_write, toolchain.allowed_tools, toolchain.allowed_commands, diff.max_files, diff.max_lines, diff.deny_path_globs]}
       - {status: advisory, ref: core/controlplane/scheduler/engine.go:3108, finding: R01, cols: [redaction_level]}
+ref_tests:
+  core/controlplane/gateway/handlers_grpc.go:240:
+    tests: [{package: core/controlplane/gateway, name: TestSubmitJobGRPC_PolicyDeny}]
+  core/controlplane/gateway/handlers_grpc.go:248:
+    tests: [{package: core/controlplane/gateway, name: TestSubmitJobGRPC_PolicyThrottle}]
+  core/controlplane/gateway/handlers_grpc.go:256:
+    tests: [{package: core/controlplane/gateway, name: TestSubmitJobGRPC_PolicyApprovalRequired}]
+  core/controlplane/gateway/handlers_jobs.go:1591:
+    tests: [{package: core/controlplane/gateway, name: TestHandleSubmitJobHTTP_PolicyDeny}]
+  core/controlplane/gateway/handlers_jobs.go:1648:
+    tests: [{package: core/controlplane/gateway, name: TestHandleSubmitJobHTTP_PolicyThrottle}]
+  core/controlplane/gateway/handlers_jobs.go:1663:
+    tests: [{package: core/controlplane/gateway, name: TestHandleSubmitJobHTTP_PolicyApprovalRequired}]
+  core/controlplane/gateway/mcp_gate.go:211:
+    tests: [{package: core/controlplane/gateway, name: TestInvariantDenyBeatsMCPAllow}]
+  core/controlplane/gateway/mcp_gate.go:284:
+    tests: [{package: core/controlplane/gateway, name: TestGateEnqueuesOnFirstCall}]
+  core/controlplane/scheduler/engine.go:1696:
+    tests: []
+    gap: "No test returns SafetyThrottle to Engine.processJob and asserts the job is requeued after safetyThrottleDelay without dispatch."
+  core/controlplane/scheduler/engine.go:1743:
+    tests: [{package: core/controlplane/scheduler, name: TestForgedApprovalLabelsNeverDispatch}, {package: core/controlplane/scheduler, name: TestSetJobStateFailureApprovalReturnsRetry}]
+  core/controlplane/scheduler/engine.go:1755:
+    tests: [{package: core/controlplane/scheduler, name: TestProcessJobBlockedBySafety}]
+  core/controlplane/scheduler/engine.go:1791:
+    tests: [{package: core/controlplane/scheduler, name: TestEngine_RetryCapPreservedOnGetAttemptsError}]
+  core/controlplane/scheduler/engine.go:1855:
+    tests: [{package: core/infra/store, name: TestReserveTenantSlotConcurrentReservationsAdmitExactlyCap}, {package: core/controlplane/scheduler, name: TestProcessJobTenantConcurrencyCapAdmitsOneOfTwoConcurrent}]
+  core/controlplane/scheduler/engine.go:2287:
+    tests: [{package: core/controlplane/scheduler, name: TestCheckSafetyDecision_ApprovalFastPathRequiresSnapshotBinding}, {package: core/controlplane/scheduler, name: TestForgedApprovalLabelsNeverDispatch}]
+  core/controlplane/scheduler/engine.go:2590:
+    tests: [{package: core/controlplane/scheduler, name: TestHandleJobResultOutputQuarantined}, {package: core/controlplane/scheduler, name: TestHandleJobResultOutputQuarantineCorrectsResultStatusInPlace}]
+  core/controlplane/scheduler/saga.go:373:
+    tests: [{package: core/controlplane/scheduler, name: TestSagaCompensationSafetyDenySkips}]
+  core/edge/agentd/approval_waiter.go:89:
+    tests: [{package: core/edge/agentd, name: TestAgentdDecisionFromEvaluateMapsAllowQuietlyAndRiskyDenyWithConciseCopy}]
+  core/edge/agentd/approval_waiter.go:91:
+    tests: [{package: core/edge/agentd, name: TestAgentdDecisionFromEvaluateRequiresApprovalDefaultsToImmediateRetryDeny}]
+  core/edge/agentd/approval_waiter.go:93:
+    tests: []
+    gap: "No test passes a THROTTLE evaluate response through AgentdDecisionFromEvaluateResponse and asserts a deny hook decision; core/edge/claude covers only its own mapper."
+  core/mcp/policy_evaluate.go:895:
+    tests: [{package: core/mcp, name: TestInvokeToolWithPolicy_RequireApprovalHandsOffToApprovalStore}]
+  core/mcp/policy_evaluate.go:944:
+    tests: [{package: core/mcp, name: TestInvokeToolWithPolicy_DenyDoesNotForwardUpstream}]
