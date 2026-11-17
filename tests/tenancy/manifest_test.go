@@ -179,9 +179,8 @@ var storeKeyManifest = []storeKeyEntry{
 	{"saga:{workflow}:stack", "core/controlplane/scheduler", "global-id", "pending:PR1-03H"},
 	{"saga:{workflow}:recorded", "core/controlplane/scheduler", "global-id", "pending:PR1-03D"},
 	{"cordum:audit:delegation_lineage:{job}:{jti}", "core/controlplane/scheduler", "global-id", "pending:PR1-03E"},
-	{"cordum:workers:count", "core/controlplane/scheduler", "global-id", "pending:PR1-03C"},
 	{"cordum:safety:snapshots", "core/controlplane/safetykernel", "global-id", "pending:PR1-03H"},
-	{"cordum:velocity:{rule}:{key}", "core/controlplane/safetykernel", "global-id", "pending:PR1-03C"},
+	{"cordum:velocity:{rule}:{key}", "core/controlplane/safetykernel", "global-id", "open-finding:PR1-03C-F1"},
 	{"cap:resource:{tenant}:{job}:{resource}", "core/controlplane/safetykernel", "tenant-in-key", "pending:PR1-03B"},
 	{"cap:resource:{tenant}:{job}:{resource}", "cmd/cordum-scheduler", "tenant-in-key", "pending:PR1-03B"},
 }
@@ -197,4 +196,5 @@ var notTenantKeys = []notTenantKey{
 	{"lock:{resource}", "core/infra/locks", "Resource coordination lock ownership and expiry."},
 	{"tenant:{tenant}:{resource}", "core/controlplane/gateway", "Tenant-qualified resource names for coordination locks."},
 	{"saga:{workflow}:lock", "core/controlplane/scheduler", "Saga coordination lock tokens."},
+	{"cordum:workers:count", "core/controlplane/scheduler", "Install-level connected-worker set, read only as a count for the license worker limit and install telemetry."},
 }
