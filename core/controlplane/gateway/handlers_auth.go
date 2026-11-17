@@ -1287,7 +1287,7 @@ func (s *server) handleListKeys(w http.ResponseWriter, r *http.Request) {
 }
 
 // keyChildCreator is implemented by auth.RedisKeyStore. CreateChild stores
-// key only while the key parentID is unrevoked and unexpired.
+// key only if parentID is unexpired when checked and still unrevoked when the key is written.
 type keyChildCreator interface {
 	CreateChild(ctx context.Context, parentID string, key *auth.ManagedKey, rawSecret string) error
 }
@@ -1400,8 +1400,7 @@ func (s *server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 	if parentID == "" {
 		err = s.keyStore.Create(r.Context(), mk, rawKey)
 	} else {
-		// A managed caller's key is stored only while the calling key is
-		// still unrevoked and unexpired when the key is written.
+		// The calling key must be unexpired when checked and still unrevoked when the key is written.
 		creator, ok := s.keyStore.(keyChildCreator)
 		if !ok {
 			writeErrorJSON(w, http.StatusServiceUnavailable, "key validation unavailable")

@@ -164,11 +164,12 @@ func (s *RedisKeyStore) Create(ctx context.Context, key *ManagedKey, rawSecret s
 	return nil
 }
 
-// CreateChild stores key as Create does, but only while the key parentID is
-// unrevoked and unexpired. The parent's record is WATCHed from the read that
-// checks it until the EXEC that writes key, so a write to that record in
-// between (Revoke on any gateway replica, or RecordUsage) aborts the EXEC and
-// the check runs again. A missing, unreadable, revoked or expired parent
+// CreateChild stores key as Create does, but requires the key parentID to be
+// unexpired by this process's clock when its record is read inside the WATCH,
+// and still unrevoked at the EXEC that writes key. A write to the parent record
+// in between (Revoke on any gateway replica, or RecordUsage) aborts the EXEC
+// and the check runs again. Expiry is a time, not a write, so it does not abort
+// the EXEC. A missing, unreadable, revoked or expired parent at the check
 // returns ErrInvalidKey and nothing is written.
 func (s *RedisKeyStore) CreateChild(ctx context.Context, parentID string, key *ManagedKey, rawSecret string) error {
 	data, err := prepareKey(key, rawSecret)
