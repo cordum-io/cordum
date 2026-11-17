@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 from typing import List
 
@@ -35,8 +35,6 @@ class ListApprovalsResponse200:
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.approval_item import ApprovalItem
-
         next_cursor: Union[None, Unset, str]
         if isinstance(self.next_cursor, Unset):
             next_cursor = UNSET

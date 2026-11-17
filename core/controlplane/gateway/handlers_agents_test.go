@@ -1355,3 +1355,140 @@ func TestUpdateAgent_WorkerLookupFailureFailsClosed(t *testing.T) {
 		})
 	}
 }
+
+// sendAgentRequest serves one agent create (POST) or update (PUT, id set)
+// as an admin key bound to principal.
+func sendAgentRequest(t *testing.T, s *server, principal, id, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	method, path, handler := http.MethodPost, "/api/v1/agents", s.handleCreateAgent
+	if id != "" {
+		method, path, handler = http.MethodPut, "/api/v1/agents/"+id, s.handleUpdateAgent
+	}
+	req := withAuth(httptest.NewRequest(method, path, strings.NewReader(body)),
+		&auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: principal})
+	req.Header.Set("Content-Type", "application/json")
+	if id != "" {
+		req.SetPathValue("id", id)
+	}
+	rr := httptest.NewRecorder()
+	handler(rr, req)
+	return rr
+}
+
+func storedPreapprovals(t *testing.T, s *server, id string) string {
+	t.Helper()
+	got, err := s.agentIdentityStore.Get(context.Background(), "default", id)
+	if err != nil || got == nil {
+		t.Fatalf("get identity %s: %+v (err %v)", id, got, err)
+	}
+	return strings.Join(got.PreapprovedMutatingTools, ",")
+}
+
+// TestUpdateAgent_RefusesSelfPreapproval: the principal an identity is linked
+// to cannot set that identity's preapproved_mutating_tools, so an agent holding
+// an admin key cannot let its own mutating calls skip human approval. Another
+// admin still can, and the agent may edit other fields or clear its list.
+func TestUpdateAgent_RefusesSelfPreapproval(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
+	ctx := context.Background()
+	identity, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+		TenantID: "default", Name: "governed-bot", Owner: "ops", RiskTier: "high", Status: "active",
+	})
+	if err != nil {
+		t.Fatalf("create identity: %v", err)
+	}
+	if err := s.agentIdentityStore.LinkWorker(ctx, identity.ID, "bot-1"); err != nil {
+		t.Fatalf("link bot-1: %v", err)
+	}
+
+	requireStableErrorCode(t, sendAgentRequest(t, s, "bot-1", identity.ID,
+		`{"preapproved_mutating_tools":["cordum_create_workflow"]}`), http.StatusForbidden, "AGENT_SELF_PREAPPROVAL_DENIED")
+	if got := storedPreapprovals(t, s, identity.ID); got != "" {
+		t.Fatalf("refused self-edit stored preapprovals %q", got)
+	}
+	if rr := sendAgentRequest(t, s, "bot-1", identity.ID, `{"name":"renamed","preapproved_mutating_tools":[]}`); rr.Code != http.StatusOK {
+		t.Fatalf("self rename with an empty list: %d %s", rr.Code, rr.Body.String())
+	}
+	if rr := sendAgentRequest(t, s, "ops-admin", identity.ID, `{"preapproved_mutating_tools":["cordum_create_workflow"]}`); rr.Code != http.StatusOK {
+		t.Fatalf("another admin grants preapproval: %d %s", rr.Code, rr.Body.String())
+	}
+	requireStableErrorCode(t, sendAgentRequest(t, s, "bot-1", identity.ID,
+		`{"preapproved_mutating_tools":["cordum_install_pack"]}`), http.StatusForbidden, "AGENT_SELF_PREAPPROVAL_DENIED")
+	if got := storedPreapprovals(t, s, identity.ID); got != "cordum_create_workflow" {
+		t.Fatalf("preapprovals after refused self-edit = %q, want cordum_create_workflow", got)
+	}
+}
+
+// TestAgentSelfLinkWithPreapprovalRefused: a principal cannot link itself
+// (agent_id) to an identity that has or would get preapproved tools, on create
+// or update, and the refusal writes no link. Linking itself without any is
+// still allowed.
+func TestAgentSelfLinkWithPreapprovalRefused(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
+	ctx := context.Background()
+	requireNoLink := func(workerID string) {
+		t.Helper()
+		if linked, err := s.agentIdentityStore.GetByWorkerIDForTenant(ctx, "default", workerID); err != nil || linked != nil {
+			t.Fatalf("%s linked to %+v (err %v), want no link", workerID, linked, err)
+		}
+	}
+
+	requireStableErrorCode(t, sendAgentRequest(t, s, "bot-2", "",
+		`{"name":"self-made","owner":"ops","risk_tier":"high","agent_id":"bot-2","preapproved_mutating_tools":["cordum_create_workflow"]}`),
+		http.StatusForbidden, "AGENT_SELF_PREAPPROVAL_DENIED")
+	requireNoLink("bot-2")
+
+	held, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+		TenantID: "default", Name: "release-bot", Owner: "ops", RiskTier: "high", Status: "active",
+		PreapprovedMutatingTools: []string{"cordum_create_workflow"},
+	})
+	if err != nil {
+		t.Fatalf("create preapproved identity: %v", err)
+	}
+	requireStableErrorCode(t, sendAgentRequest(t, s, "bot-3", held.ID, `{"agent_id":"bot-3"}`),
+		http.StatusForbidden, "AGENT_SELF_PREAPPROVAL_DENIED")
+	requireNoLink("bot-3")
+
+	plain, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+		TenantID: "default", Name: "plain-bot", Owner: "ops", RiskTier: "high", Status: "active",
+	})
+	if err != nil {
+		t.Fatalf("create plain identity: %v", err)
+	}
+	requireStableErrorCode(t, sendAgentRequest(t, s, "bot-3", plain.ID,
+		`{"agent_id":"bot-3","preapproved_mutating_tools":["cordum_create_workflow"]}`), http.StatusForbidden, "AGENT_SELF_PREAPPROVAL_DENIED")
+	requireNoLink("bot-3")
+	if rr := sendAgentRequest(t, s, "bot-3", plain.ID, `{"agent_id":"bot-3"}`); rr.Code != http.StatusOK {
+		t.Fatalf("self-link without preapprovals: %d %s", rr.Code, rr.Body.String())
+	}
+	if rr := sendAgentRequest(t, s, "bot-4", "", `{"name":"self-plain","owner":"ops","risk_tier":"high","agent_id":"bot-4"}`); rr.Code != http.StatusCreated {
+		t.Fatalf("self-registration without preapprovals: %d %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestUpdateAgent_SelfPreapprovalLookupFailsClosed: a failed read of the
+// caller's own link does not prove the caller is someone else, so setting
+// preapprovals answers 500 and the identity keeps its list.
+func TestUpdateAgent_SelfPreapprovalLookupFailsClosed(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
+	ctx := context.Background()
+	identity, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+		TenantID: "default", Name: "governed-bot", Owner: "ops", RiskTier: "high", Status: "active",
+	})
+	if err != nil {
+		t.Fatalf("create identity: %v", err)
+	}
+	// Also passed to agentIdentityStore by newTestGateway; a string under the
+	// tenant's link hash makes every link read fail.
+	if err := s.jobStore.Client().Set(ctx, "agent:worker-links:default", "not-a-hash", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	requireStableErrorCode(t, sendAgentRequest(t, s, "ops-admin", identity.ID,
+		`{"preapproved_mutating_tools":["cordum_create_workflow"]}`), http.StatusInternalServerError, "internal_error")
+	if got := storedPreapprovals(t, s, identity.ID); got != "" {
+		t.Fatalf("preapprovals after a failed link read = %q, want none", got)
+	}
+}

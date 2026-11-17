@@ -360,6 +360,9 @@ func (s *server) handlePutPolicyOutputRule(w http.ResponseWriter, r *http.Reques
 			}
 			sig, _ := bundle[policyBundleSignatureKey].(map[string]any)
 			auditNote = fmt.Sprintf("; re-signed with key_id=%v hash=%v", sig["key_id"], sig["hash"])
+		default:
+			delete(bundle, policyBundleSignatureKey)
+			auditNote = "; stored unsigned: no usable policy signing key"
 		}
 		bundle["updated_at"] = now
 		bundles[key] = bundle

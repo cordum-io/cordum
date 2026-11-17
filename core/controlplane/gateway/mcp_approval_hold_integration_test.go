@@ -236,6 +236,16 @@ func (p *pgEdgeStore) ClaimApproval(ctx context.Context, req edge.ApprovalClaimR
 	return p.Store.ClaimApproval(ctx, req)
 }
 
+// ExecutionCaps and CountExecutionEvents pass the real store's rotation inputs
+// through, so mcpEdgeTrace rotates behind the decorator as in production.
+func (p *pgEdgeStore) ExecutionCaps() (maxExecutions, maxEvents int) {
+	return p.Store.(mcpEdgeTraceCaps).ExecutionCaps()
+}
+
+func (p *pgEdgeStore) CountExecutionEvents(ctx context.Context, tenantID, executionID string) (int64, error) {
+	return p.Store.(mcpEdgeTraceCaps).CountExecutionEvents(ctx, tenantID, executionID)
+}
+
 // pgPolicyDeps is the policy-gate wiring BuildMCPPolicyDeps assembles in
 // production, with a test pipeline and upstream.
 func (h *holdHarness) pgPolicyDeps(decision pb.DecisionType, upstream mcp.UpstreamToolCaller) mcp.ToolCallDeps {
@@ -836,8 +846,9 @@ func pgWidePoolClient(t *testing.T, s *server) *redis.Client {
 
 // pgNewPolicyGateServer boots the HTTP MCP routes the way production does
 // with `mcp.policy_gate_enabled: true`: real action-gate pipeline, real Edge
-// store (behind the outage decorator), real policy-bundle snapshot.
-func pgNewPolicyGateServer(t *testing.T) *pgHarness {
+// store built with opts (behind the outage decorator), real policy-bundle
+// snapshot.
+func pgNewPolicyGateServer(t *testing.T, opts ...edge.StoreOption) *pgHarness {
 	t.Helper()
 	s, _, _ := newTestGateway(t)
 	s.auth = pwAuth{keys: map[string]auth.AuthContext{
@@ -847,7 +858,7 @@ func pgNewPolicyGateServer(t *testing.T) *pgHarness {
 	}}
 	h := &pgHarness{
 		client: &http.Client{Timeout: 30 * time.Second},
-		store:  &pgEdgeStore{Store: edge.NewRedisStoreFromClient(pgWidePoolClient(t, s))},
+		store:  &pgEdgeStore{Store: edge.NewRedisStoreFromClient(pgWidePoolClient(t, s), opts...)},
 	}
 	s.edgeStore = h.store
 	s.shutdownCh = make(chan struct{})
@@ -1374,4 +1385,39 @@ func TestMCPSessionlessTaintIsKeptPerCaller(t *testing.T) {
 	if n := deletes.Load(); n != 1 {
 		t.Fatalf("delete ran %d times, want once (the untainted caller's)", n)
 	}
+}
+
+// TestMCPApprovalClaimWorksAcrossEdgeRotation: with lowered Edge caps (12
+// events per execution, 2 executions per session) a long-lived SSE session
+// used to fail its calls once its one execution filled. The session now moves
+// to new executions and then to a new Edge session, every call succeeds, and
+// an approval minted before the rotation is still claimed by the caller's
+// `_approval_ref` retry afterwards.
+func TestMCPApprovalClaimWorksAcrossEdgeRotation(t *testing.T) {
+	t.Parallel()
+	h := pgNewPolicyGateServer(t, edge.WithMaxEventsPerExecution(12), edge.WithMaxExecutionsPerSession(2))
+	ctx := context.Background()
+	if err := h.tools.Register(mcp.Tool{Name: "cordum_pg_read", InputSchema: map[string]any{"type": "object"}},
+		func(context.Context, json.RawMessage) (*mcp.ToolCallResult, error) {
+			return &mcp.ToolCallResult{Content: []mcp.ContentItem{{Type: "text", Text: "read"}}}, nil
+		}); err != nil {
+		t.Fatalf("register read tool: %v", err)
+	}
+	ref, _ := h.requireEdgeHold(t, h.call(t, pgArgsA))
+	approval, found, err := h.store.GetApproval(ctx, "default", ref)
+	if err != nil || !found || approval.SessionID != h.sessionID {
+		t.Fatalf("approval %s minted in %+v (found %v, err %v), want the MCP session's first Edge session %s", ref, approval, found, err, h.sessionID)
+	}
+	for i := 0; i < 12; i++ {
+		h.requireExecuted(t, h.callToolAs(t, "key-pg-alice", pgAgentID, h.sessionID, "cordum_pg_read", `{"i":`+strconv.Itoa(i)+`}`))
+	}
+	rotated, ok, err := h.store.GetSession(ctx, "default", h.sessionID+".s1")
+	if err != nil || !ok || rotated.Labels[mcpSessionLabel] != h.sessionID {
+		t.Fatalf("rotated Edge session = %+v ok=%v err=%v, want %s.s1 linked to the MCP session", rotated, ok, err, h.sessionID)
+	}
+	if status := h.approveEdge(t, "key-pg-bob", ref); status != http.StatusOK {
+		t.Fatalf("approve %s as pg-bob: status %d, want 200", ref, status)
+	}
+	h.requireExecuted(t, h.call(t, string(pgWithRef(t, json.RawMessage(pgArgsA), ref))))
+	h.requireCalls(t, 1)
 }

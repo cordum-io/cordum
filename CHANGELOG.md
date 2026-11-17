@@ -5,7 +5,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Python SDK: remove template-unused imports during generation with the pinned Ruff
+  cleanup hook before formatting, without changing API or version markers (task-90b8033a).
+
+### Documentation
+
+- MCP docs: `docs/mcp/approval_hold.md` and `docs/mcp-server.md` now state that a policy-gated `tools/call` with a blank agent ID answers `-32098` `no_identity` before any approval access, and that missing tenant, session or execution metadata answers `-32097` `missing_mcp_metadata` for plain and ref-bearing calls (task-850c7a0e).
+
 ### Breaking changes
+
+- Delegation tokens: child issuance requires the parent's tenant and caps expiry
+  at the parent's expiry. Chain-link expiry checks use the configured clock leeway.
+  Upgrade note: a token with an expired chain link beyond that leeway is no longer
+  accepted (PR1-25).
+
+- Production recovery now requires a completed backup checksum manifest and
+  its digest from a trusted external catalog before deleting data. Redis
+  recovery also requires complete shard topology evidence and stable primary
+  identities throughout restoration. Older backups need separate validation
+  and shard-coverage evidence before use (#593).
+
+- K8s production overlay: the Redis cluster bus runs over TLS. A running
+  cluster needs [Runbook H](docs/redis-operations.md#runbook-h-turn-on-tls-for-the-cluster-bus)'s
+  runtime switch on every node before any Redis pod restarts (task-2a7ba91e).
 
 - Edge managed settings: managed-settings verification fails closed on
   unsupported conditional or background hook modifiers, and command hooks
@@ -78,6 +102,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Guardrails demo: `tools/scripts/demo_guardrails_run.sh` reads `CORDUM_API_KEY`
+  (then `API_KEY`) and `REDIS_PASSWORD` from the repository's `.env` when the
+  environment does not set them, taking a key's last definition as Docker
+  Compose does. CONTRIBUTING.md gains maintainer notes on the smoke and E2E
+  scripts, and docs/configuration-reference.md lists `CORDUM_MCP_ENABLED`,
+  `CORDUM_MCP_TRANSPORT` and `CORDUM_MCP_POLICY_GATE_ENABLED` (#591,
+  task-6fbc97b4).
 - Docs: the gRPC services and Safety Kernel pages give the output metadata check's timeout as
   its `500ms` default, which `CORDUM_OUTPUT_META_TIMEOUT_MS` overrides, instead of `100ms`
   (task-5295965c).
@@ -183,6 +214,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Decision records: for a job dispatched under a delegation token, the Policy
+  Decision Log record and the job's stored safety decision carry
+  `delegation_issuer_chain`, the issuer agent ids of the job's delegation lineage,
+  root issuer first. Jobs without delegation produce the same records as before
+  (task-be2a9f2e).
+
 - Gateway: MCP env defaults (from PR #591). When the stored system config has no
   `mcp.enabled`, `mcp.transport` or `mcp.policy_gate_enabled` key, the gateway reads
   `CORDUM_MCP_ENABLED`, `CORDUM_MCP_TRANSPORT` and `CORDUM_MCP_POLICY_GATE_ENABLED`
@@ -196,6 +233,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `CORDUM_MCP_*` flags set to `true`. Values already set are kept, an empty definition
   such as `.env.example`'s `CORDUM_API_KEY=` is filled in place, and `.env` is
   restricted to `0600` before any credential is written (task-d4334a04).
+- cordumctl: `cordumctl up --dev` also writes a CLI context: `cordum.yaml` next to the
+  compose file, with the `https://localhost:8081` gateway, the detected dev CA and
+  `enforce` policy mode. It keeps an existing `cordum.yaml` and prints the next steps.
+  When the environment does not set `CORDUM_API_KEY`, the `--api-key` default and
+  `cordumctl edge claude` read it from `./.env`, and `cordumctl edge doctor` takes its
+  flag defaults from the edge config (task-4d382942).
+- cordumctl: `cordumctl up --dev` (from PR #591) also runs `docker-compose.dev.yml` when
+  it sits next to the compose file and `--file` is not given. With `--detach` (the
+  default) it then waits for the gateway and fills in missing MCP keys of the stored
+  system config: `mcp.transport: http`, `mcp.policy_gate_enabled: true`, and
+  `mcp.enabled: true` only when `CORDUM_MCP_ENABLED` (environment first, then `.env`)
+  reads as true, so seeding never overrides an explicit `false` (task-ada11a03).
 - cordumctl: `generate-certs --san` adds names such as the Helm gateway FQDN
   (#492, task-fb3f0bbb).
 
@@ -307,12 +356,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- Agent identities: an agent can no longer exempt its own mutating MCP calls from human approval. `POST /api/v1/agents` and `PUT /api/v1/agents/{id}` answer 403 `AGENT_SELF_PREAPPROVAL_DENIED` when the caller's own principal would set `preapproved_mutating_tools` on the identity it is linked to, or link itself (`agent_id`) to an identity that has or gets such tools. Another admin can still grant them (task-2f34e241).
+- Edge: `cordumctl edge managed-settings verify` now applies generate's
+  secret-pattern check to the trusted and configured MCP gateway URLs, so a
+  credential such as `access_token=` or `api_key=` in the query string fails
+  verification as it already failed generation (task-c0c679b6).
 - Edge: the session sweeper keeps sessions under legal hold. Before each
   deletion it checks the tenant's audit legal hold, and it keeps the
   expired sessions, executions and events of a tenant under an active hold
   or whose hold check fails. If the gateway's legal hold store fails to
   start, Edge session retention deletes nothing until the gateway restarts
   (task-eab83dcc).
+
+- Edge: retention cleanup commits each page of an expired session, including
+  the pages of a background continuation, in one Redis transaction that
+  watches and reads the tenant's audit legal hold, so once a legal hold is
+  created no more of that tenant's sessions are deleted. A page whose hold
+  cannot be read, or changes before it commits, is kept until a later sweep
+  and counted in `cordum_edge_fail_closed_total`. On Redis Cluster
+  deployments the transaction cannot span hash slots, so Edge session
+  retention is paused there until legal holds support Redis Cluster
+  (task-6f8621c4).
 
 - Gateway: a stored `mcp.enabled`, `mcp.transport` or `mcp.policy_gate_enabled`
   key now blocks its `CORDUM_MCP_*` env default even when the gateway cannot
@@ -835,6 +899,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Delegation issuance: a parent-token tenant mismatch returns HTTP 400 with
+  `DELEGATION_REQUEST_INVALID` and `tenant_mismatch` (task-9b21101b).
+
+- The Python SDK's mypy target is now 3.10, the SDK's supported minimum. mypy
+  no longer prints its "Python 3.9 is not supported" configuration warning
+  (task-ec93b7c3).
+
+- Policy output-rule toggles with no usable policy signing key (warn or off
+  mode) now drop the bundle's previous signature instead of retaining one
+  that no longer matches the changed content. The audit entry records that
+  the bundle was stored unsigned (task-b75f9f8a).
+
+- `cordumctl up --dev` seeds through an absolute CA path when the compose
+  file is in another directory, and posts only the `mcp` config key so
+  unrelated config edits are preserved (task-e49aae16).
+
+- Data inventory: general `cfg:{scope}:{id}` config documents have their own
+  entry, DI-C54, and DI-C05 now covers only the policy audit document. The
+  inventory key scanner reads file-level values from top-level declarations
+  only, so a local const or var no longer overrides one (task-4420e46c).
+
+- `cordumctl pack install` no longer counts directories against the
+  2,048-file pack limit. A pack with 2,048 regular files spread over
+  subdirectories was refused before upload, although both the CLI and the
+  gateway extractors accept it (task-d1935e3a).
+
 - K8s restore runbooks: NATS restores run from a nats-box pod and remove each
   stream first, and `redis-operations.md` has a Redis "Restore From Backup"
   procedure. The old steps copied an RDB into a running pod, which Redis
@@ -858,6 +948,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   their approval on retry, and their prompt-injection taint now carries
   across POSTs. Two callers never share either (#492, task-dcd2a4fb).
 
+- cordumctl reads and writes `.env` by Docker Compose's rules, so the CLI, `.env` and
+  the Gateway agree on each credential. `.env` values lose an inline ` #` comment and
+  take Compose's quoting, escapes and `${VAR}` interpolation, and the last definition
+  of a key wins. `up --dev` quotes a credential it copies when Compose would otherwise
+  read it differently, and a blank `CORDUM_API_KEY` or `REDIS_PASSWORD` exported in the
+  shell no longer hides the `.env` value from Compose (#591 CodeRabbit r4580272519,
+  r4580272522 and r4580272526; task-2dfac489).
 - Python SDK: an error response whose body is not the `Error` schema, such as
   a proxy's HTML page or the nested `{"error": {...}}` envelope, now raises the
   typed `CordumError` subclass for its status instead of `KeyError` or
@@ -934,6 +1031,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - The `cordumctl init` scaffold starts, and serves its gateway over HTTPS
   (#492, task-75cb9729).
 
+- Long-lived SSE sessions rotate their Edge execution and session before the
+  Edge store caps, and claims keep working across rotation (#492,
+  task-6052fd78).
+
 - `CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION` now reaches the gateway's store
   (#492, task-52cd466b).
 
@@ -983,6 +1084,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 - MCP approvals: a re-ask returns the caller's pending approval instead of
   minting another (#492, task-2a9d0a7c).
+
+- MCP approvals: a repeat of a gated call whose legacy approval is still
+  pending, such as a redelivered or concurrent duplicate, gets the caller's
+  pending approval back instead of queuing a second one, as re-asks already
+  did under the policy gate. `cordum_create_workflow` called with an
+  `idempotency_key` and no `id` writes one workflow per key, so a repeated
+  delivery returns the same `workflow_id` instead of creating a second
+  workflow (task-1bf8c325).
 
 - MCP server: a policy-gate call without metadata gets `-32097`, as
   documented (#492, task-11710a81).
@@ -1174,11 +1283,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - The workflow credential scanner no longer reports `SOURCE_OVERSIZE` for a locally built native binary that a workflow runs, such as the `bin/cordumctl` that three demo workflows run for `generate-certs`, so a clean checkout and a built one scan the same. A file over the 256 KiB source bound counts as a program on an exec edge only when it starts with an ELF, PE or Mach-O header and has a NUL byte in its first line. An oversized script, and a `source` or `bash` edge to any oversized file, still report `SOURCE_OVERSIZE` (task-13b4b48c).
 - Added `docs/contract/threat-model.md`, the platform threat model for the M0 security contract: assets, adversaries, trust boundaries, a trusted-component inventory covering every `cmd/` service, reference-monitor properties with their current status, five explicit non-promises and the deployment boundary. Documentation only; no behavior changes.
 - Qualified three platform security-posture statements against `docs/contract/threat-model.md` (task-d056042e): ADR-001's "Zero-trust guarantee" bullet is now marked as design intent with a dated status note, and `docs/mcp/scope-filtering.md` no longer labels the MCP controls a "zero-trust stack" or "zero-trust controls". The threat model rates these mechanisms `supported`, not `enforced` or `verified`. Clarified that qualification requires protected transport on every Gateway client/proxy hop; deployment remains unverified.
-- Corrected three Edge doc statements that overclaimed (task-91ca9904). `docs/edge/llm-proxy-governance.md` states that the LLM adapter scans only the first 16 KiB of each `content` or `messages[i].content` value, so a secret found only past that bound gets `decision=record` with `truncated=true` and reaches the provider if the proxy forwards `record` unchanged. It states that only accepted submissions are recorded, lists the rejections that record nothing, and tells operators to monitor them. `docs/edge/managed-settings-deploy.md` states that `verify` rejects only URL userinfo, not a credential in the query string, and that `generate`'s secret-pattern check is a heuristic. CLM-028's boundary names both limits. Documentation only; no behavior changes.
+- Corrected three Edge doc statements that overclaimed (task-91ca9904). `docs/edge/llm-proxy-governance.md` states that the LLM adapter scans only the first 16 KiB of each `content` or `messages[i].content` value, so a secret found only past that bound gets `decision=record` with `truncated=true` and reaches the provider if the proxy forwards `record` unchanged. It distinguishes pre-append rejections, which add no events, from append errors, which may already have committed and require reconciliation. `docs/edge/managed-settings-deploy.md` describes the shared `generate` and `verify` checks: both reject URL userinfo and query-string credentials detected by the secret-pattern heuristic. CLM-028's boundary names the ingestion limits. Documentation only; no behavior changes.
 - Nightly soak bounds (task-a7c48ad2): compare post-warm-up memory medians over first/last K snapshots (default 5, minimum 3), retaining the 50% relative limit and 32 MiB floor. Missing/malformed metrics, insufficient samples, missing containers and zero load now fail explicitly. Helm reports drift/restarts as not evaluated rather than passing. Results include evaluation/window/baseline fields; the wiki documents the 20-minute example and metrics-source controls. All 83 contract assertions are retained.
 - Nightly soak restart check (task-14c37ef5): restart counts now come from `docker inspect` RestartCount instead of the `docker compose ps` Status text, which only shows an exit code, so a container that restarted and is Up again now fails the soak; an unreadable count fails instead of reading as 0.
 - The workflow credential scanner carries options that a file run with `source` or `.` leaves set (tracing on, errexit off) into the shell that ran it, as a `set` at that line would. This includes nested sources, functions a sourced file defines, and an rcfile that sources such a file. The analysis is bounded per job at 1000 distinct sourced-file analyses: past that bound each further sourced file counts as leaving tracing on and errexit off, and a credential job reports `SOURCE_LIMIT` (task-3d6be9e2). The options in force at a `return` that ends the sourced file count, as well as those at its end. A sourced file that turns errexit back on, or tracing off, on every path restores that option in the caller. A `case` arm written with a leading `(` runs in the shell that runs the case (task-92a5adaf).
 - The workflow credential scanner treats tracing that a function defined in a sourced file may turn on, and errexit that such a function may leave off, as in force throughout the shell that sourced the file, as it already does for a function defined in that shell's own file. A later `set +x` or `set -e`, inline or in another sourced file, no longer hides a later call to the function, including a call made inside that reset file. A nested source passes the function on, and an unparsable sourced file, or one past the per-job analysis bound, counts as defining such a function (task-9ce68782).
+- The docs check (`tools/docscheck`) no longer reads a flag definition's default value and usage text, as in `fs.String("api-key-env", "CORDUM_API_KEY", ...)`, as that variable's code default, so CORDUM_API_KEY's no-default rows no longer fail TestDocsMatchProduct (task-342b89d0).
+- `COMMANDS.md`'s NATS Operations commands now connect to the Compose NATS over mutual TLS: each passes `--server tls://localhost:4222` and the dev CA, client certificate and key that `cordumctl generate-certs` writes, and the stream commands name `CORDUM_JOBS` instead of `JOBS` (task-45ebb83b).
+- The Redis restore in `docs/redis-operations.md` imports each backup file into the running cluster, so every key reaches the primary that owns its slot under any slot layout, including a cluster re-created after a full loss, and no Redis pod restarts. Before it empties the cluster it checks every node and backup file, and afterwards it compares the count of keys without a TTL with the backup's. The toolbox pod now sets memory requests and limits (task-4dd14329).
+- The workflow credential scanner reads a `set` or `return` that follows a condition's reserved word (`if`, `elif`, `while`, `until`, `!`), `builtin` or `command` as the command bash runs in that shell. A sourced function such as `relax() { set +e; if return 0; then :; fi; set -e; }` now counts as returning with errexit off, `builtin set -x`, `command set -x` and `if set -x; then :; fi` turn tracing on, `if set -e; then :; fi` turns errexit back on, and a mask-failure block that returns in a condition before it clears the credential no longer counts as clearing it (task-2c63dd9c, task-f33bf0c3).
+- `docs/edge/observability.md` cites every call site of `cordum_edge_fail_closed_total` by file and line: agentd and the Claude hook runner when they fail closed, and the Edge retention sweeper, which counts a cleanup page that the legal-hold guard keeps with `mode="unknown"` and `reason_code` `retention_hold_unverifiable` or `retention_hold_changed` (task-49549242).
+- On a Windows host the workflow credential scanner reports a drive-letter operand (`source C:/x`, `bash C:/x`, `bash --rcfile C:/x`) as a missing source, as it does on Linux, instead of failing with a file-not-found error. (task-a160f44a)
 
 ### Added
 
@@ -1201,6 +1316,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Aligned the `SAFETY_KERNEL_TLS_CA` description in `docs/configuration-reference.md` and `docs/safety-kernel.md` with `docs/contract/threat-model.md`: it is the CA bundle the scheduler and gateway use to verify the Safety Kernel's TLS server certificate. Documentation only; no behavior changes.
 
 - Docs: the policy-signing threat model in `docs/deployment/policy-signing.md` now qualifies its entry-point coverage statement against the claims register (task-984731be).
+
+- Restore docs: select per-store backup ids and state their consistency limit;
+  stop backup and retention Jobs before restoring; validate both stream snapshots
+  before deleting either stream and stop at the first restore error (task-35d87632).
 
 ## [v1.3.1] - 2026-11-11
 

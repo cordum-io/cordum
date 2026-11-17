@@ -827,6 +827,48 @@ func TestPolicyEvaluate_BlankLinkage_FailsClosed(t *testing.T) {
 	}
 }
 
+func TestWhitespaceLinkage_FailsClosed(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		meta CallMetadata
+	}{
+		{"tenant", CallMetadata{Tenant: " \t", AgentID: rsAgent, SessionID: "s1", ExecutionID: "e1"}},
+		{"session_id", CallMetadata{Tenant: rsTenant, AgentID: rsAgent, SessionID: "\n ", ExecutionID: "e1"}},
+		{"execution_id", CallMetadata{Tenant: rsTenant, AgentID: rsAgent, SessionID: "s1", ExecutionID: "\u00a0"}},
+		{"agent_id", CallMetadata{Tenant: rsTenant, AgentID: "\r\t", SessionID: "s1", ExecutionID: "e1"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := WithCallMetadata(context.Background(), tc.meta)
+			f := newRSFixture(pb.DecisionType_DECISION_TYPE_ALLOW, NewInProcessDedupeStore())
+			params := ToolCallParams{Name: rsTool, Arguments: rsArgs}
+			if _, err := EvaluateToolCall(ctx, f.deps, params, rsServer); !errors.Is(err, errMissingMCPMetadata) {
+				t.Errorf("EvaluateToolCall error = %v; want errMissingMCPMetadata", err)
+			}
+			store := &fakeApprovalClaimStore{consumed: true}
+			_, err := ProcessApprovalClaim(ctx, ApprovalHoldDeps{
+				Store:          store,
+				PolicySnapshot: func(context.Context) string { return "policy-v7" },
+			}, ToolCallParams{Name: rsTool, Arguments: json.RawMessage(`{"_approval_ref":"edge_appr_xyz"}`)})
+			if !errors.Is(err, errMissingMCPMetadata) {
+				t.Errorf("ProcessApprovalClaim error = %v; want errMissingMCPMetadata", err)
+			}
+			if store.calls != 0 {
+				t.Errorf("approval store calls = %d; want 0", store.calls)
+			}
+			result, err := f.invoke(ctx, rsArgs)
+			if result != nil || !errors.Is(err, errMissingMCPMetadata) {
+				t.Errorf("InvokeToolWithPolicy = (%v, %v); want (nil, errMissingMCPMetadata)", result, err)
+			}
+			f.requireCounts(t, 0, 0)
+			if got := f.pipeline.calls.Load(); got != 0 {
+				t.Errorf("pipeline dispatches = %d; want 0", got)
+			}
+		})
+	}
+}
+
 // TestInvokeToolWithPolicy_ApprovalHandoffUsesCaller is the PR #276 Sub-E
 // finding #27 regression: when REQUIRE_HUMAN routes through ApprovalHandoff,
 // the ToolCallApprovalContext MUST carry caller identity sourced from

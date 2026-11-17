@@ -86,3 +86,54 @@ License on the Change Date (see `LICENSE`).
 
 - Include steps to reproduce, expected vs actual behavior, and logs.
 - For security issues, see `SECURITY.md`.
+
+## Maintainer smoke tests & local E2E harness
+
+When verifying runtime changes locally before pushing, boot the local Compose
+stack with `cordumctl up --dev`. It prints its next steps (`cordumctl status`,
+`cordumctl edge claude --no-launch` and `./tools/scripts/demo_guardrails_run.sh`).
+`cordumctl` commands default `--api-key` to the `CORDUM_API_KEY` environment
+variable, otherwise to `CORDUM_API_KEY` and then `API_KEY` in `.env`.
+
+### Minimal stack smoke test
+
+`./tools/scripts/platform_smoke.sh` (or `make smoke`) needs `CORDUM_API_KEY`
+and uses the `default` tenant unless `CORDUM_TENANT_ID` is set. Run it from the
+repository root: it uses https with `./certs/ca/ca.crt` when that file exists.
+It creates an approval workflow, starts a run, approves it, waits for the run
+to succeed, verifies the audit chain and probes governance health, then deletes
+the run and the workflow.
+
+```bash
+cordumctl up --dev
+CORDUM_API_KEY="${CORDUM_API_KEY:-$(grep '^CORDUM_API_KEY=' .env | tail -n 1 | cut -d= -f2-)}" ./tools/scripts/platform_smoke.sh
+```
+
+The recipe keeps a `CORDUM_API_KEY` exported in your shell, and takes the last
+definition from `.env` otherwise, as Docker Compose does.
+
+### Local E2E suites
+
+- `./tools/scripts/e2e_test.sh`: tests the full system through the dashboard
+  nginx proxy on port 8082. It switches the hello worker's NATS and Redis URLs
+  to TLS when the local CA exists.
+- `./tools/scripts/edge_fake_hook_e2e.sh`: sends synthetic Claude hook payloads
+  through `cordum-hook` and a locally started `cordum-agentd` to
+  `/api/v1/edge/*`, then on to approvals, session events and evidence export.
+  It needs no Claude Code binary and does not run `cordumctl edge claude`.
+- `./tools/scripts/doctor_integration_test.sh`: tests `cordumctl doctor`
+  against the Compose stack, stopping and restarting NATS. It runs only with
+  `CORDUM_INTEGRATION=1`, and the Makefile has no target for it.
+
+### Recording demo GIFs
+
+From the repository root, `vhs tools/scripts/demo_guardrails.tape` records
+`./tools/scripts/demo_guardrails.sh` into `docs/assets/guardrails-demo.gif`.
+Install Charmbracelet `vhs` first (`brew install vhs` or a Go install).
+
+### `CAP-PRODUCTION` profile notes
+
+`CORDUM_CAP_PROFILE` defaults to `compat`; leave it there for local
+development and quickstarts. Only the scheduler implements `production`: the
+API gateway and the workflow engine refuse to start under it
+(`docs/cap_production_profile.md`).

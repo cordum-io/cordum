@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 from typing import List
 
@@ -50,11 +50,6 @@ class PolicyReplayResponse:
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.policy_replay_response_changes_item import PolicyReplayResponseChangesItem
-        from ..models.policy_replay_response_summary import PolicyReplayResponseSummary
-        from ..models.policy_replay_response_time_range import PolicyReplayResponseTimeRange
-        from ..models.policy_replay_response_rule_hits_item import PolicyReplayResponseRuleHitsItem
-
         replay_id = str(self.replay_id)
 
         policy_snapshot = self.policy_snapshot
