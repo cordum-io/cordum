@@ -7,6 +7,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Python SDK: normalize PATH-discovered generator paths in Git Bash when
+  `MSYS_NO_PATHCONV=1`, preserving local-venv selection and WSL behavior (task-33ed4117).
+
 - Python SDK: remove template-unused imports during generation with the pinned Ruff
   cleanup hook before formatting, without changing API or version markers (task-90b8033a).
 
