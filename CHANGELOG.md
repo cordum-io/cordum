@@ -357,6 +357,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Security
 
+- MCP gateway: the Edge session that `POST /api/v1/mcp/gateway/clients/connect`
+  creates, and its events, record only the principal a credential vouches
+  for. A principal named only by the `X-Principal-Id` header is no longer
+  recorded as their `principal_id` (task-a4604f76).
+
 - Agent identities: an agent can no longer exempt its own mutating MCP calls from human approval. `POST /api/v1/agents` and `PUT /api/v1/agents/{id}` answer 403 `AGENT_SELF_PREAPPROVAL_DENIED` when the caller's own principal would set `preapproved_mutating_tools` on the identity it is linked to, or link itself (`agent_id`) to an identity that has or gets such tools. Another admin can still grant them (task-2f34e241).
 - Edge: `cordumctl edge managed-settings verify` now applies generate's
   secret-pattern check to the trusted and configured MCP gateway URLs, so a
