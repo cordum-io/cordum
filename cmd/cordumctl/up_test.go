@@ -1,11 +1,17 @@
 package main
 
 import (
+	"context"
+	"crypto/tls"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestEnsureDevBootstrapEnvCreatesAndPreserves(t *testing.T) {
@@ -42,7 +48,7 @@ func TestEnsureDevBootstrapEnvCreatesAndPreserves(t *testing.T) {
 		"CORDUM_API_KEY=" + res.APIKey,
 		"REDIS_PASSWORD=cordum_redis_",
 		"CORDUM_ADMIN_USERNAME=admin",
-		"CORDUM_ADMIN_PASSWORD=cordum_admin_",
+		"CORDUM_ADMIN_PASSWORD=Cordum_admin_1_",
 		"CORDUM_MCP_ENABLED=true",
 		"CORDUM_MCP_POLICY_GATE_ENABLED=true",
 	} {
@@ -107,8 +113,8 @@ func TestEnsureDevBootstrapEnvPreservesExistingEnvFileAndProcessEnv(t *testing.T
 	}
 }
 
-// .env.example ships CORDUM_API_KEY= (empty). readEnvFile reads a key's first
-// definition, so the generated key must replace that line, not follow it.
+// .env.example ships CORDUM_API_KEY= (empty). Fill that definition rather
+// than accumulating duplicate credential definitions on each bootstrap.
 func TestEnsureDevBootstrapEnvFillsEmptyDefinitionInPlace(t *testing.T) {
 	dir := t.TempDir()
 	envPath := filepath.Join(dir, ".env")
@@ -173,6 +179,9 @@ func TestEnsureDevCLIContextWritesValidYAMLAndDoesNotOverwrite(t *testing.T) {
 	}
 	if err := os.WriteFile(filepath.Join(caDir, "ca.crt"), []byte("dummy-ca"), 0o600); err != nil {
 		t.Fatalf("write ca.crt: %v", err)
+	}
+	if got := detectInitCACert("", defaultDevGatewayURL, dir); got != "./certs/ca/ca.crt" {
+		t.Fatalf("detectInitCACert = %q, want ./certs/ca/ca.crt", got)
 	}
 
 	cfgPath, created, err := ensureDevCLIContext(dir, "tenant-alpha")
@@ -258,5 +267,264 @@ func checkAPIKeyDefaults(t *testing.T, env, want string) {
 	}
 	if cfg.APIKey != want {
 		t.Errorf("CORDUM_API_KEY %s: loadEdgeClaudeConfigForRun APIKey = %q, want %q", env, cfg.APIKey, want)
+	}
+}
+
+func TestResolveUpComposeFilesIncludesDevOverrideWhenPresent(t *testing.T) {
+	dir := t.TempDir()
+	mainFile := filepath.Join(dir, "docker-compose.yml")
+	devFile := filepath.Join(dir, "docker-compose.dev.yml")
+	if err := os.WriteFile(mainFile, []byte("services: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(devFile, []byte("services: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got := resolveUpComposeFiles(mainFile, true, false)
+	if len(got) != 2 || got[0] != mainFile || got[1] != devFile {
+		t.Fatalf("resolveUpComposeFiles(dev=true, explicit=false) = %v, want [%s %s]", got, mainFile, devFile)
+	}
+	gotExplicit := resolveUpComposeFiles(mainFile, true, true)
+	if len(gotExplicit) != 1 || gotExplicit[0] != mainFile {
+		t.Fatalf("resolveUpComposeFiles(dev=true, explicit=true) = %v, want [%s]", gotExplicit, mainFile)
+	}
+	gotNonDev := resolveUpComposeFiles(mainFile, false, false)
+	if len(gotNonDev) != 1 || gotNonDev[0] != mainFile {
+		t.Fatalf("resolveUpComposeFiles(dev=false) = %v, want [%s]", gotNonDev, mainFile)
+	}
+}
+
+func TestSeedDevMCPConfigSeedsCleanInstallAndPreservesExistingTools(t *testing.T) {
+	var posted map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/config":
+			// Mimics clean install returning empty object from gateway.
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/config":
+			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
+				t.Fatalf("decode posted config: %v", err)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	client := newRestClient(srv.URL, "dev-key", "default", nil)
+	if err := seedDevMCPConfig(context.Background(), client, true); err != nil {
+		t.Fatalf("seedDevMCPConfig clean install error: %v", err)
+	}
+	if posted["scope"] != "system" || posted["scope_id"] != "default" {
+		t.Fatalf("unexpected scope in posted config: %#v", posted)
+	}
+	data, _ := posted["data"].(map[string]any)
+	mcpCfg, _ := data["mcp"].(map[string]any)
+	if mcpCfg["enabled"] != true || mcpCfg["transport"] != "http" || mcpCfg["policy_gate_enabled"] != true {
+		t.Fatalf("unexpected mcp config seeded: %#v", mcpCfg)
+	}
+
+	// Existing tools and explicit policy_gate_enabled:false are preserved.
+	posted = nil
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/config":
+			_, _ = w.Write([]byte(`{"scope":"system","scope_id":"default","data":{"safety":{"pii_detection_enabled":true},"mcp":{"policy_gate_enabled":false,"tools":{"demo.tool":{"enabled":true}}}}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/config":
+			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
+				t.Fatalf("decode posted config: %v", err)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer srv2.Close()
+
+	client2 := newRestClient(srv2.URL, "dev-key", "default", nil)
+	if err := seedDevMCPConfig(context.Background(), client2, true); err != nil {
+		t.Fatalf("seedDevMCPConfig existing error: %v", err)
+	}
+	data2, _ := posted["data"].(map[string]any)
+	if _, ok := data2["safety"]; ok {
+		t.Fatalf("unrelated system/default keys must not be posted: %#v", data2)
+	}
+	mcpCfg2, _ := data2["mcp"].(map[string]any)
+	if mcpCfg2["enabled"] != true || mcpCfg2["transport"] != "http" {
+		t.Fatalf("expected missing enabled/transport filled: %#v", mcpCfg2)
+	}
+	if mcpCfg2["policy_gate_enabled"] != false {
+		t.Fatalf("expected explicit policy_gate_enabled=false to be preserved, got %#v", mcpCfg2["policy_gate_enabled"])
+	}
+	if _, ok := mcpCfg2["tools"]; !ok {
+		t.Fatalf("expected existing mcp.tools to be preserved: %#v", mcpCfg2)
+	}
+}
+
+func TestDevSeederCACertSeedsTLSFromRelativeComposePath(t *testing.T) {
+	dir := t.TempDir()
+	composeDir := filepath.Join(dir, "sandbox")
+	ensureDevCerts(composeDir)
+	t.Chdir(dir)
+	caPath, err := devSeederCACert(filepath.Dir("sandbox/docker-compose.yml"), defaultDevGatewayURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if caPath != filepath.Join(composeDir, "certs", "ca", "ca.crt") || !filepath.IsAbs(caPath) {
+		t.Fatalf("seeder CA = %q, want absolute path under %q", caPath, composeDir)
+	}
+	if _, err := os.Stat(caPath); err != nil {
+		t.Fatalf("seeder CA must exist: %v", err)
+	}
+	pair, err := tls.LoadX509KeyPair(filepath.Join(composeDir, "certs", "server", "tls.crt"), filepath.Join(composeDir, "certs", "server", "tls.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	posted := make(chan bool, 1)
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/config" {
+			var doc configDoc
+			if err := json.NewDecoder(r.Body).Decode(&doc); err != nil {
+				t.Errorf("decode config: %v", err)
+			}
+			mcpCfg, _ := doc.Data["mcp"].(map[string]any)
+			posted <- mcpCfg["policy_gate_enabled"] == true
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	srv.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{pair}}
+	srv.StartTLS()
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := waitAndSeedDevMCP(ctx, devBootstrapResult{Gateway: srv.URL, CACert: caPath, APIKey: "dev-key", Tenant: "default", MCPEnabled: "true"}); err != nil {
+		t.Fatalf("TLS seeding from foreign cwd: %v", err)
+	}
+	select {
+	case seeded := <-posted:
+		if !seeded {
+			t.Fatal("MCP policy gate was not seeded over TLS")
+		}
+	default:
+		t.Fatal("MCP config was not posted")
+	}
+}
+
+func TestDevSeederCACertWithoutLocalCAUsesSystemRoots(t *testing.T) {
+	got, err := devSeederCACert(t.TempDir(), defaultDevGatewayURL)
+	if err != nil || got != "" {
+		t.Fatalf("missing CA = (%q, %v), want empty path and no error", got, err)
+	}
+}
+
+func TestSeedDevMCPConfigPreservesConcurrentUnrelatedEdit(t *testing.T) {
+	store := map[string]any{"safety": "old", "mcp": map[string]any{"transport": "http"}}
+	posted := make(chan map[string]json.RawMessage, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			if err := json.NewEncoder(w).Encode(configDoc{Scope: "system", ScopeID: "default", Data: store, Meta: map[string]string{"owner": "old"}}); err != nil {
+				t.Errorf("encode snapshot: %v", err)
+			}
+			store["safety"] = "new"
+		case http.MethodPost:
+			var req map[string]json.RawMessage
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("decode config: %v", err)
+			}
+			var doc configDoc
+			if err := json.Unmarshal(req["data"], &doc.Data); err != nil {
+				t.Errorf("decode data: %v", err)
+			}
+			for key, value := range doc.Data {
+				store[key] = value
+			}
+			posted <- req
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer srv.Close()
+	client := newRestClient(srv.URL, "dev-key", "default", nil)
+	if err := seedDevMCPConfig(context.Background(), client, true); err != nil {
+		t.Fatal(err)
+	}
+	req := <-posted
+	var data map[string]json.RawMessage
+	if err := json.Unmarshal(req["data"], &data); err != nil {
+		t.Fatal(err)
+	}
+	if store["safety"] != "new" {
+		t.Fatalf("concurrent safety edit overwritten: %v", store["safety"])
+	}
+	if len(data) != 1 || data["mcp"] == nil || req["meta"] != nil {
+		t.Fatalf("POST must contain only data.mcp and no meta: %s", req)
+	}
+	mcpCfg, _ := store["mcp"].(map[string]any)
+	if mcpCfg["enabled"] != true || mcpCfg["policy_gate_enabled"] != true {
+		t.Fatalf("MCP config not seeded: %v", mcpCfg)
+	}
+}
+
+// CodeRabbit up.go:538 on #591: seeding must not write mcp.enabled over an explicit
+// CORDUM_MCP_ENABLED=false. It seeds mcp.enabled only for a value the gateway reads as true.
+func TestUpDevSeedingKeepsExplicitMCPDisabled(t *testing.T) {
+	cases := []struct {
+		name, env, dotEnv string
+		wantEnabled       bool
+	}{
+		{name: "env_false", env: "false"},
+		{name: "dotenv_false", dotEnv: "CORDUM_MCP_ENABLED=false"},
+		{name: "env_off", env: "off"},
+		{name: "env_unreadable", env: "maybe"},
+		{name: "env_yes", env: "yes", wantEnabled: true},
+		{name: "unset", wantEnabled: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("CORDUM_MCP_ENABLED", tc.env)
+			if tc.dotEnv != "" {
+				if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(tc.dotEnv), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var posted map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodGet && (r.URL.Path == "/api/v1/status" || r.URL.Path == "/api/v1/config"):
+					_, _ = w.Write([]byte(`{}`))
+				case r.Method == http.MethodPost && r.URL.Path == "/api/v1/config":
+					if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
+						t.Errorf("decode posted config: %v", err)
+					}
+					w.WriteHeader(http.StatusNoContent)
+				default:
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+			}))
+			defer srv.Close()
+
+			devBoot, err := ensureDevBootstrapEnv(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			devBoot.Gateway = srv.URL
+			ctx, cancel := context.WithTimeout(context.Background(), defaultDevMCPReadyTimeout)
+			defer cancel()
+			if err := waitAndSeedDevMCP(ctx, devBoot); err != nil {
+				t.Fatalf("waitAndSeedDevMCP: %v", err)
+			}
+			data, _ := posted["data"].(map[string]any)
+			mcpCfg, _ := data["mcp"].(map[string]any)
+			enabled, seeded := mcpCfg["enabled"]
+			if seeded != tc.wantEnabled || seeded && enabled != true {
+				t.Fatalf("CORDUM_MCP_ENABLED env=%q .env=%q: seeded mcp.enabled=%v (%v), want seeded=%v", tc.env, tc.dotEnv, seeded, enabled, tc.wantEnabled)
+			}
+			if mcpCfg["policy_gate_enabled"] != true || mcpCfg["transport"] != "http" {
+				t.Fatalf("policy_gate_enabled and transport must still be seeded: %#v", mcpCfg)
+			}
+		})
 	}
 }

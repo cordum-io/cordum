@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 from typing import List
 
@@ -11,7 +11,6 @@ from ..types import UNSET, Unset
 from ..models.governance_health_grade import GovernanceHealthGrade
 from ..types import UNSET, Unset
 from dateutil.parser import isoparse
-from typing import cast
 from typing import Dict
 from typing import Union
 import datetime
@@ -42,8 +41,6 @@ class GovernanceHealth:
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.governance_health_factors import GovernanceHealthFactors
-
         score = self.score
 
         grade = self.grade.value

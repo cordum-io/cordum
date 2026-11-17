@@ -421,6 +421,13 @@ func PolicyPreEventFromContext(ctx context.Context) (PolicyPreEvent, bool) {
 // the contract — tests grep for it.
 var errMissingMCPMetadata = errors.New("missing_mcp_metadata: CallMetadata not in context")
 
+func callMetadataComplete(meta CallMetadata) bool {
+	return strings.TrimSpace(meta.Tenant) != "" &&
+		strings.TrimSpace(meta.SessionID) != "" &&
+		strings.TrimSpace(meta.ExecutionID) != "" &&
+		strings.TrimSpace(meta.AgentID) != ""
+}
+
 // BuildActionDescriptorFromToolCall maps an MCP tools/call into the
 // structured descriptor the action-gate pipeline consumes.
 //
@@ -580,7 +587,7 @@ func EvaluateToolCall(ctx context.Context, deps ToolCallDeps, params ToolCallPar
 	// Fail-closed is preferred over best-effort emission with synthetic
 	// placeholders: an upstream bridge that forgot to call
 	// ContextWithCallMetadata is a bug, not a soft warning.
-	if !ok || meta.Tenant == "" || meta.SessionID == "" || meta.ExecutionID == "" || meta.AgentID == "" {
+	if !ok || !callMetadataComplete(meta) {
 		return EvaluateToolCallResult{}, errMissingMCPMetadata
 	}
 	// Reject oversized args before running the redactor so a 10 MB

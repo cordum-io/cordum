@@ -178,8 +178,8 @@ The production K8s overlay includes CronJobs for hourly backups:
 
 **Redis RDB backup** (`cordum-redis-backup`):
 ```bash
-# Runs hourly over TLS. For each of the 6 nodes, INFO replication picks out the
-# primaries, and each primary's RDB goes to its own file:
+# Runs hourly over TLS. CLUSTER NODES identifies primaries and their slot coverage;
+# each primary's RDB goes to its own file, with stable-topology and checksum guards:
 redis-cli --tls \
   --cacert /etc/cordum/tls/client/ca.crt \
   --cert /etc/cordum/tls/client/tls.crt \
@@ -203,6 +203,13 @@ nats --server tls://cordum-nats:4222 \
 Both CronJobs use a shared 20Gi PVC (`cordum-backups`) and retain 2 successful + 2 failed job histories.
 `cordum-backup-retention` deletes backups older than 7 days.
 
+Each completed backup also writes a SHA-256 manifest and prints its digest to the
+Job log. Retain the backup ID and that digest in an access-controlled, immutable
+catalog outside the backup PVC before the Job logs expire. A checksum stored only
+alongside the snapshots is not a trusted integrity baseline. The restore commands
+below require the catalog digest; older backups without one require a successful
+isolated restore and a separately retained integrity baseline before production deletion.
+
 ### Restore Procedures
 
 The Redis and NATS CronJobs snapshot independently, naming each backup by its own
@@ -222,6 +229,8 @@ volume. Do not select a backup from an interrupted run.
 set -eu
 redis_ts=20260213T120002Z   # Redis backup id; use it as ts in the Redis runbook
 nats_ts=20260213T120009Z    # independently selected NATS backup id
+# Copy from the trusted backup catalog, never calculate from the selected files now.
+nats_manifest_sha256=REPLACE_WITH_CATALOG_SHA256
 
 kubectl patch cronjob cordum-redis-backup -n cordum -p '{"spec":{"suspend":true}}'
 kubectl patch cronjob cordum-nats-backup -n cordum -p '{"spec":{"suspend":true}}'
@@ -241,13 +250,15 @@ kubectl wait -n cordum --for=delete pod --timeout=5m \
 ```
 
 **Redis**: follow [Restore From Backup](./redis-operations.md#restore-from-backup).
-Each backup file holds one primary's slots, so it goes back to the pod that serves
-those slots, and it is loaded onto that pod's volume while Redis is stopped. Do not
-copy an RDB into a running pod and restart it: with `appendonly yes`, Redis loads its
-AOF on startup and ignores `dump.rdb`, so nothing is restored.
+The backup is imported into the running cluster: a toolbox pod loads each file into
+a throwaway Redis, which sends every key to the primary that owns its slot under the
+current slot layout, and no Redis pod restarts. Do not copy an RDB into a running pod
+and restart it: with `appendonly yes`, Redis loads its AOF on startup and ignores
+`dump.rdb`, so nothing is restored.
 
 **NATS JetStream**: `nats stream restore` takes only the snapshot directory and
-refuses a stream that already exists, so remove each stream first. The NATS server
+refuses a stream that already exists. Verify both snapshots against the trusted
+manifest before removing either stream. The NATS server
 image has no `nats` CLI; run it from a nats-box pod. The pod carries the NATS backup
 CronJob's label, which the production NetworkPolicies admit to NATS's client port and
 DNS:
@@ -283,11 +294,19 @@ spec:
 EOF
 kubectl wait -n cordum --for=condition=Ready pod/cordum-nats-restore --timeout=120s
 
-kubectl exec -n cordum cordum-nats-restore -- env nats_ts="$nats_ts" sh -c '
+kubectl exec -n cordum cordum-nats-restore -- env nats_ts="$nats_ts" nats_manifest_sha256="$nats_manifest_sha256" sh -c '
   set -eu
+  cd "/backup/nats-$nats_ts"
+  test "${#nats_manifest_sha256}" -eq 64
+  case "$nats_manifest_sha256" in *[!0-9a-f]*) exit 1 ;; esac
+  printf "%s  SHA256SUMS\n" "$nats_manifest_sha256" | sha256sum -c -
+  test "$(wc -l < SHA256SUMS)" -eq 4
+  sha256sum -c SHA256SUMS
   for s in CORDUM_SYS CORDUM_JOBS; do
-    test -s "/backup/nats-$nats_ts/$s.snapshot/backup.json"
-    test -s "/backup/nats-$nats_ts/$s.snapshot/stream.tar.s2"
+    for file in backup.json stream.tar.s2; do
+      test -s "$s.snapshot/$file"
+      grep -Fx "$(sha256sum "$s.snapshot/$file")" SHA256SUMS >/dev/null
+    done
   done
   for s in CORDUM_SYS CORDUM_JOBS; do
     if nats stream info $s >/dev/null 2>&1; then nats stream rm --force $s; fi
@@ -352,12 +371,14 @@ Document a restore drill and run it at least quarterly.
 ```bash
 # 1. Update image tags in kustomization.yaml
 # 2. Apply to staging first
+kubectl delete job cordum-redis-cluster-init -n cordum-staging --ignore-not-found --cascade=foreground --wait --timeout=5m
 kubectl apply -k deploy/k8s/production -n cordum-staging
 
 # 3. Run smoke test
 bash ./tools/scripts/platform_smoke.sh
 
 # 4. Apply to production
+kubectl delete job cordum-redis-cluster-init -n cordum --ignore-not-found --cascade=foreground --wait --timeout=5m
 kubectl apply -k deploy/k8s/production -n cordum
 
 # 5. Monitor rollout
@@ -365,6 +386,10 @@ kubectl rollout status deployment/cordum-api-gateway -n cordum
 kubectl rollout status deployment/cordum-scheduler -n cordum
 kubectl rollout status deployment/cordum-safety-kernel -n cordum
 ```
+
+The retained Redis init Job has an immutable pod template. Delete it before
+applying an overlay that changes its command or labels; the recreated Job checks
+for an already healthy cluster and exits without reinitializing it.
 
 ### Rollback
 

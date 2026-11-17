@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/redis/go-redis/v9"
 )
@@ -486,6 +487,12 @@ func (s *RedisStore) EndSession(ctx context.Context, tenantID, sessionID string,
 // all execution pages succeed, so the caller can re-invoke DeleteSession for
 // idempotent retry.
 func (s *RedisStore) DeleteSession(ctx context.Context, tenantID, sessionID string) error {
+	return s.deleteSessionUnlessHeld(ctx, tenantID, sessionID, nil)
+}
+
+// deleteSessionUnlessHeld is DeleteSession for retention: with holds set, each
+// cleanup page, a background continuation's too, uses deletePageUnlessHeld.
+func (s *RedisStore) deleteSessionUnlessHeld(ctx context.Context, tenantID, sessionID string, holds *audit.LegalHoldStore) error {
 	if err := s.ensureReady(); err != nil {
 		return err
 	}
@@ -494,26 +501,26 @@ func (s *RedisStore) DeleteSession(ctx context.Context, tenantID, sessionID stri
 	if tenantID == "" || sessionID == "" {
 		return fmt.Errorf("tenant_id and session_id are required")
 	}
-	return s.deleteSessionFromCursor(ctx, tenantID, sessionID, 0, true)
+	return s.deleteSessionFromCursor(ctx, tenantID, sessionID, 0, true, holds)
 }
 
-func (s *RedisStore) deleteSessionFromCursor(ctx context.Context, tenantID, sessionID string, cursor uint64, scheduleBackground bool) error {
+func (s *RedisStore) deleteSessionFromCursor(ctx context.Context, tenantID, sessionID string, cursor uint64, scheduleBackground bool, holds *audit.LegalHoldStore) error {
 	started := time.Now()
-	deadline := started.Add(sessionCleanupDeadline)
-	progress, err := s.deleteSessionFromCursorOnce(ctx, tenantID, sessionID, cursor, deadline)
+	deadline := s.now().Add(sessionCleanupDeadline)
+	progress, err := s.deleteSessionFromCursorOnce(ctx, tenantID, sessionID, cursor, deadline, holds)
 	s.recorder.ObserveSessionCleanupDuration(time.Since(started))
 	s.recorder.AddSessionCleanupKeysDeleted(int(progress.keysDeleted))
 	if errors.Is(err, ErrSessionCleanupDeadlineExceeded) {
 		s.recorder.RecordSessionCleanupDeadline()
 		if scheduleBackground {
-			s.continueDeleteSessionInBackground(tenantID, sessionID, progress.cursor)
+			s.continueDeleteSessionInBackground(tenantID, sessionID, progress.cursor, holds)
 		}
 		return fmt.Errorf("%w: edge session %s cleaned=%d cursor=%d", err, sessionID, progress.cleaned, progress.cursor)
 	}
 	return err
 }
 
-func (s *RedisStore) deleteSessionFromCursorOnce(ctx context.Context, tenantID, sessionID string, cursor uint64, deadline time.Time) (sessionCleanupProgress, error) {
+func (s *RedisStore) deleteSessionFromCursorOnce(ctx context.Context, tenantID, sessionID string, cursor uint64, deadline time.Time, holds *audit.LegalHoldStore) (sessionCleanupProgress, error) {
 	session, ok, err := s.GetSession(ctx, tenantID, sessionID)
 	if err != nil {
 		return sessionCleanupProgress{}, err
@@ -525,7 +532,7 @@ func (s *RedisStore) deleteSessionFromCursorOnce(ctx context.Context, tenantID, 
 	progress := sessionCleanupProgress{cursor: cursor}
 	indexKey := edgeSessionExecutionsIndexKey(sessionID)
 	for page := 1; ; page++ {
-		if time.Now().After(deadline) {
+		if s.now().After(deadline) {
 			return progress, ErrSessionCleanupDeadlineExceeded
 		}
 		executionIDs, nextCursor, err := s.scanSessionExecutionIDs(ctx, indexKey, progress.cursor)
@@ -539,7 +546,7 @@ func (s *RedisStore) deleteSessionFromCursorOnce(ctx context.Context, tenantID, 
 			}
 			break
 		}
-		deleted, cleaned, err := s.cleanupExecutionIDs(ctx, tenantID, sessionID, executionIDs)
+		deleted, cleaned, err := s.cleanupExecutionIDs(ctx, tenantID, sessionID, executionIDs, holds)
 		if err != nil {
 			return progress, fmt.Errorf("delete edge session %s: cleanup page %d (cleaned=%d, page_size=%d): %w", sessionID, page, progress.cleaned, len(executionIDs), err)
 		}
@@ -551,7 +558,7 @@ func (s *RedisStore) deleteSessionFromCursorOnce(ctx context.Context, tenantID, 
 		}
 	}
 
-	deleted, err := s.cleanupSessionKeys(ctx, *session)
+	deleted, err := s.cleanupSessionKeys(ctx, *session, holds)
 	if err != nil {
 		return progress, fmt.Errorf("delete edge session %s: session-level cleanup (executions cleaned=%d): %w", sessionID, progress.cleaned, err)
 	}
@@ -571,10 +578,18 @@ func (s *RedisStore) scanSessionExecutionIDs(ctx context.Context, indexKey strin
 	return ids, nextCursor, nil
 }
 
-func (s *RedisStore) cleanupExecutionIDs(ctx context.Context, tenantID, sessionID string, executionIDs []string) (int64, int64, error) {
+func (s *RedisStore) cleanupExecutionIDs(ctx context.Context, tenantID, sessionID string, executionIDs []string, holds *audit.LegalHoldStore) (int64, int64, error) {
 	executions, err := s.loadSessionExecutions(ctx, tenantID, sessionID, executionIDs)
 	if err != nil || len(executions) == 0 {
 		return 0, int64(len(executions)), err
+	}
+	if holds != nil {
+		deleted, err := s.deletePageUnlessHeld(ctx, tenantID, holds, executionCleanupKeys(executions), func(pipe redis.Pipeliner) {
+			for _, execution := range executions {
+				queueExecutionIndexRemovals(ctx, pipe, execution)
+			}
+		})
+		return deleted, int64(len(executions)), err
 	}
 	deleted, err := s.deleteRedisKeysInBatches(ctx, executionCleanupKeys(executions))
 	if err != nil {
@@ -636,34 +651,74 @@ func queueExecutionIndexRemovals(ctx context.Context, pipe redis.Pipeliner, exec
 	}
 }
 
-func (s *RedisStore) cleanupSessionKeys(ctx context.Context, session EdgeSession) (int64, error) {
-	deleted, err := s.deleteRedisKeysInBatches(ctx, []string{
+func (s *RedisStore) cleanupSessionKeys(ctx context.Context, session EdgeSession, holds *audit.LegalHoldStore) (int64, error) {
+	keys := []string{
 		edgeSessionKey(session.SessionID),
 		edgeSessionHeartbeatKey(session.SessionID),
 		edgeSessionExecutionsIndexKey(session.SessionID),
 		edgeSessionEventsIndexKey(session.SessionID),
-	})
+	}
+	if holds != nil {
+		return s.deletePageUnlessHeld(ctx, session.TenantID, holds, keys, func(pipe redis.Pipeliner) {
+			queueSessionIndexRemovals(ctx, pipe, session)
+		})
+	}
+	deleted, err := s.deleteRedisKeysInBatches(ctx, keys)
 	if err != nil {
 		return deleted, err
 	}
-	return deleted, s.removeSessionSecondaryIndexes(ctx, session)
-}
-
-func (s *RedisStore) removeSessionSecondaryIndexes(ctx context.Context, session EdgeSession) error {
-	_, err := s.client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
-		pipe.ZRem(ctx, edgeTenantIndexKey(session.TenantID), session.SessionID)
-		if strings.TrimSpace(session.PrincipalID) != "" {
-			pipe.ZRem(ctx, edgePrincipalIndexKey(session.TenantID, session.PrincipalID), session.SessionID)
-		}
-		if strings.TrimSpace(session.TraceID) != "" {
-			pipe.ZRem(ctx, edgeSessionTraceIndexKey(session.TraceID), session.SessionID)
-		}
-		if strings.TrimSpace(session.WorkflowRunID) != "" {
-			pipe.ZRem(ctx, edgeSessionRunIndexKey(session.WorkflowRunID), session.SessionID)
-		}
+	_, err = s.client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		queueSessionIndexRemovals(ctx, pipe, session)
 		return nil
 	})
-	return err
+	return deleted, err
+}
+
+func queueSessionIndexRemovals(ctx context.Context, pipe redis.Pipeliner, session EdgeSession) {
+	pipe.ZRem(ctx, edgeTenantIndexKey(session.TenantID), session.SessionID)
+	if strings.TrimSpace(session.PrincipalID) != "" {
+		pipe.ZRem(ctx, edgePrincipalIndexKey(session.TenantID, session.PrincipalID), session.SessionID)
+	}
+	if strings.TrimSpace(session.TraceID) != "" {
+		pipe.ZRem(ctx, edgeSessionTraceIndexKey(session.TraceID), session.SessionID)
+	}
+	if strings.TrimSpace(session.WorkflowRunID) != "" {
+		pipe.ZRem(ctx, edgeSessionRunIndexKey(session.WorkflowRunID), session.SessionID)
+	}
+}
+
+// errSessionKeptForLegalHold wraps every error of deletePageUnlessHeld.
+var errSessionKeptForLegalHold = errors.New("edge session kept for legal hold")
+
+// deletePageUnlessHeld commits a page's DEL batches and the index removals more
+// queues through holds.DeleteUnlessHeld, counting a page kept fail-closed.
+func (s *RedisStore) deletePageUnlessHeld(ctx context.Context, tenantID string, holds *audit.LegalHoldStore, keys []string, more func(redis.Pipeliner)) (int64, error) {
+	var dels []*redis.IntCmd
+	err := holds.DeleteUnlessHeld(ctx, tenantID, func(pipe redis.Pipeliner) {
+		for start := 0; start < len(keys); start += sessionCleanupDeleteBatchSize {
+			dels = append(dels, pipe.Del(ctx, keys[start:min(start+sessionCleanupDeleteBatchSize, len(keys))]...))
+		}
+		more(pipe)
+	})
+	if err != nil {
+		if !errors.Is(err, audit.ErrUnderHold) {
+			s.recorder.RecordFailClosed("", "", retentionHoldFailureReason(err))
+		}
+		return 0, fmt.Errorf("%w: %w", errSessionKeptForLegalHold, err)
+	}
+	var deleted int64
+	for _, del := range dels {
+		deleted += del.Val()
+	}
+	return deleted, nil
+}
+
+// retentionHoldFailureReason is the reason code of a page kept fail-closed.
+func retentionHoldFailureReason(err error) string {
+	if errors.Is(err, redis.TxFailedErr) {
+		return "retention_hold_changed"
+	}
+	return "retention_hold_unverifiable"
 }
 
 func (s *RedisStore) deleteRedisKeysInBatches(ctx context.Context, keys []string) (int64, error) {
@@ -682,11 +737,11 @@ func (s *RedisStore) deleteRedisKeysInBatches(ctx context.Context, keys []string
 	return deleted, nil
 }
 
-func (s *RedisStore) continueDeleteSessionInBackground(tenantID, sessionID string, cursor uint64) {
+func (s *RedisStore) continueDeleteSessionInBackground(tenantID, sessionID string, cursor uint64, holds *audit.LegalHoldStore) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), sessionCleanupDeadline)
 		defer cancel()
-		if err := s.deleteSessionFromCursor(ctx, tenantID, sessionID, cursor, false); err != nil {
+		if err := s.deleteSessionFromCursor(ctx, tenantID, sessionID, cursor, false, holds); err != nil {
 			// The foreground caller already received the typed deadline error.
 			// The background pass is best-effort; callers can still retry
 			// DeleteSession because cleanup is idempotent.

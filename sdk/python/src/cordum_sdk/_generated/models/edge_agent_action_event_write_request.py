@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 from typing import List
 
@@ -110,8 +110,6 @@ class EdgeAgentActionEventWriteRequest:
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.edge_labels import EdgeLabels
-        from ..models.edge_artifact_pointer import EdgeArtifactPointer
         from ..models.edge_agent_action_event_write_request_input_redacted_type_0 import (
             EdgeAgentActionEventWriteRequestInputRedactedType0,
         )

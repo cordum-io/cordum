@@ -480,13 +480,14 @@ func TestOutputRuleToggle_EnforceRefusesWithoutSigningKeyBeforeAnyWrite(t *testi
 	}
 }
 
-func TestOutputRuleToggle_ExplicitWarnRewritesAsBefore(t *testing.T) {
+func TestOutputRuleToggle_NoSignerStoresUnsigned(t *testing.T) {
 	for _, strict := range []string{"warn", "off"} {
 		t.Run(strict, func(t *testing.T) {
 			storeWriterEnv(t, true, strict)
 			logs := storeWriterLogs(t)
 			s, _, _ := newTestGateway(t)
 			seeded := storeWriterSeedOutput(t, s)
+			require.Contains(t, seeded, policyBundleSignatureKey)
 
 			rec := storeWriterToggle(t, s)
 			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -494,11 +495,15 @@ func TestOutputRuleToggle_ExplicitWarnRewritesAsBefore(t *testing.T) {
 			require.True(t, storeWriterOutputEnabled(t, stored))
 			want := map[string]any{"content": stored["content"], "updated_at": stored["updated_at"]}
 			for key, value := range seeded {
-				if key != "content" {
+				if key != "content" && key != policyBundleSignatureKey {
 					want[key] = value
 				}
 			}
 			require.Equal(t, want, stored)
+			entries, err := s.loadPolicyAudit(context.Background())
+			require.NoError(t, err)
+			require.Len(t, entries, 1)
+			require.Equal(t, "set output rule out-secret enabled=true in policy bundle storewriter/output; stored unsigned: no usable policy signing key", entries[0].Message)
 			require.NotEmpty(t, logs.records("WARN", "subject", "output rule out-secret"))
 		})
 	}

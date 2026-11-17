@@ -318,13 +318,12 @@ its environment, a sibling `managed-mcp.json`, or the control-plane `--gateway`.
 Both the expected URL and the allowlist entry must be absolute HTTP(S) URLs
 with a non-root path, without credentials, wildcards or variable
 placeholders. Credentials means userinfo (`user:pass@host`) and anything
-`generate`'s secret patterns flag, such as `access_token=` or `api_key=` in the
-query string (patterns at `core/edge/claude/redaction.go:12`). `generate` and
-`verify` share that check through `validateManagedMCPGatewayURL`
-(`core/edge/claude/managed_settings.go:153`), which `verify` applies to both
-URLs at `core/edge/claude/managed_settings_verify.go:88` and `:109`; `generate`
-also checks the field at `core/edge/claude/managed_settings.go:135`. The check
-is a heuristic and other query parameters pass. Keep credentials out of the
+`managedMCPCredentialPattern` flags, such as `access_token=` or `api_key=` in the
+query string and recognized provider-token formats. `generate` and `verify`
+share the URL-decoding and credential check through `validateManagedMCPGatewayURL`
+in `core/edge/claude/managed_settings.go`; the verifier applies it to both
+URLs. The check is a heuristic, not a general secret detector: non-sensitive
+query parameters, including opaque or hexadecimal tenant IDs, pass. Keep credentials out of the
 URL; the MCP client gets them from `headersHelper`.
 They must match literally after trimming surrounding whitespace: ports,
 paths, trailing slashes, queries and fragments are not silently rewritten.
