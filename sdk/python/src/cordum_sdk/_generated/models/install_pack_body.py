@@ -1,15 +1,13 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar
 
 from typing import List
 
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
-import json
 
-from ..types import UNSET, Unset
 
-from ..types import File, FileJsonType
+from ..types import File
 from io import BytesIO
 
 

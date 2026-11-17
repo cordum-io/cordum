@@ -133,7 +133,7 @@ func (s *server) attachMCPPolicyDepsNamed(mcpServer *mcp.MCPServer, gate *gatewa
 
 	snapshot := s.mcpPolicySnapshotFunc()
 	mcpServer = mcpServer.WithApprovalHold(mcp.ApprovalHoldDeps{
-		Store:          s.edgeStore,
+		Store:          mcpApprovalClaims{Store: s.edgeStore},
 		PolicySnapshot: snapshot,
 		ServerName:     name,
 	})

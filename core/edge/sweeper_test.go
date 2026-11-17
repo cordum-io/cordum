@@ -1,16 +1,26 @@
 package edge
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	miniredis "github.com/alicebob/miniredis/v2"
+	"github.com/cordum/cordum/core/audit"
+	"github.com/redis/go-redis/v9"
 )
 
 func TestSessionSweeperRemovesAgedSessionAndPreservesFresh(t *testing.T) {
 	ctx := context.Background()
 	rec := &abortRecorder{}
-	store, _, _, cleanup := newRedisEdgeStore(t, WithRecorder(rec))
+	store, client, _, cleanup := newRedisEdgeStore(t, WithRecorder(rec))
 	defer cleanup()
 
 	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
@@ -26,6 +36,7 @@ func TestSessionSweeperRemovesAgedSessionAndPreservesFresh(t *testing.T) {
 		RetentionTTL: DefaultSessionRetentionTTL,
 		Interval:     time.Hour,
 		Now:          func() time.Time { return now },
+		LegalHolds:   audit.NewLegalHoldStoreFromClient(client),
 	})
 	if err != nil {
 		t.Fatalf("NewSessionSweeper: %v", err)
@@ -50,7 +61,7 @@ func TestSessionSweeperRemovesAgedSessionAndPreservesFresh(t *testing.T) {
 
 func TestSessionSweeperIgnoresHeartbeatKeys(t *testing.T) {
 	ctx := context.Background()
-	store, _, _, cleanup := newRedisEdgeStore(t)
+	store, client, _, cleanup := newRedisEdgeStore(t)
 	defer cleanup()
 
 	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
@@ -69,6 +80,7 @@ func TestSessionSweeperIgnoresHeartbeatKeys(t *testing.T) {
 		RetentionTTL: DefaultSessionRetentionTTL,
 		Interval:     time.Hour,
 		Now:          func() time.Time { return now },
+		LegalHolds:   audit.NewLegalHoldStoreFromClient(client),
 	})
 	if err != nil {
 		t.Fatalf("NewSessionSweeper: %v", err)
@@ -97,7 +109,7 @@ func TestSessionSweeperIgnoresHeartbeatKeys(t *testing.T) {
 
 func TestSessionSweeperAfterDeleteSessionIsIdempotent(t *testing.T) {
 	ctx := context.Background()
-	store, _, _, cleanup := newRedisEdgeStore(t)
+	store, client, _, cleanup := newRedisEdgeStore(t)
 	defer cleanup()
 
 	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
@@ -113,6 +125,7 @@ func TestSessionSweeperAfterDeleteSessionIsIdempotent(t *testing.T) {
 		RetentionTTL: DefaultSessionRetentionTTL,
 		Interval:     time.Hour,
 		Now:          func() time.Time { return now },
+		LegalHolds:   audit.NewLegalHoldStoreFromClient(client),
 	})
 	if err != nil {
 		t.Fatalf("NewSessionSweeper: %v", err)
@@ -166,10 +179,10 @@ func TestSessionSweeperRejectsInvalidOptions(t *testing.T) {
 func TestSessionSweeperSweepOnceReturnsContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	store, _, _, cleanup := newRedisEdgeStore(t)
+	store, client, _, cleanup := newRedisEdgeStore(t)
 	defer cleanup()
 
-	sweeper, err := NewSessionSweeper(store, SessionSweeperOptions{})
+	sweeper, err := NewSessionSweeper(store, SessionSweeperOptions{LegalHolds: audit.NewLegalHoldStoreFromClient(client)})
 	if err != nil {
 		t.Fatalf("NewSessionSweeper: %v", err)
 	}
@@ -223,5 +236,308 @@ func TestExpireApprovalsSweeper_RunsPeriodically(t *testing.T) {
 			t.Fatalf("approval %s did not expire via sweeper; got=%#v", approval.ApprovalRef, got)
 		case <-time.After(10 * time.Millisecond):
 		}
+	}
+}
+
+func TestSessionSweeperKeepsSessionsUnderLegalHold(t *testing.T) {
+	ctx := context.Background()
+	rec := &holdRecorder{passes: make(chan struct{}, 8)}
+	store, client, _, cleanup := newRedisEdgeStore(t, WithRecorder(rec))
+	defer cleanup()
+
+	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	aged := now.Add(-40 * 24 * time.Hour)
+	for _, tenant := range []string{"tenant-held", "tenant-broken", "tenant-free"} {
+		createSessionAndExecution(t, ctx, store, tenant, "sess-"+tenant, "exec-"+tenant, aged)
+		if _, err := store.EndSession(ctx, tenant, "sess-"+tenant, now.Add(-31*24*time.Hour), SessionStatusEnded); err != nil {
+			t.Fatalf("EndSession %s: %v", tenant, err)
+		}
+	}
+	holds := audit.NewLegalHoldStoreFromClient(client)
+	hold, err := holds.CreateHold(ctx, "tenant-held", "litigation", "test")
+	if err != nil {
+		t.Fatalf("CreateHold: %v", err)
+	}
+	// An unreadable hold record must never read as "no hold".
+	if err := client.SAdd(ctx, "audit:legal_holds:tenant-broken", "h-broken").Err(); err != nil {
+		t.Fatalf("sadd: %v", err)
+	}
+	if err := client.Set(ctx, "audit:legal_hold:h-broken", "{not json", 0).Err(); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	sweeper, err := NewSessionSweeper(store, SessionSweeperOptions{
+		Now:        func() time.Time { return now },
+		LegalHolds: holds,
+	})
+	if err != nil {
+		t.Fatalf("NewSessionSweeper: %v", err)
+	}
+
+	if swept, err := sweeper.SweepOnce(ctx); err != nil || swept != 1 {
+		t.Fatalf("SweepOnce = %d, %v; want only tenant-free swept", swept, err)
+	}
+	if got := rec.failClosed; len(got) != 1 || got[0] != "||retention_hold_unverifiable" {
+		t.Fatalf("fail-closed calls = %q, want one fixed-reason call for the malformed hold", got)
+	}
+	for tenant, want := range map[string]bool{"tenant-held": true, "tenant-broken": true, "tenant-free": false} {
+		if _, ok, err := store.GetSession(ctx, tenant, "sess-"+tenant); err != nil || ok != want {
+			t.Fatalf("%s session exists=%v err=%v, want %v", tenant, ok, err, want)
+		}
+	}
+
+	// Releasing the hold lets retention resume.
+	if err := holds.ReleaseHold(ctx, hold.ID, "test"); err != nil {
+		t.Fatalf("ReleaseHold: %v", err)
+	}
+	if swept, err := sweeper.SweepOnce(ctx); err != nil || swept != 1 {
+		t.Fatalf("SweepOnce after release = %d, %v; want tenant-held swept", swept, err)
+	}
+
+	// Without a legal hold store nothing is deleted at all.
+	noHolds, err := NewSessionSweeper(store, SessionSweeperOptions{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatalf("NewSessionSweeper: %v", err)
+	}
+	if swept, err := noHolds.SweepOnce(ctx); !errors.Is(err, errSessionSweepNoLegalHolds) || swept != 0 {
+		t.Fatalf("SweepOnce without holds = %d, %v; want errSessionSweepNoLegalHolds", swept, err)
+	}
+	if _, ok, err := store.GetSession(ctx, "tenant-broken", "sess-tenant-broken"); err != nil || !ok {
+		t.Fatalf("tenant-broken session exists=%v err=%v, want kept", ok, err)
+	}
+}
+
+// TestSessionSweeperKeepsSessionsWhenHoldStoreUnreachable covers the fail-closed
+// half of the legal_hold row in docs/contract/license-behavior.md ("Held
+// evidence is retained, or the incompatible operation fails closed") for Edge
+// sessions: while the legal hold store cannot be read, the sweeper keeps every
+// expired session with its execution, and logs why once per tenant per sweep.
+func TestSessionSweeperKeepsSessionsWhenHoldStoreUnreachable(t *testing.T) {
+	ctx := context.Background()
+	rec := &holdRecorder{passes: make(chan struct{}, 8)}
+	store, _, _, cleanup := newRedisEdgeStore(t, WithRecorder(rec))
+	defer cleanup()
+
+	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	for _, id := range []string{"1", "2"} {
+		createSessionAndExecution(t, ctx, store, "tenant-down", "sess-down-"+id, "exec-down-"+id, now.Add(-40*24*time.Hour))
+	}
+	holdRedis := miniredis.RunT(t)
+	holdRedis.SetError("ERR hold store unavailable")
+	holdClient := redis.NewClient(&redis.Options{Addr: holdRedis.Addr()})
+	defer func() { _ = holdClient.Close() }()
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	sweeper, err := NewSessionSweeper(store, SessionSweeperOptions{
+		Now:        func() time.Time { return now },
+		LegalHolds: audit.NewLegalHoldStoreFromClient(holdClient),
+	})
+	if err != nil {
+		t.Fatalf("NewSessionSweeper: %v", err)
+	}
+	if swept, err := sweeper.SweepOnce(ctx); err != nil || swept != 0 {
+		t.Fatalf("SweepOnce = %d, %v; want nothing swept", swept, err)
+	}
+	if got := rec.failClosed; len(got) != 2 || got[0] != "||retention_hold_unverifiable" || got[1] != got[0] {
+		t.Fatalf("fail-closed calls = %q, want one fixed-reason call per retained session", got)
+	}
+	for _, id := range []string{"1", "2"} {
+		if _, ok, err := store.GetSession(ctx, "tenant-down", "sess-down-"+id); err != nil || !ok {
+			t.Fatalf("session %s exists=%v err=%v, want kept", id, ok, err)
+		}
+		if _, ok, err := store.GetExecution(ctx, "tenant-down", "exec-down-"+id); err != nil || !ok {
+			t.Fatalf("execution %s exists=%v err=%v, want kept", id, ok, err)
+		}
+	}
+	out := logs.String()
+	if got := strings.Count(out, "keeping tenant's expired sessions"); got != 1 {
+		t.Fatalf("hold-check warnings = %d, want 1 per tenant per sweep; logs:\n%s", got, out)
+	}
+	if !strings.Contains(out, "tenant_id=tenant-down") || !strings.Contains(out, "hold_check_error=") {
+		t.Fatalf("warning lacks the tenant or the hold-check error; logs:\n%s", out)
+	}
+}
+
+// delHook runs before or after once, around the first command or pipeline that
+// sends a DEL. A Tx clones the client's hooks, so a WATCH transaction's
+// MULTI/EXEC reaches ProcessPipelineHook. A set watchErr fails every WATCH.
+type delHook struct {
+	once          sync.Once
+	before, after func()
+	watchErr      error
+}
+
+func (h *delHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (h *delHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if h.watchErr != nil && cmd.Name() == "watch" {
+			return h.watchErr
+		}
+		return h.around([]redis.Cmder{cmd}, func() error { return next(ctx, cmd) })
+	}
+}
+
+func (h *delHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		return h.around(cmds, func() error { return next(ctx, cmds) })
+	}
+}
+
+func (h *delHook) around(cmds []redis.Cmder, send func() error) error {
+	first := false
+	for _, cmd := range cmds {
+		if cmd.Name() == "del" {
+			h.once.Do(func() { first = true })
+			break
+		}
+	}
+	if first && h.before != nil {
+		h.before()
+	}
+	err := send()
+	if first && h.after != nil {
+		h.after()
+	}
+	return err
+}
+
+// holdRecorder records fail-closed calls and signals each session cleanup pass.
+type holdRecorder struct {
+	abortRecorder
+	failClosed []string
+	passes     chan struct{}
+}
+
+func (r *holdRecorder) RecordFailClosed(tenant, mode, reason string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.failClosed = append(r.failClosed, tenant+"|"+mode+"|"+reason)
+}
+
+func (r *holdRecorder) ObserveSessionCleanupDuration(time.Duration) { r.passes <- struct{}{} }
+
+// holdRace is one expired session of tenant-race with executions exec-race-000
+// onwards. The sweeper's hold store shares the Edge client, so the client's
+// hooks see its transactions. hold commits a legal hold through a second
+// client, because a transaction holds the Edge client's only connection.
+type holdRace struct {
+	store   *RedisStore
+	client  *redis.Client
+	rec     *holdRecorder
+	sweeper *SessionSweeper
+	hold    func()
+}
+
+func newHoldRace(t *testing.T, executions int, opts ...StoreOption) *holdRace {
+	t.Helper()
+	ctx := context.Background()
+	f := &holdRace{rec: &holdRecorder{passes: make(chan struct{}, 4)}}
+	store, client, mr, cleanup := newRedisEdgeStore(t, append(opts, WithRecorder(f.rec))...)
+	t.Cleanup(cleanup)
+	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	started := now.Add(-40 * 24 * time.Hour)
+	createSessionAndExecution(t, ctx, store, "tenant-race", "sess-race", "exec-race-000", started)
+	for i := 1; i < executions; i++ {
+		execution := validStoreExecution("tenant-race", "sess-race", fmt.Sprintf("exec-race-%03d", i), started.Add(time.Duration(i+1)*time.Second), nil)
+		if err := store.CreateExecution(ctx, execution); err != nil {
+			t.Fatalf("CreateExecution %d: %v", i, err)
+		}
+	}
+	sweeper, err := NewSessionSweeper(store, SessionSweeperOptions{
+		Now:        func() time.Time { return now },
+		LegalHolds: audit.NewLegalHoldStoreFromClient(client),
+	})
+	if err != nil {
+		t.Fatalf("NewSessionSweeper: %v", err)
+	}
+	other := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = other.Close() })
+	f.store, f.client, f.sweeper = store, client, sweeper
+	f.hold = func() {
+		if _, err := audit.NewLegalHoldStoreFromClient(other).CreateHold(ctx, "tenant-race", "litigation", "test"); err != nil {
+			t.Errorf("CreateHold: %v", err)
+		}
+	}
+	return f
+}
+
+// assertKept fails unless the session and each listed execution exist exactly
+// when wanted.
+func (f *holdRace) assertKept(t *testing.T, session bool, executions map[string]bool) {
+	t.Helper()
+	ctx := context.Background()
+	if _, ok, err := f.store.GetSession(ctx, "tenant-race", "sess-race"); err != nil || ok != session {
+		t.Fatalf("session exists=%v err=%v, want %v", ok, err, session)
+	}
+	for id, want := range executions {
+		if _, ok, err := f.store.GetExecution(ctx, "tenant-race", id); err != nil || ok != want {
+			t.Fatalf("execution %s exists=%v err=%v, want %v", id, ok, err, want)
+		}
+	}
+}
+
+func TestSessionSweeperKeepsSessionWhenHoldCommitsBeforeDelete(t *testing.T) {
+	f := newHoldRace(t, 1)
+	f.client.AddHook(&delHook{before: f.hold})
+	if swept, err := f.sweeper.SweepOnce(context.Background()); swept != 0 || err != nil {
+		t.Fatalf("SweepOnce = %d, %v; want 0, nil", swept, err)
+	}
+	f.assertKept(t, true, map[string]bool{"exec-race-000": true})
+}
+
+func TestSessionSweeperStopsAtHoldCreatedBetweenPages(t *testing.T) {
+	t.Run("foreground", func(t *testing.T) {
+		f := newHoldRace(t, 1)
+		f.client.AddHook(&delHook{after: f.hold})
+		if swept, err := f.sweeper.SweepOnce(context.Background()); swept != 0 || err != nil {
+			t.Fatalf("SweepOnce = %d, %v; want 0, nil", swept, err)
+		}
+		f.assertKept(t, true, map[string]bool{"exec-race-000": false})
+	})
+	t.Run("background_continuation", func(t *testing.T) {
+		var skew atomic.Int64
+		t0 := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+		clock := func() time.Time { return t0.Add(time.Duration(skew.Load())) }
+		f := newHoldRace(t, 101, WithMaxExecutionsPerSession(101), WithClock(clock))
+		// Once the first page of 100 commits, a hold lands and the deadline passes.
+		f.client.AddHook(&delHook{after: func() { f.hold(); skew.Store(int64(31 * time.Second)) }})
+		if _, err := f.sweeper.SweepOnce(context.Background()); !errors.Is(err, ErrSessionCleanupDeadlineExceeded) {
+			t.Fatalf("SweepOnce error = %v, want ErrSessionCleanupDeadlineExceeded", err)
+		}
+		for pass := 1; pass <= 2; pass++ {
+			select {
+			case <-f.rec.passes:
+			case <-time.After(10 * time.Second):
+				t.Fatalf("cleanup pass %d did not finish", pass)
+			}
+		}
+		want := map[string]bool{}
+		for i := 0; i <= 100; i++ {
+			want[fmt.Sprintf("exec-race-%03d", i)] = i == 100
+		}
+		f.assertKept(t, true, want)
+	})
+}
+
+func TestSessionSweeperCountsUnverifiableHoldWithoutTenantData(t *testing.T) {
+	f := newHoldRace(t, 1)
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	f.client.AddHook(&delHook{watchErr: errors.New("ERR injected watch failure")})
+	if swept, err := f.sweeper.SweepOnce(context.Background()); swept != 0 || err != nil {
+		t.Fatalf("SweepOnce = %d, %v; want 0, nil", swept, err)
+	}
+	f.assertKept(t, true, map[string]bool{"exec-race-000": true})
+	if got := f.rec.failClosed; len(got) != 1 || got[0] != "||retention_hold_unverifiable" {
+		t.Fatalf("fail-closed calls = %q, want one without tenant, reason retention_hold_unverifiable", got)
+	}
+	if out := logs.String(); !strings.Contains(out, "reason=retention_hold_unverifiable") ||
+		strings.Contains(out, "tenant-race") || strings.Contains(out, "edge:") || strings.Contains(out, "injected") {
+		t.Fatalf("want a fixed-reason warning without tenant, keys or raw error; logs: %s", out)
 	}
 }

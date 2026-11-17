@@ -28,8 +28,11 @@ go run .
 
 ## Run in Docker
 
+The Dockerfile copies `go.mod`, `sdk/` and this example, so build it from the
+repo root:
+
 ```bash
-docker build -t cordum-hello-worker-go .
+docker build -f examples/hello-worker-go/Dockerfile -t cordum-hello-worker-go .
 docker run --rm \
   -e NATS_URL=nats://host.docker.internal:4222 \
   -e REDIS_URL=redis://:cordum-dev@host.docker.internal:6379/0 \

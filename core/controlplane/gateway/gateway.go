@@ -1022,6 +1022,7 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	edgeSweeper, err := edgecore.NewSessionSweeper(edgeStore, edgecore.SessionSweeperOptions{
 		RetentionTTL: edgeRetentionTTL,
 		Interval:     edgeSweepInterval,
+		LegalHolds:   s.legalHoldStore,
 	})
 	if err != nil {
 		return fmt.Errorf("init edge session sweeper: %w", err)
@@ -1250,7 +1251,7 @@ func newGatewayEdgeStore(client redis.UniversalClient, reg prometheus.Registerer
 		edgecore.WithRecorder(recorder),
 		edgecore.WithApprovalMaxTTL(approvalMaxTTL),
 		// The store enforces the same execution cap as the Edge executions
-		// API pre-check.
+		// API pre-check, and MCP sessions rotate before it (ExecutionCaps).
 		edgecore.WithMaxExecutionsPerSession(edgeMaxExecutionsPerSession()),
 	)
 	return store, recorder

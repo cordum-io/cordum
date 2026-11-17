@@ -13,7 +13,6 @@ from ...models.list_shadow_agent_findings_source_type import ListShadowAgentFind
 from ...models.list_shadow_agent_findings_status import ListShadowAgentFindingsStatus
 from ...models.shadow_agent_finding_page import ShadowAgentFindingPage
 from ...types import UNSET, Unset
-from dateutil.parser import isoparse
 from typing import cast
 from typing import cast, List
 from typing import Dict

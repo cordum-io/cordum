@@ -3,7 +3,10 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"log/slog"
@@ -457,28 +460,40 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		// VS Code's type:"http" config POSTs neither X-MCP-Session-ID nor
 		// X-Copilot-Session-Id, which would leave copilot_session_id empty —
 		// so the transcript is dropped and cordum_submit_job misses its
-		// session_id label. Mint the id here in the transport's own format so
-		// the audit session, trace parents, and spawned-job label agree. It is
-		// deliberately NOT written back onto the request: the transport only
-		// accepts session ids it issued to this caller over SSE (anything else
-		// is "session not found") and routes a session-less POST under its own
-		// one-shot id. Scoped to POST so the SSE GET keeps its server-assigned
-		// session id.
-		if transportSessionID == "" && r.Method == http.MethodPost {
-			transportSessionID = "direct-" + uuid.NewString()
+		// session_id label. Mint a one-shot Edge session id here in the
+		// transport's own format for the trace parents. It is deliberately NOT
+		// written back onto the request: the transport only accepts session
+		// ids it issued to this caller over SSE (anything else is "session not
+		// found") and routes a session-less POST under its own one-shot id.
+		// Scoped to POST so the SSE GET keeps its server-assigned session id.
+		// The Edge session stays one-shot because the Edge store caps events
+		// per execution and executions per session; mcpApprovalClaims lets
+		// the caller's `_approval_ref` retry claim an approval minted under an
+		// earlier one-shot session. An SSE session rotates its Edge session
+		// and execution before those caps bite (mcpEdgeTrace).
+		sessionless := transportSessionID == "" && r.Method == http.MethodPost
+		// mcpSessionID is the MCP session the call's Copilot session and
+		// prompt-injection taint are kept for. A session-less caller gets one
+		// per caller and agent, so not keeping a session neither splits its
+		// transcript nor sheds its taint.
+		mcpSessionID := transportSessionID
+		if sessionless {
+			transportSessionID = mcpDirectSessionPrefix + uuid.NewString()
+			mcpSessionID = mcpSessionlessCopilotSessionID(r, agentID, transportSessionID)
 		}
 		if transportSessionID != "" {
-			executionID := "mcp-" + transportSessionID
-			if err := s.ensureMCPHTTPTraceParents(r.Context(), tenantID, agentID, authenticatedPrincipal, transportSessionID, executionID); err != nil {
+			sessionID, executionID, err := s.mcpEdgeTrace(r.Context(), tenantID, agentID, authenticatedPrincipal, transportSessionID)
+			if err != nil {
 				writeErrorJSON(w, http.StatusInternalServerError, "mcp trace unavailable")
 				return
 			}
 			mcpCtx = mcp.WithCallMetadata(mcpCtx, mcp.CallMetadata{
-				Tenant:      tenantID,
-				Principal:   authenticatedPrincipal,
-				AgentID:     agentID,
-				SessionID:   transportSessionID,
-				ExecutionID: executionID,
+				Tenant:       tenantID,
+				Principal:    authenticatedPrincipal,
+				AgentID:      agentID,
+				SessionID:    sessionID,
+				ExecutionID:  executionID,
+				MCPSessionID: mcpSessionID,
 			})
 		}
 		// Also stash tenant for the mcp.tool_called audit hook, which
@@ -487,11 +502,12 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		// identity types).
 		mcpCtx = mcp.WithTenant(mcpCtx, tenantID)
 		// Thread the Copilot session id (explicit header → transport session
-		// id, now always populated for POSTs) so tool invocations can be
-		// grouped into an audit session and spawned jobs labelled with it.
+		// id, or for a session-less POST one id per caller and agent) so tool
+		// invocations can be grouped into an audit session and spawned jobs
+		// labelled with it.
 		copilotSessionID := strings.TrimSpace(r.Header.Get(mcpCopilotSessionIDHeader))
 		if copilotSessionID == "" {
-			copilotSessionID = transportSessionID
+			copilotSessionID = mcpSessionID
 		}
 		if copilotSessionID != "" {
 			mcpCtx = mcp.WithCopilotSessionID(mcpCtx, copilotSessionID)
@@ -508,6 +524,40 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// mcpDirectSessionPrefix marks the one-shot Edge session mcpAuth gives a POST
+// that names no MCP session; SSE session ids are bare UUIDs.
+const mcpDirectSessionPrefix = "direct-"
+
+// mcpSessionlessCopilotSessionID groups a session-less caller's tool calls
+// into one Copilot session and one session taint per caller and agent instead
+// of one per POST. It derives from the session owner key, so two callers never
+// share one; callers the auth layer cannot tell apart (no credential, no
+// principal) keep the per-POST fallback.
+func mcpSessionlessCopilotSessionID(r *http.Request, agentID, fallback string) string {
+	if submitterIdentity(r) == "" {
+		return fallback
+	}
+	sum := sha256.Sum256([]byte(mcpSessionOwner(r) + "\x00" + agentID))
+	return mcpDirectSessionPrefix + hex.EncodeToString(sum[:16])
+}
+
+// mcpApprovalClaims binds an `_approval_ref` claim to the Edge session and
+// execution of the approval it names, when that approval was minted for this
+// caller acting as the same agent (mcpApprovalIsCallers). The retry usually
+// arrives in another Edge session: a session-less POST runs in a one-shot
+// session. A claim for anyone else's approval keeps the caller's own tuple,
+// which the store refuses (tuple_mismatch); the store still checks args,
+// policy snapshot, status, expiry and self-approval. The embedded store keeps
+// GetApproval, which ProcessApprovalClaim reads the parent event through.
+type mcpApprovalClaims struct{ edge.Store }
+
+func (c mcpApprovalClaims) ClaimApproval(ctx context.Context, req edge.ApprovalClaimRequest) (*edge.EdgeApproval, bool, error) {
+	if approval, found, err := c.GetApproval(ctx, req.TenantID, req.ApprovalRef); err == nil && found && mcpApprovalIsCallers(ctx, approval) {
+		req.SessionID, req.ExecutionID, req.EventID = approval.SessionID, approval.ExecutionID, approval.EventID
+	}
+	return c.Store.ClaimApproval(ctx, req)
+}
+
 // mcpSessionOwner is the owner key MCP HTTP/SSE sessions are bound to: the
 // request's tenant, auth source, and submitterIdentity (credential hash +
 // principal, the caller identity the self-approval guard compares). The auth
@@ -522,7 +572,100 @@ func mcpSessionOwner(r *http.Request) string {
 	return fmt.Sprintf("%q %q %q", tenantFromRequest(r), ac.AuthSource, submitterIdentity(r))
 }
 
-func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentID, principalID, sessionID, executionID string) error {
+// mcpEdgeTraceCaps is what mcpEdgeTrace needs from the Edge store to rotate
+// (edge.RedisStore). Without it an MCP session stays in one execution.
+type mcpEdgeTraceCaps interface {
+	ExecutionCaps() (maxExecutions, maxEvents int)
+	CountExecutionEvents(ctx context.Context, tenantID, executionID string) (int64, error)
+}
+
+// mcpSessionLabel links each Edge session an MCP session is recorded in to it.
+const mcpSessionLabel = "mcp_session_id"
+
+// mcpEdgeTrace returns the Edge session and execution the next call of MCP
+// session mcpSessionID records into, creating them when missing. The Edge
+// store caps executions per session and events per execution, and an
+// execution past the approval validation cap can neither mint nor claim an
+// approval, so a long-lived SSE session moves on before the caps bite: to a
+// new execution once the current one holds 80% of its event budget, and to
+// the next Edge session (<id>.s1, <id>.s2, ..., labelled mcp_session_id) once
+// the current one has no execution left. Earlier sessions and executions stay
+// running, so approvals minted in them stay claimable: mcpApprovalClaims binds
+// a claim to the approval's own session and execution.
+// ponytail: stateless, so each call re-reads the count and size of every full
+// Edge session before the current one (two O(1) reads each, one Edge session
+// per ~10k calls), and executions added to an MCP Edge session through the
+// Edge API make calls open new executions until that session fills. Track the
+// current session and execution per SSE session if either matters.
+func (s *server) mcpEdgeTrace(ctx context.Context, tenantID, agentID, principalID, mcpSessionID string) (sessionID, executionID string, err error) {
+	caps, rotates := s.edgeStore.(mcpEdgeTraceCaps)
+	for gen := 0; ; {
+		if err := ctx.Err(); err != nil {
+			return "", "", err
+		}
+		sessionID = mcpSessionID
+		if gen > 0 {
+			sessionID = fmt.Sprintf("%s.s%d", mcpSessionID, gen)
+		}
+		executionID = mcpEdgeExecutionID(sessionID, 0)
+		if rotates {
+			maxExecutions, maxEvents := caps.ExecutionCaps()
+			n, err := s.edgeStore.CountSessionExecutions(ctx, tenantID, sessionID)
+			if err != nil {
+				return "", "", err
+			}
+			if n > 0 {
+				executionID = mcpEdgeExecutionID(sessionID, n-1)
+				events, err := caps.CountExecutionEvents(ctx, tenantID, executionID)
+				if err != nil {
+					return "", "", err
+				}
+				if events >= max(int64(maxEvents)*4/5, 1) {
+					if n >= int64(maxExecutions) {
+						gen++
+						continue
+					}
+					executionID = mcpEdgeExecutionID(sessionID, n)
+				}
+			}
+		}
+		err = s.ensureMCPHTTPTraceParents(ctx, tenantID, agentID, principalID, mcpSessionID, sessionID, executionID)
+		if errors.Is(err, edge.ErrSessionExecutionFanoutExceeded) {
+			gen++
+			continue
+		}
+		if err != nil {
+			return "", "", err
+		}
+		if rotates {
+			// The count above may be stale: another caller can create and fill
+			// its successor while this call is selecting it. Recheck the actual
+			// selected execution, then reread this session on concurrent progress.
+			_, maxEvents := caps.ExecutionCaps()
+			events, err := caps.CountExecutionEvents(ctx, tenantID, executionID)
+			if err != nil {
+				return "", "", err
+			}
+			if events >= max(int64(maxEvents)*4/5, 1) {
+				continue
+			}
+		}
+		return sessionID, executionID, nil
+	}
+}
+
+// mcpEdgeExecutionID names execution n of an MCP Edge session.
+func mcpEdgeExecutionID(sessionID string, n int64) string {
+	if n == 0 {
+		return "mcp-" + sessionID
+	}
+	return fmt.Sprintf("mcp-%s.e%d", sessionID, n)
+}
+
+// ensureMCPHTTPTraceParents creates the Edge session and execution an MCP call
+// records into when missing. A concurrent call of the same MCP session may
+// create either first; that counts as created.
+func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentID, principalID, mcpSessionID, sessionID, executionID string) error {
 	if s == nil || s.edgeStore == nil || sessionID == "" || executionID == "" {
 		return nil
 	}
@@ -530,6 +673,8 @@ func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentI
 	if _, ok, err := s.edgeStore.GetSession(ctx, tenantID, sessionID); err != nil {
 		return err
 	} else if !ok {
+		sessionLabels := mcpTraceParentLabels(ctx, agentID)
+		sessionLabels[mcpSessionLabel] = mcpSessionID
 		if err := s.edgeStore.CreateSession(ctx, edge.EdgeSession{
 			SessionID: sessionID, TenantID: tenantID, PrincipalID: principalID,
 			PrincipalType: edge.PrincipalTypeService, AgentProduct: "mcp-gateway",
@@ -537,20 +682,26 @@ func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentI
 			PolicyMode: edge.PolicyModeEnforce, Status: edge.SessionStatusRunning,
 			StartedAt: now, EnforcementLayers: edge.EnforcementLayers{"mcp": true},
 			RiskSummary: edge.RiskSummary{MaxRisk: edge.RiskLevelLow},
-			Labels:      mcpTraceParentLabels(ctx, agentID),
+			Labels:      sessionLabels,
 		}); err != nil {
-			return err
+			if _, ok, _ := s.edgeStore.GetSession(ctx, tenantID, sessionID); !ok {
+				return err
+			}
 		}
 	}
 	if _, ok, err := s.edgeStore.GetExecution(ctx, tenantID, executionID); err != nil {
 		return err
 	} else if !ok {
-		return s.edgeStore.CreateExecution(ctx, edge.AgentExecution{
+		if err := s.edgeStore.CreateExecution(ctx, edge.AgentExecution{
 			ExecutionID: executionID, SessionID: sessionID, TenantID: tenantID,
 			Adapter: edge.AdapterMCPGateway, Mode: edge.ExecutionModeLocalDev,
 			WorkerID: principalID, Status: edge.ExecutionStatusRunning,
 			StartedAt: now, Labels: mcpTraceParentLabels(ctx, agentID),
-		})
+		}); err != nil {
+			if _, ok, _ := s.edgeStore.GetExecution(ctx, tenantID, executionID); !ok {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -735,25 +886,50 @@ func (s *server) loadMCPConfig(ctx context.Context) mcpGatewayConfig {
 	return cfg
 }
 
+// applyMCPEnvFallbacks reads CORDUM_MCP_ENABLED, CORDUM_MCP_TRANSPORT and
+// CORDUM_MCP_POLICY_GATE_ENABLED only for an mcp.* key the stored config does
+// not set. A stored key always wins, even one the gateway cannot read (null, a
+// number, an unknown string, or an "mcp" value that is not an object): an
+// unreadable mcp.enabled keeps MCP disabled, an unreadable
+// mcp.policy_gate_enabled turns the policy gate on, and a stored empty
+// mcp.transport keeps the default transport.
 func applyMCPEnvFallbacks(cfg *mcpGatewayConfig, effective map[string]any) {
 	if cfg == nil {
 		return
 	}
-	if _, ok := lookupBoolPath(effective, "mcp", "enabled"); !ok {
-		if v, okEnv := parseBoolString(os.Getenv("CORDUM_MCP_ENABLED")); okEnv {
-			cfg.Enabled = v
+	if mcpStoredKeyPresent(effective, "enabled") {
+		if _, ok := lookupBoolPath(effective, "mcp", "enabled"); !ok {
+			cfg.Enabled = false
 		}
+	} else if v, okEnv := parseBoolString(os.Getenv("CORDUM_MCP_ENABLED")); okEnv {
+		cfg.Enabled = v
 	}
-	if transport, ok := lookupStringPath(effective, "mcp", "transport"); !ok || transport == "" {
+	if !mcpStoredKeyPresent(effective, "transport") {
 		if v := strings.TrimSpace(os.Getenv("CORDUM_MCP_TRANSPORT")); v != "" {
 			cfg.Transport = v
 		}
 	}
-	if _, ok := lookupBoolPath(effective, "mcp", "policy_gate_enabled"); !ok {
-		if v, okEnv := parseBoolString(os.Getenv("CORDUM_MCP_POLICY_GATE_ENABLED")); okEnv {
-			cfg.PolicyGateEnabled = v
+	if mcpStoredKeyPresent(effective, "policy_gate_enabled") {
+		if _, ok := lookupBoolPath(effective, "mcp", "policy_gate_enabled"); !ok {
+			cfg.PolicyGateEnabled = true
 		}
+	} else if v, okEnv := parseBoolString(os.Getenv("CORDUM_MCP_POLICY_GATE_ENABLED")); okEnv {
+		cfg.PolicyGateEnabled = v
 	}
+}
+
+// mcpStoredKeyPresent reports whether the stored config sets mcp.<key>,
+// readable or not. A stored "mcp" that is not an object sets every key.
+func mcpStoredKeyPresent(effective map[string]any, key string) bool {
+	if _, ok := lookupAnyPath(effective, "mcp", key); ok {
+		return true
+	}
+	raw, ok := lookupAnyPath(effective, "mcp")
+	if !ok {
+		return false
+	}
+	_, isObject := raw.(map[string]any)
+	return !isObject
 }
 
 func (s *server) mcpHTTPTransport() *mcp.HTTPTransport {
