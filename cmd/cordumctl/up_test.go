@@ -48,7 +48,7 @@ func TestEnsureDevBootstrapEnvCreatesAndPreserves(t *testing.T) {
 		"CORDUM_API_KEY=" + res.APIKey,
 		"REDIS_PASSWORD=cordum_redis_",
 		"CORDUM_ADMIN_USERNAME=admin",
-		"CORDUM_ADMIN_PASSWORD=cordum_admin_",
+		"CORDUM_ADMIN_PASSWORD=Cordum_admin_1_",
 		"CORDUM_MCP_ENABLED=true",
 		"CORDUM_MCP_POLICY_GATE_ENABLED=true",
 	} {
@@ -113,8 +113,8 @@ func TestEnsureDevBootstrapEnvPreservesExistingEnvFileAndProcessEnv(t *testing.T
 	}
 }
 
-// .env.example ships CORDUM_API_KEY= (empty). readEnvFile reads a key's first
-// definition, so the generated key must replace that line, not follow it.
+// .env.example ships CORDUM_API_KEY= (empty). Fill that definition rather
+// than accumulating duplicate credential definitions on each bootstrap.
 func TestEnsureDevBootstrapEnvFillsEmptyDefinitionInPlace(t *testing.T) {
 	dir := t.TempDir()
 	envPath := filepath.Join(dir, ".env")
