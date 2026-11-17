@@ -69,6 +69,21 @@ func sameConfigJSON(a, b any) bool {
 	return bytes.Equal(canonical[0], canonical[1])
 }
 
+func (s *server) configScopeID(r *http.Request, scope configsvc.Scope, scopeID string) (string, error) {
+	switch scope {
+	case configsvc.ScopeOrg:
+		return s.resolveTenant(r, scopeID)
+	case configsvc.ScopeTeam, configsvc.ScopeWorkflow, configsvc.ScopeStep:
+		tenant, err := s.resolveTenant(r, "")
+		if err != nil {
+			return "", err
+		}
+		return configsvc.TenantScopeID(scope, tenant, scopeID), nil
+	default:
+		return scopeID, nil
+	}
+}
+
 func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermConfigWrite, []string{"admin"}, s.configSvc) {
 		return
@@ -114,13 +129,10 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	scope := configsvc.Scope(scopeStr)
-	if scope == configsvc.ScopeOrg {
-		tenant, err := s.resolveTenant(r, scopeID)
-		if err != nil {
-			writeJSONError(w, http.StatusForbidden, errorCodeConfigKeyForbidden, "tenant access denied")
-			return
-		}
-		scopeID = tenant
+	scopeID, err := s.configScopeID(r, scope, scopeID)
+	if err != nil {
+		writeJSONError(w, http.StatusForbidden, errorCodeConfigKeyForbidden, "tenant access denied")
+		return
 	}
 	if scope == configsvc.ScopeSystem && (scopeID == "" || scopeID == "default") {
 		if _, hasBundles := data[packs.PolicyConfigKey]; hasBundles {
@@ -128,7 +140,7 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	err := s.configSvc.SetWithRetry(r.Context(), scope, scopeID, 3, func(doc *configsvc.Document) error {
+	err = s.configSvc.SetWithRetry(r.Context(), scope, scopeID, 3, func(doc *configsvc.Document) error {
 		// Compare against the revision being replaced, including on CAS retries.
 		if key := managedConfigKey(scope, scopeID); key != "" {
 			if value, present := data[key]; present && !sameConfigJSON(value, doc.Data[key]) {
@@ -155,6 +167,8 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("config managed key refused", "scope", scopeStr, "scope_id", scopeID, "key", managedConfigKey(scope, scopeID), "actor", policybundles.PolicyActorID(r))
 			s.appendAuditEntryNamed(r.Context(), "config.set.rejected", "config", scopeStr+"/"+scopeID, scopeStr, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), msg)
 			writeJSONError(w, http.StatusBadRequest, errorCodeConfigKeyForbidden, "config.managed_key: "+msg)
+		} else if errors.Is(err, configsvc.ErrTenantMismatch) {
+			writeJSONError(w, http.StatusForbidden, errorCodeConfigKeyForbidden, "tenant access denied")
 		} else if errors.Is(err, configsvc.ErrRevisionConflict) {
 			writeJSONError(w, http.StatusConflict, errorCodeConfigVersionConflict, "config update conflict — retry")
 		} else {
@@ -201,13 +215,10 @@ func (s *server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if configsvc.Scope(scope) == configsvc.ScopeOrg {
-		tenant, err := s.resolveTenant(r, scopeID)
-		if err != nil {
-			writeJSONError(w, http.StatusForbidden, errorCodeConfigKeyForbidden, "tenant access denied")
-			return
-		}
-		scopeID = tenant
+	scopeID, err := s.configScopeID(r, configsvc.Scope(scope), scopeID)
+	if err != nil {
+		writeJSONError(w, http.StatusForbidden, errorCodeConfigKeyForbidden, "tenant access denied")
+		return
 	}
 	doc, err := s.configSvc.Get(r.Context(), configsvc.Scope(scope), scopeID)
 	if err != nil {
