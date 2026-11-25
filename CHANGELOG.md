@@ -12,17 +12,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   namespace. cordum-hook adds a keyed digest of them to the approval's action identity
   and checks them again before an allowed command starts, so a change after the
   approval blocks the command until it is approved again. The hook labels a call
-  `artifact.binding=bound` only when it recognizes the program and every argument:
-  `kubectl apply`, `create` (from files, or a configmap or secret), `get` or `exec`
+  `artifact.binding=bound` only for one simple command of plain literal words whose
+  program and every argument it recognizes: `kubectl apply`, `create` (from files,
+  or a configmap or secret) or `get`
   with only the `--context`, `--namespace`/`-n`, `--kubeconfig`, `-f`/`--filename`,
   `--from-file`, `--from-env-file` and `-R`/`--recursive` flags, or `sh`, `bash`,
   `zsh`, `dash`, `python`, `node`, `perl` or `ruby` running a script file from the
   working directory. Any other call is labelled `artifact.binding=unbound` with an
   `artifact.unbound_reason` (an unrecognized command, inline code, shell syntax, a URL
-  or network path, a Windows path that depends on the current drive, a directory, an
-  unreadable or oversized file, files that take over a second to read, an unknown kube
-  context, or a test or build command), so a policy can deny it, and its digest still
-  covers the files it names. Files a script or tool opens on its own are not covered
+  or network path, a Windows device or path that depends on the current drive, a
+  directory, an unreadable or oversized file, a name under /proc, /dev or /sys, by any
+  spelling or symlink, a Windows device or namespace link target, a read-size mismatch,
+  files that take over a second to read, an unknown
+  kube context, or a test or build command), so a policy can deny it. Where inputs can
+  be collected, the digest still covers the files it names. PowerShell, Monitor and
+  any other non-Bash tool carrying a command are labelled unbound without a digest.
+  Files a script or tool opens on its own are not covered
   (task-14d105fb).
 - Python SDK: remove template-unused imports during generation with the pinned Ruff
   cleanup hook before formatting, without changing API or version markers (task-90b8033a).
@@ -52,6 +57,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Documentation
 
+- Metric names: `docs/production.md`, `docs/output-safety.md`, `docs/k8s-deployment.md`, `docs/troubleshooting.md`, `docs/scheduler.md`, `docs/release-notes/unreleased.md` and `ROADMAP.md` now use the exported names, for example `cordum_scheduler_output_policy_skipped_total`, `cordum_scheduler_scheduler_dispatch_latency_seconds` and `cordum_api_gateway_http_requests_total`. Names that no Cordum process exports are removed: two rows of the `docs/k8s-deployment.md` metrics table, and the DLQ-depth and worker-heartbeat example alert rules. The workflow metrics in `docs/production.md` are marked as not exported (task-5d45fd40).
 - Input fail mode: `docs/safety-kernel.md` section 10 now says when a change to `scheduler.input_fail_mode` or `scheduler.input_fail_open_scope` takes effect: on a config-change notification or the 30-second reload, after a cached tenant entry is refreshed, and never for a tenant whose configuration has not loaded, whose jobs are requeued even in `open` mode. `ROADMAP.md` names the counter `cordum_scheduler_input_fail_open_total` and says open input mode admits only listed topics (task-c399879b).
 - Metric names: `docs/scheduler-internals.md` section 10, `docs/CORE.md` and `docs/AGENT_PROTOCOL.md` now use the exported names, for example `cordum_scheduler_jobs_received_total`, `cordum_scheduler_scheduler_dispatch_latency_seconds` and `cordum_scheduler_validation_rejections_total` (task-f8ddafe6).
 - Security contract: `docs/contract/README.md` indexes the M0 contract artifacts, names the check for each, states contract version 1 and lists the enforced-cell test gaps at the freeze. New cross-check tests in `tests/contract` reject a `verified` claim that names a `violated` invariant, and a claim invariant id missing from `invariants.yaml` (task-e2f303cd).

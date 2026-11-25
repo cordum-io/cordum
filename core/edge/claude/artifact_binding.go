@@ -32,7 +32,7 @@ const (
 	artifactBindingBudget = time.Second
 	// artifactShellSyntax makes the shell, not the command line, decide what
 	// a command reads.
-	artifactShellSyntax = "'\"\\;&|<>`$(){}*?[~\n"
+	artifactShellSyntax = "'\"\\;&|<>`$(){}*?[~\n#!^"
 )
 
 // artifactInputs is what the binding digest covers. Files maps each resolved
@@ -44,11 +44,18 @@ type artifactInputs struct {
 	KubeNamespace string            `json:"kube_namespace,omitempty"`
 }
 
-// artifactBindingLabels returns the binding labels of a PreToolUse Bash call,
-// and nil for any other hook call. family is the call's command.family label.
+// artifactBindingLabels returns binding labels for PreToolUse commands. Only
+// Bash is modeled; other command tools are unbound. Non-command hooks get no
+// labels. family is the call's command.family label.
 func artifactBindingLabels(ctx context.Context, input HookInput, env map[string]string, family string) map[string]string {
-	if input.HookEventName != "PreToolUse" || !strings.EqualFold(input.ToolName, "Bash") {
+	if input.HookEventName != "PreToolUse" {
 		return nil
+	}
+	if !strings.EqualFold(input.ToolName, "Bash") {
+		if _, runs := input.ToolInput["command"]; !runs {
+			return nil
+		}
+		return map[string]string{"artifact.binding": "unbound", "artifact.unbound_reason": "unrecognized"}
 	}
 	command, _ := input.ToolInput["command"].(string)
 	inputs, reason := artifactWithinBudget(ctx, func() (*artifactInputs, string) {
@@ -142,6 +149,9 @@ func artifactCollect(command, cwd string, env map[string]string) (*artifactInput
 	// Bash splits words on space and tab only (newline is rejected above), so
 	// a field here is the word bash will see.
 	fields := strings.FieldsFunc(command, func(r rune) bool { return r == ' ' || r == '\t' })
+	if slices.ContainsFunc(fields, artifactZshEquals) {
+		return nil, "shell-syntax"
+	}
 	inputs := &artifactInputs{Files: map[string]string{}}
 	for _, field := range fields {
 		for _, name := range artifactNames(field) {
@@ -162,8 +172,8 @@ func artifactCollect(command, cwd string, env map[string]string) (*artifactInput
 
 // addFile records name when it names a regular file. It returns the unbound
 // reason when name is a URL or a network path, a Windows name that depends on
-// a current drive, a directory or another non-regular file, cannot be read,
-// or goes past the file limits. A network
+// a current drive or names a device, a directory or another non-regular file,
+// cannot be read at its stat size, or goes past the file limits. A network
 // path (//host/share, a share on Windows) is never stat'ed, so naming one
 // opens no connection.
 func (in *artifactInputs) addFile(cwd, name string) string {
@@ -173,13 +183,17 @@ func (in *artifactInputs) addFile(cwd, name string) string {
 	if strings.Contains(name, "://") || strings.HasPrefix(name, "//") {
 		return "url"
 	}
-	if runtime.GOOS == "windows" && !filepath.IsAbs(name) && (name[0] == '/' || filepath.VolumeName(name) != "") {
+	if runtime.GOOS == "windows" && (artifactWindowsDevice(name) || !filepath.IsAbs(name) && (name[0] == '/' || filepath.VolumeName(name) != "")) {
 		// Windows resolves a rooted (/dir) or drive-relative (D:dir) name
 		// against a current drive the binding does not know, and Git Bash
-		// rewrites a rooted name through its mount table first.
+		// rewrites a rooted name through its mount table first. Device
+		// names are not files, even when stat of cwd/name says missing.
 		return "unreadable"
 	}
 	path := artifactPath(cwd, name)
+	if artifactSpecialPath(path) {
+		return "unreadable"
+	}
 	info, err := os.Stat(path)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -207,6 +221,11 @@ func (in *artifactInputs) addFile(cwd, name string) string {
 	}
 	if n > artifactMaxFileBytes {
 		return "limit"
+	}
+	if n != info.Size() {
+		// A procfs or sysfs file, whose content depends on who reads it, or
+		// a file being written.
+		return "unreadable"
 	}
 	in.Files[path] = hex.EncodeToString(sum.Sum(nil))
 	return ""
@@ -238,7 +257,7 @@ func artifactOpen(path string) (*os.File, string) {
 // artifactPath joins name to cwd without a lexical clean: the kernel resolves
 // ".." after a symlink to the link target's parent, as the command will.
 func artifactPath(cwd, name string) string {
-	if cwd == "" || filepath.IsAbs(name) {
+	if cwd == "" || filepath.IsAbs(name) || artifactNamespacePath(name) {
 		return name
 	}
 	return cwd + string(filepath.Separator) + name
