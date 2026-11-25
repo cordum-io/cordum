@@ -20,9 +20,108 @@ type artifactKubeconfig struct {
 	} `yaml:"contexts"`
 }
 
+// artifactIsKubectl reports the kubectl program. A word with '=' is an
+// assignment or a value (KUBECONFIG=dir/kubectl), not the program.
 func artifactIsKubectl(field string) bool {
 	name := strings.ToLower(filepath.Base(field))
-	return name == "kubectl" || name == "kubectl.exe"
+	return !strings.Contains(field, "=") && (name == "kubectl" || name == "kubectl.exe")
+}
+
+// artifactKubectlFlags maps each kubectl flag the binding models, by long
+// name, to what it takes: a target value, file values or nothing.
+var artifactKubectlFlags = map[string]string{
+	"context": "target", "namespace": "target", "kubeconfig": "target",
+	"filename": "files", "from-file": "files", "from-env-file": "files",
+	"recursive": "switch",
+}
+
+var artifactKubectlShorthands = map[byte]string{'n': "namespace", 'f': "filename", 'R': "recursive"}
+
+// artifactKubectlArgs reads kubectl's arguments as pflag v1.0.9 does
+// (parseArgs, parseLongArg, parseSingleShortArg). It returns the last value of
+// each modeled flag, by long name, and whether every argument is recognized:
+// only modeled flags, a value for each value flag, no file value of - (stdin),
+// and the subcommand apply with no other positional, create, get or exec. An
+// unmodeled flag is read as a switch, so the target flags after it still
+// parse. kubectl picks its subcommand before it parses flags (cobra
+// stripFlags), and that lookup reads the word after a bare -R or --recursive
+// as their value and the word after -Rf or -Rn as a command. So a switch
+// before the subcommand, and a cluster whose later letter takes the next
+// word, are unrecognized.
+func artifactKubectlArgs(args []string) (map[string]string, bool) {
+	values, ok := map[string]string{}, true
+	var positionals []string
+	set := func(name, value string, written bool) {
+		kind, known := artifactKubectlFlags[name]
+		switch {
+		case !known || kind == "switch":
+			ok = ok && known
+		case !written && len(args) == 0:
+			ok = false
+		default:
+			if !written {
+				value, args = args[0], args[1:]
+			}
+			values[name] = value
+			ok = ok && (kind != "files" || !slices.Contains(strings.Split(value, ","), "-"))
+		}
+	}
+	for len(args) > 0 {
+		arg := args[0]
+		args = args[1:]
+		switch {
+		case arg == "--":
+			args = nil // what follows is the command kubectl runs, not its flags
+		case len(positionals) == 0 && (arg == "-R" || arg == "--recursive"):
+			ok = false
+		case len(arg) < 2 || arg[0] != '-':
+			positionals = append(positionals, arg)
+		case arg[1] == '-':
+			name, value, written := strings.Cut(arg[2:], "=")
+			set(name, value, written)
+		default:
+			ok = artifactKubectlCluster(arg, set) && ok
+		}
+	}
+	return values, ok && artifactKubectlSubcommand(positionals)
+}
+
+// artifactKubectlCluster reads a cluster of short flags as
+// parseSingleShortArg does: a value letter takes the rest of the cluster,
+// after an optional '=', or else the next argument. It reports false when a
+// value letter after the first takes the next argument.
+func artifactKubectlCluster(arg string, set func(name, value string, written bool)) bool {
+	for i := 1; i < len(arg); i++ {
+		name, rest := artifactKubectlShorthands[arg[i]], arg[i+1:]
+		switch kind := artifactKubectlFlags[name]; {
+		case len(rest) > 1 && rest[0] == '=':
+			set(name, rest[1:], true)
+		case kind == "switch" || kind == "":
+			set(name, "", false)
+			continue
+		case rest != "":
+			set(name, rest, true)
+		default:
+			set(name, "", false)
+			return i == 1
+		}
+		return true
+	}
+	return true
+}
+
+// artifactKubectlSubcommand reports a modeled subcommand. kubectl runs a
+// kubectl-create-* plugin for a create subcommand it does not have.
+func artifactKubectlSubcommand(positionals []string) bool {
+	switch {
+	case len(positionals) == 0:
+		return false
+	case positionals[0] == "apply":
+		return len(positionals) == 1
+	case positionals[0] == "create":
+		return len(positionals) == 1 || positionals[1] == "configmap" || positionals[1] == "secret"
+	}
+	return positionals[0] == "get" || positionals[0] == "exec"
 }
 
 // artifactKubeTarget returns the context and namespace kubectl will use, and
@@ -38,28 +137,11 @@ func artifactKubeTarget(fields []string, cwd string, env map[string]string) (str
 			kubeconfig = value
 		}
 	}
-	var kubeContext, namespace string
-	args := fields[at+1:]
-	for i, arg := range args {
-		if arg == "--" {
-			break // what follows is the command kubectl runs, not its flags
-		}
-		flag, value, inline := strings.Cut(arg, "=")
-		if !inline && i+1 < len(args) {
-			value = args[i+1]
-		}
-		if attached, ok := strings.CutPrefix(arg, "-n"); ok && attached != "" && attached[0] != '=' {
-			flag, value = "-n", attached
-		}
-		switch flag {
-		case "--kubeconfig":
-			kubeconfig = value
-		case "--context":
-			kubeContext = value
-		case "--namespace", "-n":
-			namespace = value
-		}
+	flags, _ := artifactKubectlArgs(fields[at+1:])
+	if flags["kubeconfig"] != "" {
+		kubeconfig = flags["kubeconfig"] // an empty --kubeconfig is not an explicit path
 	}
+	kubeContext, namespace := flags["context"], flags["namespace"]
 	current, namespaces := artifactKubeconfigs(kubeconfig, cwd, env)
 	if kubeContext == "" {
 		kubeContext = current

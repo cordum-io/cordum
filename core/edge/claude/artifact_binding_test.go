@@ -153,8 +153,8 @@ func TestArtifactBindingCoversGitHead(t *testing.T) {
 	digest := func() string {
 		t.Helper()
 		labels := artifactBindingLabels(context.Background(), artifactHookInput(cwd, "git status"), map[string]string{}, "git_readonly")
-		if labels["artifact.binding"] != "bound" {
-			t.Fatalf("labels = %v, want bound", labels)
+		if labels["artifact.binding"] != "unbound" || labels["artifact.unbound_reason"] != "unrecognized" {
+			t.Fatalf("labels = %v, want unbound: git is not a modeled program", labels)
 		}
 		return labels["artifact.digest"]
 	}
@@ -172,9 +172,10 @@ func TestArtifactBindingCoversGitHead(t *testing.T) {
 
 func TestArtifactBindingKubeTarget(t *testing.T) {
 	cwd, home := t.TempDir(), t.TempDir()
+	kubeconfig := "current-context: dev\ncontexts:\n- name: dev\n  context:\n    namespace: dev-ns\n" +
+		"- name: staging\n  context:\n    namespace: staging-ns\n"
 	artifactWriteFiles(t, cwd, map[string]string{
-		"kc.yaml": "current-context: dev\ncontexts:\n- name: dev\n  context:\n    namespace: dev-ns\n" +
-			"- name: staging\n  context:\n    namespace: staging-ns\n",
+		"kc.yaml": kubeconfig, "sub/kubectl": kubeconfig,
 		"a.yaml": "contexts:\n- name: x\n  context:\n    namespace: ns-a\n",
 		"b.yaml": "current-context: x\ncontexts:\n- name: x\n  context:\n    namespace: ns-b\n",
 	})
@@ -189,11 +190,13 @@ func TestArtifactBindingKubeTarget(t *testing.T) {
 		{"flags with equals", "kubectl apply --context=staging -n=team -f manifest.yaml", kc, "staging", "team"},
 		{"short namespace flag", "kubectl -n team get pods", kc, "dev", "team"},
 		{"short namespace attached", "kubectl -nteam get pods", kc, "dev", "team"},
+		{"namespace attached in a cluster", "kubectl -Rnteam get pods", kc, "dev", "team"},
 		{"flags after -- belong to the command", "kubectl -n team exec pod -- ls -n other", kc, "dev", "team"},
 		{"kubectl.exe", "kubectl.exe get pods", kc, "dev", "dev-ns"},
 		{"context flag reads its namespace", "kubectl --context staging get pods", kc, "staging", "staging-ns"},
 		{"kubeconfig flag relative to cwd", "kubectl --kubeconfig kc.yaml get pods", map[string]string{}, "dev", "dev-ns"},
 		{"KUBECONFIG assignment", "KUBECONFIG=kc.yaml kubectl get pods", map[string]string{}, "dev", "dev-ns"},
+		{"KUBECONFIG naming a file called kubectl", "KUBECONFIG=sub/kubectl kubectl get pods", map[string]string{}, "dev", "dev-ns"},
 		{"merged KUBECONFIG list", "kubectl get pods", map[string]string{
 			"KUBECONFIG": filepath.Join(cwd, "a.yaml") + string(os.PathListSeparator) + filepath.Join(cwd, "b.yaml"),
 		}, "x", "ns-a"},
@@ -215,33 +218,36 @@ func TestArtifactBindingFollowsFlagSpellings(t *testing.T) {
 	artifactWriteFiles(t, cwd, map[string]string{"other.yaml": "kind: ConfigMap\n",
 		"kc.yaml": "current-context: dev\ncontexts:\n- name: dev\n  context: {}\n"})
 	env := map[string]string{"KUBECONFIG": filepath.Join(cwd, "kc.yaml")}
-	for _, command := range []string{
-		"kubectl apply -fmanifest.yaml",
-		"kubectl apply -Rfmanifest.yaml",
-		"kubectl apply -f other.yaml,manifest.yaml",
-		"kubectl apply -f=other.yaml,manifest.yaml",
-		"kubectl apply --filename=other.yaml,manifest.yaml",
-		"kubectl create configmap cm --from-file=cfg=manifest.yaml",
-		"kubectl create configmap cm --from-file=a=other.yaml,cfg=manifest.yaml",
-		"kubectl create configmap cm --from-env-file=other.yaml,manifest.yaml",
-		"curl -d @manifest.yaml localhost",
-		"docker run -v ./manifest.yaml:/srv/manifest.yaml nginx",
+	const m = "manifest.yaml"
+	for _, tc := range []struct{ command, file, reason string }{
+		{"kubectl apply -fmanifest.yaml", m, ""},
+		{"kubectl apply -Rfmanifest.yaml", m, ""},
+		{"kubectl apply -f manifest.yaml,other.yaml", m, ""},
+		{"kubectl apply -f other.yaml,manifest.yaml", m, ""},
+		{"kubectl apply -f=other.yaml,manifest.yaml", m, ""},
+		{"kubectl apply --filename=other.yaml,manifest.yaml", m, ""},
+		{"kubectl apply -f a:b.yaml,other.yaml", "a:b.yaml", ""},
+		{"kubectl create configmap cm --from-file=cfg=manifest.yaml", m, ""},
+		{"kubectl create configmap cm --from-file=a=other.yaml,cfg=manifest.yaml", m, ""},
+		{"kubectl create configmap cm --from-env-file=other.yaml,manifest.yaml", m, ""},
+		{"curl -d @manifest.yaml localhost", m, "unrecognized"},
+		{"docker run -v ./manifest.yaml:/srv/manifest.yaml nginx", m, "unrecognized"},
 	} {
-		t.Run(command, func(t *testing.T) {
-			if runtime.GOOS == "windows" && strings.HasPrefix(command, "docker ") {
+		t.Run(tc.command, func(t *testing.T) {
+			if runtime.GOOS == "windows" && strings.Contains(tc.command, ":") {
 				t.Skip("a ':' in a path is not a Windows file name: stat fails and the call is unbound")
 			}
-			digest := func(manifest string) string {
+			digest := func(content string) string {
 				t.Helper()
-				artifactWriteFiles(t, cwd, map[string]string{"manifest.yaml": manifest})
-				labels := artifactBindingLabels(context.Background(), artifactHookInput(cwd, command), env, "unknown")
-				if labels["artifact.binding"] != "bound" {
-					t.Fatalf("labels = %v, want bound", labels)
+				artifactWriteFiles(t, cwd, map[string]string{tc.file: content})
+				labels := artifactBindingLabels(context.Background(), artifactHookInput(cwd, tc.command), env, "unknown")
+				if (labels["artifact.binding"] == "bound") != (tc.reason == "") || labels["artifact.unbound_reason"] != tc.reason {
+					t.Fatalf("labels = %v, want unbound reason %q", labels, tc.reason)
 				}
 				return labels["artifact.digest"]
 			}
 			if digest("v1") == digest("v2") {
-				t.Fatal("the digest must change when the manifest the command names changes")
+				t.Fatalf("the digest must change when %s changes", tc.file)
 			}
 		})
 	}

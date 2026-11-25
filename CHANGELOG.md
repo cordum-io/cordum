@@ -11,12 +11,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   names, the git HEAD of its working directory and, for kubectl, the target context and
   namespace. cordum-hook adds a keyed digest of them to the approval's action identity
   and checks them again before an allowed command starts, so a change after the
-  approval blocks the command until it is approved again. When the hook cannot tell
-  what a command reads (shell syntax, inline code or a module run, a URL or network
-  path, a directory, an unreadable or oversized file, files that take over a second to
-  read, an unknown kube context, or a test or build command), it labels the call
-  `artifact.binding=unbound` with an `artifact.unbound_reason`, so a policy can deny it.
-  Files a script or tool opens on its own are not covered (task-14d105fb).
+  approval blocks the command until it is approved again. The hook labels a call
+  `artifact.binding=bound` only when it recognizes the program and every argument:
+  `kubectl apply`, `create` (from files, or a configmap or secret), `get` or `exec`
+  with only the `--context`, `--namespace`/`-n`, `--kubeconfig`, `-f`/`--filename`,
+  `--from-file`, `--from-env-file` and `-R`/`--recursive` flags, or `sh`, `bash`,
+  `zsh`, `dash`, `python`, `node`, `perl` or `ruby` running a script file from the
+  working directory. Any other call is labelled `artifact.binding=unbound` with an
+  `artifact.unbound_reason` (an unrecognized command, inline code, shell syntax, a URL
+  or network path, a Windows path that depends on the current drive, a directory, an
+  unreadable or oversized file, files that take over a second to read, an unknown kube
+  context, or a test or build command), so a policy can deny it, and its digest still
+  covers the files it names. Files a script or tool opens on its own are not covered
+  (task-14d105fb).
 - Python SDK: remove template-unused imports during generation with the pinned Ruff
   cleanup hook before formatting, without changing API or version markers (task-90b8033a).
 - Edge hook: a CONSTRAIN decision that carries a constraint kind the hook cannot apply
@@ -38,9 +45,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   credential and re-runs the policy check before it consumes the approval. A deny that
   applies by then, or a credential that no longer authenticates as the same principal,
   blocks the tool call and leaves the approval unconsumed (task-142fa2f0).
+- Dashboard: the Edge session list and detail pages show the assurance state the server
+  reports for each session, with a distinct label per state, and "Not reported" when the
+  server sends no recognized value. The session list can be filtered by assurance state,
+  and the policy-mode chip now reads "policy <mode>" (task-9b412c07).
 
 ### Documentation
 
+- Input fail mode: `docs/safety-kernel.md` section 10 now says when a change to `scheduler.input_fail_mode` or `scheduler.input_fail_open_scope` takes effect: on a config-change notification or the 30-second reload, after a cached tenant entry is refreshed, and never for a tenant whose configuration has not loaded, whose jobs are requeued even in `open` mode. `ROADMAP.md` names the counter `cordum_scheduler_input_fail_open_total` and says open input mode admits only listed topics (task-c399879b).
 - Metric names: `docs/scheduler-internals.md` section 10, `docs/CORE.md` and `docs/AGENT_PROTOCOL.md` now use the exported names, for example `cordum_scheduler_jobs_received_total`, `cordum_scheduler_scheduler_dispatch_latency_seconds` and `cordum_scheduler_validation_rejections_total` (task-f8ddafe6).
 - Security contract: `docs/contract/README.md` indexes the M0 contract artifacts, names the check for each, states contract version 1 and lists the enforced-cell test gaps at the freeze. New cross-check tests in `tests/contract` reject a `verified` claim that names a `violated` invariant, and a claim invariant id missing from `invariants.yaml` (task-e2f303cd).
 - Protected-operation contract: `docs/contract/protected-operation.md` now points to [ADR-011](docs/adr/011-execution-grant-format.md), the proposed execution-grant format, for M2A-01's open questions and the grant issuer key row. ADR-011 is a design; it implements no schema, verifier, broker or protected operation (task-e43b5876).
