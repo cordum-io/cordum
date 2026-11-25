@@ -11,12 +11,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   names, the git HEAD of its working directory and, for kubectl, the target context and
   namespace. cordum-hook adds a keyed digest of them to the approval's action identity
   and checks them again before an allowed command starts, so a change after the
-  approval blocks the command until it is approved again. When the hook cannot tell
-  what a command reads (shell syntax, inline code or a module run, a URL or network
-  path, a directory, an unreadable or oversized file, files that take over a second to
-  read, an unknown kube context, or a test or build command), it labels the call
-  `artifact.binding=unbound` with an `artifact.unbound_reason`, so a policy can deny it.
-  Files a script or tool opens on its own are not covered (task-14d105fb).
+  approval blocks the command until it is approved again. The hook labels a call
+  `artifact.binding=bound` only when it recognizes the program and every argument:
+  `kubectl apply`, `create` (from files, or a configmap or secret), `get` or `exec`
+  with only the `--context`, `--namespace`/`-n`, `--kubeconfig`, `-f`/`--filename`,
+  `--from-file`, `--from-env-file` and `-R`/`--recursive` flags, or `sh`, `bash`,
+  `zsh`, `dash`, `python`, `node`, `perl` or `ruby` running a script file from the
+  working directory. Any other call is labelled `artifact.binding=unbound` with an
+  `artifact.unbound_reason` (an unrecognized command, inline code, shell syntax, a URL
+  or network path, a directory, an unreadable or oversized file, files that take over
+  a second to read, an unknown kube context, or a test or build command), so a policy
+  can deny it, and its digest still covers the files it names. Files a script or tool
+  opens on its own are not covered (task-14d105fb).
 - Python SDK: remove template-unused imports during generation with the pinned Ruff
   cleanup hook before formatting, without changing API or version markers (task-90b8033a).
 - Edge hook: a CONSTRAIN decision that carries a constraint kind the hook cannot apply

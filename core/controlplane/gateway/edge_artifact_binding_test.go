@@ -147,6 +147,8 @@ func TestArtifactBindingPolicyDeniesUnboundCommand(t *testing.T) {
 		approvals     int
 	}{
 		{"unbound_denied_by_rule", "cat manifest.yaml | kubectl apply -f -", 0},
+		{"remote_kustomization_denied_by_rule", "kubectl apply -k github.com/org/repo", 0},
+		{"inline_code_denied_by_rule", "perl -E system+q+./deploy.sh+", 0},
 		{"bound_requires_approval", artifactBindingCommand, 1},
 	}
 	for _, tc := range cases {
