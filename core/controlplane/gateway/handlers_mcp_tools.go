@@ -190,6 +190,31 @@ func (s *server) handleAgentDeniedEvents(w http.ResponseWriter, r *http.Request)
 		writeJSONError(w, http.StatusBadRequest, errorCodeMCPAgentIDRequired, "agent id required")
 		return
 	}
+	if s.agentIdentityStore == nil {
+		writeErrorJSON(w, http.StatusServiceUnavailable, "agent identity store unavailable")
+		return
+	}
+	tenant, err := s.resolveTenant(r, "")
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, errorCodeAgentRequestInvalid, err.Error())
+		return
+	}
+	identity, err := s.agentIdentityStore.Get(r.Context(), tenant, agentID)
+	if err != nil {
+		writeInternalError(w, r, "get agent identity", err)
+		return
+	}
+	if identity == nil {
+		identity, err = s.agentIdentityStore.GetByWorkerIDForTenant(r.Context(), tenant, agentID)
+		if err != nil {
+			writeInternalError(w, r, "get agent identity by worker", err)
+			return
+		}
+	}
+	if identity == nil {
+		writeJSONError(w, http.StatusNotFound, errorCodeAgentNotFound, "agent identity not found")
+		return
+	}
 	events := []denyEventRecord{}
 	if s.mcpDenyRing != nil {
 		events = s.mcpDenyRing.recent(agentID, 50)

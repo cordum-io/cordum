@@ -16,9 +16,12 @@ import (
 	governanceeval "github.com/cordum/cordum/core/governance/evaluator"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/store"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 const delegationIssueLimitPerMinute = 60
+
+var errDelegationTenantAccess = errors.New("delegation tenant access denied")
 
 // maxDelegationTTLSeconds caps `ttl_seconds` on the delegation-issue handler
 // before it is multiplied into time.Duration. Without this bound a caller
@@ -258,6 +261,18 @@ func (s *server) handleVerifyDelegation(w http.ResponseWriter, r *http.Request) 
 	if strings.TrimSpace(req.Token) == "" {
 		writeJSONError(w, http.StatusBadRequest, errorCodeDelegationRequestInvalid, "token required")
 		return
+	}
+	if s.auth != nil && !auth.FromRequest(r).AllowCrossTenant {
+		var claims delegation.DelegationClaims
+		if _, _, parseErr := jwt.NewParser().ParseUnverified(req.Token, &claims); parseErr == nil {
+			callerTenant, tenantErr := s.resolveTenant(r, "")
+			claimTenant := strings.TrimSpace(claims.Tenant)
+			if tenantErr != nil || claimTenant == "" || claimTenant != callerTenant {
+				writeForbidden(w, r, errDelegationTenantAccess)
+				s.emitDelegationAudit(r, "verify", tenantFromRequest(r), "", "", "", 0, "denied", errDelegationTenantAccess)
+				return
+			}
+		}
 	}
 
 	tenant := tenantFromRequest(r)

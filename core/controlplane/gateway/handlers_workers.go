@@ -345,6 +345,9 @@ func (s *server) handleListPools(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermissionOrRole(w, r, auth.PermWorkersRead, "admin") {
 		return
 	}
+	if !s.requirePoolPlatformAccess(w, r) {
+		return
+	}
 
 	snap, err := s.snapshotFromRedis()
 	if err != nil {
@@ -370,6 +373,9 @@ func (s *server) handleListPools(w http.ResponseWriter, r *http.Request) {
 // handleGetPool returns a single pool's detail with its workers and topics.
 func (s *server) handleGetPool(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermissionOrRole(w, r, auth.PermWorkersRead, "admin") {
+		return
+	}
+	if !s.requirePoolPlatformAccess(w, r) {
 		return
 	}
 
