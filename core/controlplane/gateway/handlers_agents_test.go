@@ -930,9 +930,7 @@ func TestAgentStatsHighVolume(t *testing.T) {
 }
 
 // TestHandleCreateAgent_PersistsTenantID verifies that handleCreateAgent
-// stamps the caller tenant onto the persisted AgentIdentity instead of
-// writing a global tenant_id="" entry that any tenant can read.
-// Regression for PR #276 audit finding (CRITICAL, handlers_agents.go:80-127).
+// stamps the caller tenant onto the persisted AgentIdentity.
 func TestHandleCreateAgent_PersistsTenantID(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	enableAgentIdentityEntitlement(t, s)
