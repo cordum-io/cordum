@@ -278,7 +278,12 @@ func (b *BasicAuthProvider) AuthenticateGRPC(ctx context.Context) (*AuthContext,
 	// A context without a method name maps to no scope, so it fails closed.
 	method, _ := grpc.Method(ctx)
 	required, mapped := GRPCMethodToScope(method)
-	return b.authenticateWithScope(ctx, key, principalID, required, mapped)
+	authCtx, err := b.authenticateWithScope(ctx, key, principalID, required, mapped)
+	// A user session is an HTTP credential; gRPC refuses it like an unknown key.
+	if err == nil && authCtx.AuthSource == AuthSourceSession {
+		return nil, errors.New("invalid api key")
+	}
+	return authCtx, err
 }
 
 // roleFromScopes maps API key scopes to a role, using the highest privilege

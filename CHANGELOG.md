@@ -52,6 +52,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `jobs:write` keys, can no longer read job status over gRPC. Managed keys
   without scopes, static keys and JWT callers are unchanged.
 
+- The gateway gRPC API no longer accepts a user session token in `x-api-key`
+  or `api-key` metadata and refuses it as an invalid API key. gRPC clients
+  present an API key there, or a gateway JWT or OIDC token as
+  `authorization: Bearer <token>`. Sessions on the HTTP API are unchanged.
+
 - With `AUDIT_TRANSPORT=nats`, the gateway's audit consumer chains and exports
   only `sys.audit.export` packets that carry a valid audit-publisher service
   token: `api-gateway` or `cordum-scheduler` signed by a key in
@@ -166,6 +171,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `--allow-unauthenticated-http` is passed (#492, task-ee0dc819).
 
 ### Changed
+
+- A key that a managed API key creates through `POST /api/v1/auth/keys` is
+  stored only if the calling key is unexpired when the gateway checks it and
+  still unrevoked when the key is written; otherwise the request gets 403 and
+  no key is stored.
 
 - Managed API key scopes now cover the `/api/v1/edge` routes. `/api/v1/edge/approvals` maps to
   the `approvals` resource, `/api/v1/edge/mcp` to `mcp`, `/api/v1/edge/shadow-agents`,

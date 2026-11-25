@@ -1286,6 +1286,12 @@ func (s *server) handleListKeys(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"items": items})
 }
 
+// keyChildCreator is implemented by auth.RedisKeyStore. CreateChild stores
+// key only if parentID is unexpired when checked and still unrevoked when the key is written.
+type keyChildCreator interface {
+	CreateChild(ctx context.Context, parentID string, key *auth.ManagedKey, rawSecret string) error
+}
+
 // handleCreateKey handles POST /api/v1/auth/keys.
 func (s *server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermAPIKeysWrite, []string{"admin"}, s.keyStore) {
@@ -1313,6 +1319,7 @@ func (s *server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 	}
 	// Static keys are identified by the authentication provider, not by the
 	// secret's prefix. Revalidate managed keys before granting their scopes.
+	var parentID string
 	if caller := auth.FromRequest(r); caller != nil && caller.AuthSource == auth.AuthSourceAPIKey &&
 		caller.KeyID != "static:"+auth.APIKeyFingerprint(caller.APIKey) {
 		parent, err := s.keyStore.ValidateKey(r.Context(), caller.APIKey)
@@ -1348,6 +1355,7 @@ func (s *server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		parentID = parent.ID
 	}
 
 	var expiresAt time.Time
@@ -1389,7 +1397,21 @@ func (s *server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt: expiresAt,
 	}
 
-	if err := s.keyStore.Create(r.Context(), mk, rawKey); err != nil {
+	if parentID == "" {
+		err = s.keyStore.Create(r.Context(), mk, rawKey)
+	} else {
+		// The calling key must be unexpired when checked and still unrevoked when the key is written.
+		creator, ok := s.keyStore.(keyChildCreator)
+		if !ok {
+			writeErrorJSON(w, http.StatusServiceUnavailable, "key validation unavailable")
+			return
+		}
+		if err = creator.CreateChild(r.Context(), parentID, mk, rawKey); errors.Is(err, auth.ErrInvalidKey) {
+			writeErrorJSON(w, http.StatusForbidden, "key grant denied")
+			return
+		}
+	}
+	if err != nil {
 		slog.Error("create key failed", "error", err)
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to create key")
 		return
