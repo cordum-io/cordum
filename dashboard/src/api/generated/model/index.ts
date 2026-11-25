@@ -200,6 +200,7 @@ export * from "./edgeRuntimeNetworkSummaryProtocol.ts";
 export * from "./edgeRuntimeProcessSummary.ts";
 export * from "./edgeServiceUnavailableResponse.ts";
 export * from "./edgeSession.ts";
+export * from "./edgeSessionAssuranceState.ts";
 export * from "./edgeSessionCreateRequest.ts";
 export * from "./edgeSessionCreateRequestMode.ts";
 export * from "./edgeSessionCreateRequestPolicyMode.ts";
