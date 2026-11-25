@@ -33,6 +33,16 @@ func TestArtifactBindingFollowsLinkBeforeDotDot(t *testing.T) {
 	}
 }
 
+func TestArtifactBindingEmptyCwdIsTheProcessCwd(t *testing.T) {
+	dir := t.TempDir()
+	artifactWriteFiles(t, dir, map[string]string{"deploy.sh": "echo deploy\n"})
+	t.Chdir(dir)
+	labels := artifactBindingLabels(context.Background(), artifactHookInput("", "bash deploy.sh"), map[string]string{}, "unknown")
+	if labels["artifact.binding"] != "bound" || labels["artifact.digest"] == "" {
+		t.Fatalf("labels = %v, want bound to deploy.sh in the hook's own cwd", labels)
+	}
+}
+
 func TestArtifactBindingWindowsDriveNames(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("only Windows resolves a name against a current drive")
