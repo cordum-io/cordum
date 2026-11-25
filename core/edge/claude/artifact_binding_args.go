@@ -1,6 +1,8 @@
 package claude
 
 import (
+	"io/fs"
+	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -28,7 +30,8 @@ func artifactRecognized(fields []string, cwd string, inputs *artifactInputs) str
 		fields = fields[1:]
 	}
 	switch {
-	case len(fields) == 0:
+	case len(fields) == 0 || strings.Contains(fields[0], "="):
+		// An assignment before the program: the shell runs the next word.
 		return "unrecognized"
 	case artifactIsKubectl(fields[0]):
 		if _, ok := artifactKubectlArgs(fields[1:]); ok {
@@ -38,7 +41,8 @@ func artifactRecognized(fields []string, cwd string, inputs *artifactInputs) str
 		if len(fields) == 1 || strings.IndexByte("-+", fields[1][0]) >= 0 {
 			return "inline-code"
 		}
-		if _, ok := inputs.Files[artifactPath(cwd, fields[1])]; ok {
+		// node inspect starts a debugger, not a script named inspect.
+		if _, ok := inputs.Files[artifactPath(cwd, fields[1])]; ok && fields[1] != "inspect" {
 			return ""
 		}
 	}
@@ -90,4 +94,109 @@ func artifactFlagRun(s string) int {
 		n++
 	}
 	return n
+}
+
+// artifactZshEquals reports a word zsh rewrites when EQUALS is set, as it is
+// by default: '=cmd' becomes the path of cmd, at the start of a word and after
+// the '=' or a ':' of an assignment (or, under MAGIC_EQUAL_SUBST, of any
+// name=value argument).
+func artifactZshEquals(field string) bool {
+	return strings.HasPrefix(field, "=") || strings.Contains(field, "==") || strings.Contains(field, ":=")
+}
+
+// artifactWindowsDevice reports a name Windows opens as a device, with any
+// extension (CON, con.yaml, NUL, COM1): the command reads the device.
+func artifactWindowsDevice(name string) bool {
+	stem, _, _ := strings.Cut(filepath.Base(name), ".")
+	stem = strings.ToUpper(strings.TrimRight(stem, " "))
+	switch stem {
+	case "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$":
+		return true
+	}
+	port, found := strings.CutPrefix(stem, "COM")
+	if !found {
+		port, found = strings.CutPrefix(stem, "LPT")
+	}
+	return found && (len(port) == 1 && '0' <= port[0] && port[0] <= '9' || port == "¹" || port == "²" || port == "³")
+}
+
+// artifactSpecialPath checks each hop before following it: resolving a procfs
+// magic link first would hide the reader-dependent name behind an ordinary file.
+func artifactSpecialPath(path string) bool {
+	if artifactNamespacePath(path) {
+		return true
+	}
+	if !filepath.IsAbs(path) {
+		wd, err := os.Getwd()
+		if err != nil {
+			return true
+		}
+		path = artifactPath(wd, path)
+	}
+	var cur string
+	var names []string
+	if !artifactQueuePath(path, &cur, &names) {
+		return true
+	}
+	for links := 0; len(names) > 0; {
+		name := names[0]
+		names = names[1:]
+		switch name {
+		case ".":
+			continue
+		case "..":
+			cur = filepath.Dir(cur) // cur is link-free, so this is the kernel's parent
+			continue
+		}
+		next := filepath.Join(cur, name)
+		if artifactPseudoPath(next) {
+			return true
+		}
+		info, err := os.Lstat(next)
+		if err != nil {
+			return false // addFile's stat decides missing or unreadable names
+		}
+		if info.Mode()&(fs.ModeSymlink|fs.ModeIrregular) == 0 {
+			cur = next
+			continue
+		}
+		// Windows junctions report ModeIrregular; Readlink resolves them too.
+		target, err := os.Readlink(next)
+		links++
+		if err != nil || links > 40 || !artifactQueuePath(target, &cur, &names) {
+			return true
+		}
+	}
+	return false
+}
+
+// artifactQueuePath prepends a written path or link target without cleaning '..'.
+// Absolute targets restart at their root; relative ones keep the link's parent.
+func artifactQueuePath(path string, cur *string, names *[]string) bool {
+	if artifactNamespacePath(path) || runtime.GOOS == "windows" && artifactWindowsDevice(path) {
+		return false
+	}
+	if filepath.IsAbs(path) {
+		vol := filepath.VolumeName(path)
+		*cur, path = vol+string(filepath.Separator), path[len(vol):]
+	}
+	parts := strings.FieldsFunc(path, func(r rune) bool { return r < 0x80 && os.IsPathSeparator(byte(r)) })
+	*names = append(parts, *names...)
+	return true
+}
+
+func artifactPseudoPath(path string) bool {
+	if runtime.GOOS != "windows" {
+		for _, root := range []string{"/proc", "/dev", "/sys"} {
+			if path == root || strings.HasPrefix(path, root+"/") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// artifactNamespacePath rejects Windows device, NT and network namespaces.
+func artifactNamespacePath(path string) bool {
+	return runtime.GOOS == "windows" && (len(path) >= 2 && os.IsPathSeparator(path[0]) && os.IsPathSeparator(path[1]) || strings.HasPrefix(path, `\??\`))
 }
