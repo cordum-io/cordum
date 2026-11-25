@@ -19,7 +19,7 @@ func TestActiveDispatchRefreshesRevokedTopicWithoutNotification(t *testing.T) {
 		"worker-1": {Ready: true, Trusted: true, ReadyTopics: []string{"job.default"}},
 	}
 
-	if authorized := engine.filterBoundWorkers(workers, readiness, "job.default"); len(authorized) != 0 {
+	if authorized := engine.filterBoundWorkers(workers, readiness, "job.default", "tenant-1"); len(authorized) != 0 {
 		t.Fatal("dispatch used a stale allowed topic after canonical revocation")
 	}
 	if calls.Load() != 1 {
@@ -76,7 +76,7 @@ func TestActiveAuthorizationFailsClosedDuringOverlappingRefresh(t *testing.T) {
 	go func() {
 		workers := map[string]*pb.Heartbeat{"worker-1": {WorkerId: "worker-1", Pool: "default"}}
 		ready := map[string]WorkerReadiness{"worker-1": {Ready: true, Trusted: true, ReadyTopics: []string{"job.default"}}}
-		filtered <- engine.filterBoundWorkers(workers, ready, "job.default")
+		filtered <- engine.filterBoundWorkers(workers, ready, "job.default", "tenant-1")
 	}()
 	select {
 	case <-started:

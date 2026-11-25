@@ -36,7 +36,7 @@ func TestActiveHandshakeDispatchRequiresTrustedCredentialAuthority(t *testing.T)
 				NewSessionTokenMiddleware(nil, HandshakeModeEnforce, NewHandshakeMissingTracker()),
 			)
 
-			err := engine.processJob(testCtx(t), &pb.JobRequest{JobId: "job-1", Topic: "job.default"}, "trace-1")
+			err := engine.processJob(testCtx(t), &pb.JobRequest{JobId: "job-1", Topic: "job.default", TenantId: "tenant-1"}, "trace-1")
 			published := len(bus.snapshotPublished())
 			if test.wantPublish && (err != nil || published != 1) {
 				t.Fatalf("authorized dispatch err=%v publishes=%d", err, published)
