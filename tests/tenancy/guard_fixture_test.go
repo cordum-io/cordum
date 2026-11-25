@@ -38,9 +38,13 @@ var manifestFixtureCases = []struct {
 		return m, nil
 	}, []string{"invalid binding core/store document:tenant:record"}},
 	{"coverage", func(m []storeKeyEntry) ([]storeKeyEntry, []notTenantKey) {
-		m[0].Coverage = "pending:PR1-03I"
+		m[0].Coverage = "pending:PR1-03Z"
 		return m, nil
 	}, []string{"invalid coverage core/store document:tenant:record"}},
+	{"gateway pending coverage", func(m []storeKeyEntry) ([]storeKeyEntry, []notTenantKey) {
+		m[0].Coverage = "pending:PR1-03I"
+		return m, nil
+	}, nil},
 	{"blank reason", func(m []storeKeyEntry) ([]storeKeyEntry, []notTenantKey) {
 		return m[:2], []notTenantKey{{m[2].Pattern, m[2].Package, " \t"}}
 	}, []string{"empty reason core/other planted:secret:{tenant}"}},
