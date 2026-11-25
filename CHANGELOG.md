@@ -19,6 +19,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   (compatibility, hook-mediated, unsupported or stale). Get, list and export derive it
   from the current facts, so a session whose heartbeat has lapsed or that has ended
   reports stale. `executor-enforced` is reserved and not reported (task-50b24bdf).
+- Edge approvals: an approval now applies only to the exact original tool input it was
+  granted for, through a keyed commitment that cordum-agentd computes before redaction
+  and the Gateway binds into the approval's action hash. In enforce and
+  enterprise-strict sessions a hook evaluation without a commitment is denied, so
+  upgrade the Gateway and cordum-agentd together (task-6f885a33).
 
 ### Documentation
 

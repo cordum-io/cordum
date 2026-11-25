@@ -52,6 +52,11 @@ type edgeEvaluateRequest struct {
 	ToolInputRedacted map[string]any `json:"tool_input_redacted"`
 	InputHash         string         `json:"input_hash"`
 	ToolInputHash     string         `json:"tool_input_hash"`
+	// InputCommitment is the Edge client's keyed commitment to the original,
+	// pre-redaction input. It is bound into the approval's action hash so an
+	// approval covers only the input it was granted for; the original input
+	// itself never reaches the Gateway.
+	InputCommitment string `json:"input_commitment"`
 
 	// Raw/transcript fields are accepted only so the handler can reject them
 	// with a sanitized error and force callers onto redacted input/artifacts.
@@ -166,7 +171,13 @@ func (s *server) handleEdgeEvaluate(w http.ResponseWriter, r *http.Request) {
 	}
 	outcome := edgeEvaluateOutcomeFromSafety(policyInput.event.EventID, safetyResp)
 	outcome = s.decorateEdgeEvaluateTierEvidence(r.Context(), policyInput.event.Labels, outcome)
-	actionHash, err := edgeEvaluateActionHash(policyInput.event, outcome.policySnapshot)
+	// An enforcing session binds every approval to the original input, so a
+	// hook evaluation must carry the Edge client's commitment to it.
+	inputCommitment := strings.TrimSpace(evalCtx.req.InputCommitment)
+	if inputCommitment == "" && policyInput.event.Layer == edgecore.LayerHook && evalCtx.session.PolicyMode != edgecore.PolicyModeObserve {
+		outcome = outcome.edgeEvaluateDeny("Edge input commitment required; upgrade cordum-agentd")
+	}
+	actionHash, err := edgeEvaluateActionHash(policyInput.event, outcome.policySnapshot, inputCommitment)
 	if err != nil {
 		writeEdgeEventRequestError(w, r, err, "invalid edge evaluate request")
 		return
@@ -716,7 +727,7 @@ func edgeEvaluateApprovalDashboardPath(approvalRef string) string {
 	return "/edge/approvals/" + approvalRef
 }
 
-func edgeEvaluateActionHash(event edgecore.AgentActionEvent, policySnapshot string) (string, error) {
+func edgeEvaluateActionHash(event edgecore.AgentActionEvent, policySnapshot, inputCommitment string) (string, error) {
 	riskTags := append([]string(nil), event.RiskTags...)
 	sort.Strings(riskTags)
 	payload := struct {
@@ -734,6 +745,9 @@ func edgeEvaluateActionHash(event edgecore.AgentActionEvent, policySnapshot stri
 		Labels         edgecore.Labels    `json:"labels,omitempty"`
 		InputHash      string             `json:"input_hash"`
 		PolicySnapshot string             `json:"policy_snapshot"`
+
+		// Omitted when absent, so a hash without a commitment is unchanged.
+		InputCommitment string `json:"input_commitment,omitempty"`
 	}{
 		TenantID:       strings.TrimSpace(event.TenantID),
 		SessionID:      strings.TrimSpace(event.SessionID),
@@ -749,6 +763,8 @@ func edgeEvaluateActionHash(event edgecore.AgentActionEvent, policySnapshot stri
 		Labels:         cloneEdgeEvaluateLabels(event.Labels),
 		InputHash:      strings.TrimSpace(event.InputHash),
 		PolicySnapshot: strings.TrimSpace(policySnapshot),
+
+		InputCommitment: inputCommitment,
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {

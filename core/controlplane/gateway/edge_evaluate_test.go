@@ -105,11 +105,11 @@ func TestEdgeEvaluateActionHashIsRiskTagOrderInvariant(t *testing.T) {
 	scrambled.RiskTags = []string{"destructive", "exec", "network"}
 	scrambled.Labels = edgecore.Labels{"alpha": "first", "zeta": "last"}
 
-	first, err := edgeEvaluateActionHash(base, "policy-v1")
+	first, err := edgeEvaluateActionHash(base, "policy-v1", "")
 	if err != nil {
 		t.Fatalf("edgeEvaluateActionHash first: %v", err)
 	}
-	second, err := edgeEvaluateActionHash(scrambled, "policy-v1")
+	second, err := edgeEvaluateActionHash(scrambled, "policy-v1", "")
 	if err != nil {
 		t.Fatalf("edgeEvaluateActionHash scrambled: %v", err)
 	}
