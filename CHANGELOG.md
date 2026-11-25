@@ -24,6 +24,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   and the Gateway binds into the approval's action hash. In enforce and
   enterprise-strict sessions a hook evaluation without a commitment is denied, so
   upgrade the Gateway and cordum-agentd together (task-6f885a33).
+- Edge approvals: after a server-side approval wait, the Gateway re-checks the caller's
+  credential and re-runs the policy check before it consumes the approval. A deny that
+  applies by then, or a credential that no longer authenticates as the same principal,
+  blocks the tool call and leaves the approval unconsumed (task-142fa2f0).
 
 ### Documentation
 
