@@ -65,6 +65,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - The mutating MCP tool descriptions and `docs/mcp/mutating-tools.md` describe
   the Edge approval flow used when `mcp.policy_gate_enabled=true`: approve the
   `approval_ref`, then retry with `_approval_ref`.
+- Memory ids: a `memory_id` of the form `run:<run id>` is accepted only when
+  that run exists in the caller's tenant, and one of the form `<tenant>/<id>`
+  only from that tenant. Starting a workflow run, submitting a job over HTTP or
+  gRPC, and reading or posting a run's chat check this; a request that fails
+  it gets `403` `MEMORY_POLICY_VIOLATION` (gRPC `PermissionDenied`)
+  (task-cdd75ab9).
 - The governed MCP demo worker retries a `429` on the approval poll, and its
   README lists the MCP, agent identity and endpoint prerequisites.
 - Edge approvals: a held MCP call whose arguments differ from a still-pending
