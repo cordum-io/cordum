@@ -125,6 +125,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   tenants needs a worker ID and credential per tenant. With
   `WORKER_ATTESTATION` at `off` or `warn` and `CORDUM_SDK_HANDSHAKE=off`,
   dispatch reads no worker credentials (task-c5aaf69c).
+- System policy: the routes that write the system policy document (policy
+  bundles, publish, rollback, bundle snapshots, global policy, output rules,
+  velocity rules, `PUT` and `POST /api/v1/config` for `system`/`policy`, and
+  pack install, uninstall and marketplace install) answer `403` unless the
+  caller belongs to the gateway's own tenant (`TENANT_ID`, `default` when
+  unset) or its access spans all tenants (`allow_cross_tenant`). A
+  single-tenant deployment is unchanged, because its keys, users and
+  dashboard sessions belong to that tenant. With several tenants, the
+  gateway's tenant is the platform tenant, so keep other tenants out of it.
+  Reading policy is unchanged (task-677dd8af).
 - The dashboard test run no longer fails after every test passes when a console line, written by work that outlived its test file, is still being delivered as the Vitest worker shuts down (`EnvironmentTeardownError: Closing rpc while "onUserConsoleLog" was pending`). `dashboard/vitest.config.ts` ignores exactly that error, so every other unhandled error still fails the run. `KeyboardShortcutsHelp.test.tsx`, which produced it, now answers the AppShell's requests in-process and waits for them to settle (task-04eef2b3).
 
 #### core/mcp — the MCP invocation audit keeps a consumed human approval when scope preapproval also applies (2026-11-12, task-74f4c01e)

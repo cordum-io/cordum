@@ -151,6 +151,9 @@ func (s *server) handleCreateVelocityRule(w http.ResponseWriter, r *http.Request
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
+	if !s.requireSystemPolicyAuthority(w, r) {
+		return
+	}
 
 	var body velocityRuleUpsertRequest
 	if err := decodeJSONBody(w, r, &body); err != nil {
@@ -268,6 +271,9 @@ func (s *server) handlePutVelocityRule(w http.ResponseWriter, r *http.Request) {
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
+	if !s.requireSystemPolicyAuthority(w, r) {
+		return
+	}
 
 	ruleID, err := normalizeVelocityRuleID(r.PathValue("id"))
 	if err != nil {
@@ -343,6 +349,9 @@ func (s *server) handleDeleteVelocityRule(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyWrite, []string{"admin"}, s.configSvc) {
+		return
+	}
+	if !s.requireSystemPolicyAuthority(w, r) {
 		return
 	}
 

@@ -33,6 +33,32 @@ type policyBundleSimulateRequest struct {
 	Content string             `json:"content"`
 }
 
+// errSystemPolicyAuthority is the logged reason for a system policy write's 403.
+var errSystemPolicyAuthority = errors.New("system policy changes need platform authority")
+
+// requireSystemPolicyAuthority admits a write to the system policy document,
+// which governs every tenant, only when the gateway has no auth provider, the
+// caller's access spans all tenants, or the caller belongs to the gateway's
+// own tenant (TENANT_ID, or "default" when unset, as handleAuthConfig
+// advertises). The X-Tenant-ID header is never consulted. Otherwise it writes
+// a 403 and returns false.
+func (s *server) requireSystemPolicyAuthority(w http.ResponseWriter, r *http.Request) bool {
+	if s.auth == nil {
+		return true
+	}
+	if ac := auth.FromRequest(r); ac != nil {
+		platformTenant := strings.TrimSpace(s.tenant)
+		if platformTenant == "" {
+			platformTenant = "default"
+		}
+		if ac.AllowCrossTenant || strings.TrimSpace(ac.Tenant) == platformTenant {
+			return true
+		}
+	}
+	writeForbidden(w, r, errSystemPolicyAuthority)
+	return false
+}
+
 func (s *server) handlePolicyBundles(w http.ResponseWriter, r *http.Request) {
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyRead, []string{"admin"}, s.configSvc) {
 		return
@@ -266,6 +292,9 @@ func (s *server) handlePutPolicyOutputRule(w http.ResponseWriter, r *http.Reques
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
+	if !s.requireSystemPolicyAuthority(w, r) {
+		return
+	}
 	ruleID := strings.TrimSpace(r.PathValue("id"))
 	if ruleID == "" {
 		writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, "rule id required")
@@ -435,6 +464,9 @@ func (s *server) handlePutPolicyBundle(w http.ResponseWriter, r *http.Request) {
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
+	if !s.requireSystemPolicyAuthority(w, r) {
+		return
+	}
 	bundleID := policybundles.BundleIDFromRequest(r)
 	if bundleID == "" {
 		writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, "bundle id required")
@@ -550,6 +582,9 @@ func (s *server) handleDeletePolicyBundle(w http.ResponseWriter, r *http.Request
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
+	if !s.requireSystemPolicyAuthority(w, r) {
+		return
+	}
 	bundleID := policybundles.BundleIDFromRequest(r)
 	if bundleID == "" {
 		writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, "bundle id required")
@@ -658,6 +693,9 @@ func (s *server) handlePublishPolicyBundles(w http.ResponseWriter, r *http.Reque
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
+	if !s.requireSystemPolicyAuthority(w, r) {
+		return
+	}
 	var body policybundles.PolicyPublishRequest
 	if err := decodeJSONBody(w, r, &body); err != nil {
 		writeJSONDecodeError(w, err, "invalid json")
@@ -736,6 +774,9 @@ func (s *server) handlePublishPolicyBundles(w http.ResponseWriter, r *http.Reque
 
 func (s *server) handleRollbackPolicyBundles(w http.ResponseWriter, r *http.Request) {
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyWrite, []string{"admin"}, s.configSvc) {
+		return
+	}
+	if !s.requireSystemPolicyAuthority(w, r) {
 		return
 	}
 	var body policybundles.PolicyRollbackRequest
@@ -1012,6 +1053,9 @@ func (s *server) handleListPolicyBundleSnapshots(w http.ResponseWriter, r *http.
 
 func (s *server) handleCapturePolicyBundleSnapshot(w http.ResponseWriter, r *http.Request) {
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyWrite, []string{"admin"}, s.configSvc) {
+		return
+	}
+	if !s.requireSystemPolicyAuthority(w, r) {
 		return
 	}
 	var body struct {

@@ -124,6 +124,9 @@ func (s *server) handlePutPolicyGlobal(w http.ResponseWriter, r *http.Request) {
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
+	if !s.requireSystemPolicyAuthority(w, r) {
+		return
+	}
 	var body globalPolicyPutRequest
 	if err := decodeJSONBody(w, r, &body); err != nil {
 		writeJSONDecodeError(w, err, "invalid json")
