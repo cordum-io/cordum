@@ -501,6 +501,15 @@ func (s *server) enqueueBusPacket(p *pb.BusPacket) {
 	}
 	p = filtered
 
+	// Stream only a credential-free copy; other bus subscribers still need p.
+	if p.GetAuthToken() != "" || p.GetHeartbeat().GetAuthToken() != "" {
+		p = proto.Clone(p).(*pb.BusPacket)
+		p.AuthToken = ""
+		if hb := p.GetHeartbeat(); hb != nil {
+			hb.AuthToken = ""
+		}
+	}
+
 	data, err := marshalBusPacketForWS(p)
 	if err != nil {
 		wsPacketsDroppedTotal.Inc()

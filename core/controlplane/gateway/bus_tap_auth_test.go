@@ -23,6 +23,8 @@ import (
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	wf "github.com/cordum/cordum/core/workflow"
 	"github.com/redis/go-redis/v9"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 )
 
 // busTapGateway starts the bus taps of a fresh gateway with a wired session
@@ -394,6 +396,45 @@ func TestBusTapAuthStreamMalformedAuditKey(t *testing.T) {
 				}
 			} else if err == nil || !strings.Contains(err.Error(), "CORDUM_AUDIT_PUBLIC_KEY_CORDUM_MCP") || len(bus.subs) != 0 {
 				t.Fatalf("active mode must fail before subscribing: err=%v subscriptions=%d", err, len(bus.subs))
+			}
+		})
+	}
+}
+
+func TestBusTapAuthStreamCredentials(t *testing.T) {
+	for _, c := range []struct {
+		name, subject string
+		packet        *pb.BusPacket
+	}{
+		{"heartbeat_both", capsdk.SubjectHeartbeat, &pb.BusPacket{AuthToken: "outer-token", Payload: &pb.BusPacket_Heartbeat{
+			Heartbeat: &pb.Heartbeat{WorkerId: "worker", AuthToken: "inner-token"},
+		}}},
+		{"heartbeat_inner", capsdk.SubjectHeartbeat, &pb.BusPacket{Payload: &pb.BusPacket_Heartbeat{
+			Heartbeat: &pb.Heartbeat{WorkerId: "worker", AuthToken: "inner-token"},
+		}}},
+		{"result", capsdk.SubjectResult, &pb.BusPacket{AuthToken: "outer-token", Payload: &pb.BusPacket_JobResult{
+			JobResult: &pb.JobResult{JobId: "job", WorkerId: "worker", Status: pb.JobStatus_JOB_STATUS_SUCCEEDED},
+		}}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s, bus := busTapGateway(t, scheduler.HandshakeModeOff, false)
+			client := registerGatewayEdgeStreamClient(t, s, "", true)
+			original := proto.Clone(c.packet)
+			bus.emit(c.subject, c.packet)
+			select {
+			case event := <-client.ch:
+				var relayed pb.BusPacket
+				if err := protojson.Unmarshal(event.data, &relayed); err != nil {
+					t.Fatal(err)
+				}
+				if relayed.GetAuthToken() != "" || relayed.GetHeartbeat().GetAuthToken() != "" {
+					t.Error("stream event carries a credential")
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("stream event missing")
+			}
+			if !proto.Equal(original, c.packet) {
+				t.Fatal("received packet changed during relay")
 			}
 		})
 	}
