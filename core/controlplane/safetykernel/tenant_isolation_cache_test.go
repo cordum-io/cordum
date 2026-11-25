@@ -2,6 +2,7 @@ package safetykernel
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -123,6 +124,42 @@ func TestTenantIsolationAgentCache(t *testing.T) {
 	stored, err := srv.agentStore.Get(ctx, "tenant-a", "agent-iso")
 	if err != nil || stored == nil || stored.RiskTier != "low" || stored.Name != "agent-a-name" {
 		t.Fatalf("tenant-a agent after tenant-b's call = %+v, %v; want unchanged", stored, err)
+	}
+}
+
+// TestTenantIsolationVelocityCounter: a rule keyed by the topic alone counts
+// each tenant's requests in that tenant's own bucket.
+func TestTenantIsolationVelocityCounter(t *testing.T) {
+	srv, mr := newTestServerWithVelocity(t, &config.SafetyPolicy{
+		DefaultDecision: "deny",
+		Rules: []config.PolicyRule{
+			{
+				ID:       "iso-velocity",
+				Match:    config.PolicyMatch{Topics: []string{"job.iso.*"}},
+				Velocity: &config.VelocityConfig{MaxRequests: 2, WindowSeconds: 60, Key: "topic"},
+				Decision: "deny",
+				Reason:   "velocity limit exceeded",
+			},
+			{ID: "iso-allow", Match: config.PolicyMatch{Topics: []string{"job.iso.*"}}, Decision: "allow"},
+		},
+	}, "snap-iso-velocity")
+	req := func(tenant, job string) *pb.PolicyCheckRequest {
+		return &pb.PolicyCheckRequest{JobId: job, Topic: "job.iso.run", Tenant: tenant}
+	}
+
+	for i, want := range []string{"iso-allow", "iso-allow", "iso-velocity"} {
+		if got := isoEvaluate(t, srv, req("tenant-a", fmt.Sprintf("job-a-%d", i+1))).GetRuleId(); got != want {
+			t.Fatalf("tenant-a request %d rule %q, want %q", i+1, got, want)
+		}
+	}
+	members, err := mr.ZMembers(velocityKey("iso-velocity", "tenant-a", "job.iso.run"))
+	if err != nil || len(members) != 3 {
+		t.Fatalf("tenant-a velocity members = %v, %v; want its 3 requests", members, err)
+	}
+
+	b := isoEvaluate(t, srv, req("tenant-b", "job-b-1"))
+	if b.GetDecision() != pb.DecisionType_DECISION_TYPE_ALLOW || b.GetRuleId() != "iso-allow" {
+		t.Fatalf("tenant-b first request got decision %v rule %q reason %q, want ALLOW within its own count", b.GetDecision(), b.GetRuleId(), b.GetReason())
 	}
 }
 

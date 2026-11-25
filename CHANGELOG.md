@@ -103,6 +103,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Safety kernel: velocity rules count each tenant's requests in that tenant's own bucket, `cordum:velocity:{rule}:{tenant}:{key}` with the tenant base64url-encoded. A request without a tenant counts in the default tenant's bucket. Counts held under `cordum:velocity:{rule}:{key}` age out with their window.
+
 - Docs: the gRPC services and Safety Kernel pages give the output metadata check's timeout as
   its `500ms` default, which `CORDUM_OUTPUT_META_TIMEOUT_MS` overrides, instead of `100ms`
   (task-5295965c).
