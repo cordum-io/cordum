@@ -12,6 +12,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -21,8 +22,10 @@ import (
 // the files on its command line, the git HEAD of its cwd and, for kubectl, the
 // context and namespace it targets. The labels join the approval's action
 // identity at the Gateway, and Run computes them again before it lets an
-// allowed command start, so a change in between makes the claim fail. Files a
-// script or tool opens on its own are not bound.
+// allowed command start, so a change in between makes the claim fail. A call
+// is bound only when the binding models its program and every argument
+// (artifactRecognized); any other call is unbound and keeps its digest. Files
+// a script or tool opens on its own are not bound.
 const (
 	artifactMaxFiles      = 16
 	artifactMaxFileBytes  = 8 << 20
@@ -51,8 +54,9 @@ func artifactBindingLabels(ctx context.Context, input HookInput, env map[string]
 	inputs, reason := artifactWithinBudget(ctx, func() (*artifactInputs, string) {
 		return artifactCollect(command, input.CWD, env)
 	})
-	if reason == "" && (family == "test" || family == "build") {
-		// Test and build commands run code they do not name.
+	if inputs != nil && (family == "test" || family == "build") {
+		// Test and build commands run code they do not name. This replaces
+		// a soft reason; a hard one (no inputs) is kept.
 		reason = "implicit-inputs"
 	}
 	labels := map[string]string{"artifact.binding": "bound"}
@@ -128,8 +132,9 @@ func artifactWithinBudget(ctx context.Context, collect func() (*artifactInputs, 
 	}
 }
 
-// artifactCollect finds the inputs a command names, or the reason they cannot
-// be determined.
+// artifactCollect finds the inputs a command names. It returns nil and the
+// reason when they cannot be determined, and the inputs with the
+// artifactRecognized reason when they can.
 func artifactCollect(command, cwd string, env map[string]string) (*artifactInputs, string) {
 	if strings.ContainsAny(command, artifactShellSyntax) {
 		return nil, "shell-syntax"
@@ -137,10 +142,6 @@ func artifactCollect(command, cwd string, env map[string]string) (*artifactInput
 	// Bash splits words on space and tab only (newline is rejected above), so
 	// a field here is the word bash will see.
 	fields := strings.FieldsFunc(command, func(r rune) bool { return r == ' ' || r == '\t' })
-	// Any code option after the first interpreter is also after every later one.
-	if i := slices.IndexFunc(fields, artifactIsInterpreter); i >= 0 && slices.ContainsFunc(fields[i+1:], artifactIsCodeOption) {
-		return nil, "inline-code"
-	}
 	inputs := &artifactInputs{Files: map[string]string{}}
 	for _, field := range fields {
 		for _, name := range artifactNames(field) {
@@ -156,12 +157,13 @@ func artifactCollect(command, cwd string, env map[string]string) (*artifactInput
 		}
 		inputs.KubeContext, inputs.KubeNamespace = kubeContext, namespace
 	}
-	return inputs, ""
+	return inputs, artifactRecognized(fields, cwd, inputs)
 }
 
 // addFile records name when it names a regular file. It returns the unbound
-// reason when name is a URL or a network path, a directory or another
-// non-regular file, cannot be read, or goes past the file limits. A network
+// reason when name is a URL or a network path, a Windows name that depends on
+// a current drive, a directory or another non-regular file, cannot be read,
+// or goes past the file limits. A network
 // path (//host/share, a share on Windows) is never stat'ed, so naming one
 // opens no connection.
 func (in *artifactInputs) addFile(cwd, name string) string {
@@ -170,6 +172,12 @@ func (in *artifactInputs) addFile(cwd, name string) string {
 	}
 	if strings.Contains(name, "://") || strings.HasPrefix(name, "//") {
 		return "url"
+	}
+	if runtime.GOOS == "windows" && !filepath.IsAbs(name) && (name[0] == '/' || filepath.VolumeName(name) != "") {
+		// Windows resolves a rooted (/dir) or drive-relative (D:dir) name
+		// against a current drive the binding does not know, and Git Bash
+		// rewrites a rooted name through its mount table first.
+		return "unreadable"
 	}
 	path := artifactPath(cwd, name)
 	info, err := os.Stat(path)
@@ -211,7 +219,7 @@ func artifactOpen(path string) (*os.File, string) {
 	if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
 		return nil, "unreadable"
 	}
-	file, err := os.Open(filepath.Clean(path))
+	file, err := os.Open(path) // #nosec G304 -- a file the command names, opened read-only to hash it; a lexical clean would resolve ".." differently from the command
 	if err != nil {
 		return nil, "unreadable"
 	}
@@ -227,11 +235,13 @@ func artifactOpen(path string) (*os.File, string) {
 	return file, ""
 }
 
+// artifactPath joins name to cwd without a lexical clean: the kernel resolves
+// ".." after a symlink to the link target's parent, as the command will.
 func artifactPath(cwd, name string) string {
-	if filepath.IsAbs(name) {
-		return filepath.Clean(name)
+	if cwd == "" || filepath.IsAbs(name) {
+		return name
 	}
-	return filepath.Join(cwd, name)
+	return cwd + string(filepath.Separator) + name
 }
 
 // artifactDigest is the keyed sha256 of the bound inputs, written as 8-char
