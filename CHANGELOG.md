@@ -280,6 +280,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- `POST /api/v1/edge/calibration-reports` summarizes the policy decisions recorded in
+  observe-mode Edge sessions for a time window, repositories and labels: deny and
+  require-approval counts per rule, policy rules with no matching event, the most affected
+  tools and command classes, and approval requests per UTC day. The report is stored under
+  a content-derived id, and `GET /api/v1/edge/calibration-reports/{id}` returns it
+  (M5-01B, task-c574681e).
+
 - Execution grant v1 schema (M2A-02A) and `core/execgrant` canonical bytes, strict
   decoder and golden vectors; no service issues, signs or verifies grants yet (task-85bb037a).
 
