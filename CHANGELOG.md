@@ -878,6 +878,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   access get `404 job not found` from `POST /api/v1/approvals/{job_id}/approve`,
   `/reject` and `/repair`, and a failed tenant lookup returns `503` from all
   three.
+- Approvals: `POST /api/v1/approvals/{job_id}/approve` and `/reject` check the
+  job's tenant before its state. A caller who may not access that tenant gets
+  `403 tenant access denied` (`404 job not found` when the job's tenant cannot
+  be read) for a job in any state, and no audit entry is written
+  (task-c043017a).
 - Jobs: when a job's tenant cannot be read, for example after its metadata
   expires (`JOB_META_TTL`, 7 days by default), callers without cross-tenant
   access get `404 job not found` from `GET /api/v1/jobs/{id}/decisions`,
