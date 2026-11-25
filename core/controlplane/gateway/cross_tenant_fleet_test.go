@@ -10,9 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordum/cordum/core/auth/delegation"
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	"github.com/cordum/cordum/core/infra/registry"
+	"github.com/cordum/cordum/core/infra/store"
 )
 
 const fleetWorkerID, fleetPool, fleetTopic = "fleet-worker-b", "fleet-pool-b", "job.fleet-b"
@@ -26,6 +28,7 @@ func init() {
 		crossTenantCase{Route: "POST /api/v1/workers/credentials", Name: "worker-credential", Run: crossTenantFleetWorkerCredential},
 		crossTenantCase{Route: "PUT /api/v1/pools/{name}", Name: "pool-create", Run: crossTenantFleetPoolCreate},
 	)
+	registerFleetAgentCases()
 }
 
 func TestCrossTenantSweepFleet(t *testing.T) { runCrossTenantFamily(t, "PR1-02-FLEET") }
@@ -181,4 +184,145 @@ func crossTenantFleetPoolCreate(t *testing.T, sw *crossTenantSweep) {
 	owner := newCrossTenantSweep(t)
 	seedWorkerCredentialAccessConfig(t, owner.server)
 	assertCrossTenantAbsent(t, owner.as(t, owner.tenantB, http.MethodPut, path, body), "B pool creation")
+}
+
+type crossTenantFleetAgentSeed struct {
+	worker         crossTenantFleetSeed
+	source, target agentResponse
+	token          delegateTokenResponse
+}
+
+type crossTenantFleetAgentState struct {
+	agents      []*store.AgentIdentity
+	link        *store.AgentIdentity
+	delegations delegation.DelegationListPage
+}
+
+func fleetAgentBody(name, worker string) string {
+	return fmt.Sprintf(`{"name":%q,"agent_id":%q,"owner":"fleet-owner-b","risk_tier":"low","description":"private-agent-description-b","allowed_tools":["fleet.read"],"allowed_topics":["job.fleet-b"]}`, name, worker)
+}
+
+func seedFleetAgent(t *testing.T, sw *crossTenantSweep, body string) agentResponse {
+	t.Helper()
+	rr := sw.as(t, sw.tenantB, http.MethodPost, "/api/v1/agents", body)
+	assertCrossTenantAbsent(t, rr, "B agent create")
+	var agent agentResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &agent); err != nil || agent.ID == "" {
+		t.Fatalf("owner agent decode: %v", err)
+	}
+	return agent
+}
+
+func seedFleetAgents(t *testing.T, sw *crossTenantSweep) crossTenantFleetAgentSeed {
+	t.Helper()
+	seed := crossTenantFleetAgentSeed{worker: seedCrossTenantFleet(t, sw)}
+	enableAgentIdentityEntitlement(t, sw.server)
+	setDelegationKeys(t)
+	seed.source = seedFleetAgent(t, sw, fleetAgentBody("fleet-source-b", fleetWorkerID))
+	seed.target = seedFleetAgent(t, sw, fleetAgentBody("fleet-target-b", ""))
+	rr := sw.as(t, sw.tenantB, http.MethodPost, "/api/v1/agents/"+seed.source.ID+"/delegate", fleetDelegateBody(seed))
+	assertCrossTenantAbsent(t, rr, "B delegation seed")
+	if err := json.Unmarshal(rr.Body.Bytes(), &seed.token); err != nil || seed.token.JTI == "" || seed.token.Token == "" {
+		t.Fatalf("owner delegation decode: %v", err)
+	}
+	fleetAgentState(t, sw, seed)
+	return seed
+}
+
+func fleetDelegateBody(seed crossTenantFleetAgentSeed) string {
+	return fmt.Sprintf(`{"target_agent_id":%q,"allowed_actions":["fleet.read"],"allowed_topics":["job.fleet-b"]}`, seed.target.ID)
+}
+
+func fleetAgentState(t *testing.T, sw *crossTenantSweep, seed crossTenantFleetAgentSeed) crossTenantFleetAgentState {
+	t.Helper()
+	ctx := seed.worker.ctx
+	state := crossTenantFleetAgentState{}
+	for _, id := range []string{seed.source.ID, seed.target.ID} {
+		agent, err := sw.server.agentIdentityStore.Get(ctx, sw.tenantB.tenantID, id)
+		if err != nil || agent == nil || agent.TenantID != sw.tenantB.tenantID {
+			t.Fatalf("B agent missing: %v", err)
+		}
+		state.agents = append(state.agents, agent)
+	}
+	var err error
+	state.link, err = sw.server.agentIdentityStore.GetByWorkerIDForTenant(ctx, sw.tenantB.tenantID, fleetWorkerID)
+	if err != nil || state.link == nil || state.link.ID != seed.source.ID {
+		t.Fatalf("B worker link changed: %v", err)
+	}
+	state.delegations, err = sw.server.delegationListStore().ListAll(ctx, sw.tenantB.tenantID, delegation.DelegationListFilter{}, "", 50)
+	if err != nil || len(state.delegations.Items) == 0 {
+		t.Fatalf("B delegations unavailable: %v", err)
+	}
+	service, err := sw.server.delegationTokenService()
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := service.VerifyDelegationToken(ctx, seed.token.Token, seed.target.ID)
+	if err != nil || verified.Subject != seed.source.ID || verified.JTI != seed.token.JTI {
+		t.Fatalf("B delegation invalid: %v", err)
+	}
+	return state
+}
+
+func registerFleetAgentCases() {
+	for _, tc := range []struct{ route, name string }{
+		{"POST /api/v1/agents", "agent-create"},
+		{"GET /api/v1/agents/{id}/delegations", "agent-delegations"},
+		{"POST /api/v1/agents/{id}/delegate", "agent-delegate"},
+		{"POST /api/v1/agents/revoke-delegation", "agent-revoke"},
+		{"GET /api/v1/delegations", "delegations-list"},
+	} {
+		registerCrossTenantFamily("PR1-02-FLEET", crossTenantCase{Route: tc.route, Name: tc.name, Run: func(t *testing.T, sw *crossTenantSweep) {
+			seed := seedFleetAgents(t, sw)
+			method, path, _ := strings.Cut(strings.ReplaceAll(tc.route, "{id}", seed.source.ID), " ")
+			body, marker := fleetAgentRequest(seed, tc.name)
+			before, agents, mark := fleetState(t, sw, seed.worker), fleetAgentState(t, sw, seed), sw.publishMark()
+			rr := sw.as(t, sw.tenantA, method, path, body)
+			if method != http.MethodGet {
+				assertFleetUnchanged(t, sw, seed.worker, before, mark)
+				if !reflect.DeepEqual(agents, fleetAgentState(t, sw, seed)) {
+					t.Error("B agents or delegations changed after A write")
+				}
+			}
+			assertCrossTenantNoLeaks(t, rr, "A agent request", marker)
+			if tc.name == "agent-delegate" || tc.name == "agent-revoke" {
+				if rr.Code != http.StatusForbidden && rr.Code != http.StatusNotFound {
+					t.Errorf("A agent write status=%d, want refusal", rr.Code)
+				}
+			} else if rr.Code != http.StatusForbidden && rr.Code != http.StatusNotFound && (rr.Code < 200 || rr.Code >= 300) {
+				t.Errorf("A agent request status=%d", rr.Code)
+			}
+			if tc.name == "agent-create" {
+				sw = newCrossTenantSweep(t)
+				enableAgentIdentityEntitlement(t, sw.server)
+			}
+			rr = sw.as(t, sw.tenantB, method, path, body)
+			assertCrossTenantAbsent(t, rr, "B agent control")
+			if method == http.MethodGet && !strings.Contains(rr.Body.String(), marker) {
+				t.Fatal("B agent response missing seeded marker")
+			}
+			if tc.name == "agent-revoke" {
+				service, err := sw.server.delegationTokenService()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := service.VerifyDelegationToken(seed.worker.ctx, seed.token.Token, seed.target.ID); err == nil {
+					t.Fatal("B delegation revocation had no effect")
+				}
+			}
+		}})
+	}
+}
+
+func fleetAgentRequest(seed crossTenantFleetAgentSeed, name string) (string, string) {
+	switch name {
+	case "agent-create":
+		return fmt.Sprintf(`{"name":%q,"agent_id":%q,"owner":"caller","risk_tier":"low"}`, seed.source.Name, fleetWorkerID), seed.source.Description
+	case "agent-delegate":
+		return fleetDelegateBody(seed), seed.token.JTI
+	case "agent-revoke":
+		return fmt.Sprintf(`{"jti":%q,"reason":"caller-request"}`, seed.token.JTI), seed.source.Description
+	default:
+		return "", seed.token.JTI
+	}
 }
