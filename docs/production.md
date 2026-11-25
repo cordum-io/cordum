@@ -106,41 +106,41 @@ In production, metrics endpoints bind to loopback unless explicitly set with `GA
 
 ### Key Prometheus Metrics
 
-**Scheduler metrics** (namespace: `cordum`):
+**Scheduler metrics** (namespace: `cordum_scheduler`):
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `cordum_jobs_received_total` | Counter | Jobs received by topic |
-| `cordum_jobs_dispatched_total` | Counter | Jobs dispatched by topic |
-| `cordum_jobs_completed_total` | Counter | Jobs completed by topic and status |
-| `cordum_safety_denied_total` | Counter | Jobs denied by safety kernel |
-| `cordum_safety_unavailable_total` | Counter | Jobs deferred (safety kernel unreachable) |
-| `cordum_output_policy_quarantined_total` | Counter | Output policy quarantines |
-| `cordum_output_denials_total` | Counter | Output policy denials/quarantines |
-| `cordum_output_redactions_total` | Counter | Output policy redactions |
-| `cordum_scheduler_dispatch_latency_seconds` | Histogram | Receive-to-dispatch latency |
-| `cordum_output_check_latency_seconds` | Histogram | Output policy check latency by phase |
-| `cordum_scheduler_stale_jobs` | Gauge | Stale jobs by state (reconciler) |
-| `cordum_scheduler_active_goroutines` | Gauge | Active handler goroutines |
-| `cordum_scheduler_orphan_replayed_total` | Counter | Orphaned PENDING jobs replayed |
-| `cordum_saga_rollbacks_total` | Counter | Saga rollbacks triggered |
-| `cordum_saga_compensation_failed_total` | Counter | Compensation dispatch failures |
-| `cordum_saga_rollback_duration_seconds` | Histogram | Saga rollback duration |
+| `cordum_scheduler_jobs_received_total` | Counter | Jobs received by topic |
+| `cordum_scheduler_jobs_dispatched_total` | Counter | Jobs dispatched by topic |
+| `cordum_scheduler_jobs_completed_total` | Counter | Jobs completed by topic and status |
+| `cordum_scheduler_safety_denied_total` | Counter | Jobs denied by safety kernel |
+| `cordum_scheduler_safety_unavailable_total` | Counter | Jobs deferred (safety kernel unreachable) |
+| `cordum_scheduler_output_policy_quarantined_total` | Counter | Output policy quarantines |
+| `cordum_scheduler_output_denials_total` | Counter | Output policy denials/quarantines |
+| `cordum_scheduler_output_redactions_total` | Counter | Output policy redactions |
+| `cordum_scheduler_scheduler_dispatch_latency_seconds` | Histogram | Receive-to-dispatch latency |
+| `cordum_scheduler_output_check_latency_seconds` | Histogram | Output policy check latency by phase |
+| `cordum_scheduler_scheduler_stale_jobs` | Gauge | Stale jobs by state (reconciler) |
+| `cordum_scheduler_scheduler_active_goroutines` | Gauge | Active handler goroutines |
+| `cordum_scheduler_scheduler_orphan_replayed_total` | Counter | Orphaned PENDING jobs replayed |
+| `cordum_scheduler_saga_rollbacks_total` | Counter | Saga rollbacks triggered |
+| `cordum_scheduler_saga_compensation_failed_total` | Counter | Compensation dispatch failures |
+| `cordum_scheduler_saga_rollback_duration_seconds` | Histogram | Saga rollback duration |
 
-**Gateway metrics** (namespace: `cordum`):
-
-| Metric | Type | Description |
-|--------|------|-------------|
-| `cordum_http_requests_total` | Counter | HTTP requests by method/route/status |
-| `cordum_http_request_duration_seconds` | Histogram | Request latency by method/route |
-
-**Workflow metrics** (namespace: `cordum`):
+**Gateway metrics** (namespace: `cordum_api_gateway`):
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `cordum_workflows_started_total` | Counter | Workflows started by name |
-| `cordum_workflows_completed_total` | Counter | Workflows completed by name/status |
-| `cordum_workflow_duration_seconds` | Histogram | Workflow duration by name |
+| `cordum_api_gateway_http_requests_total` | Counter | HTTP requests by method/route/status |
+| `cordum_api_gateway_http_request_duration_seconds` | Histogram | Request latency by method/route |
+
+**Workflow metrics** (not exported: no Cordum process registers them):
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `cordum_workflows_started_total` | Counter | Not exported. Workflows started by name |
+| `cordum_workflows_completed_total` | Counter | Not exported. Workflows completed by name/status |
+| `cordum_workflow_duration_seconds` | Histogram | Not exported. Workflow duration by name |
 
 ### Centralized Logging
 
@@ -440,7 +440,7 @@ cluster once the pods are ready. Re-run it if you replace the cluster.
 
 ### Runbook: Safety Kernel Unreachable
 
-**Symptoms**: `cordum_safety_unavailable_total` rising, jobs stuck in PENDING.
+**Symptoms**: `cordum_scheduler_safety_unavailable_total` rising, jobs stuck in PENDING.
 
 **Impact**: Policy checks cannot be evaluated. In the default closed modes, the Gateway rejects new submits (HTTP 403, gRPC `PermissionDenied`) and the scheduler requeues accepted jobs without publishing them (backoff up to `safetyThrottleDelay = 5s`). Operator-selected open modes change this: Gateway `POLICY_CHECK_FAIL_MODE=open` accepts submits, and scheduler `scheduler.input_fail_mode=open` admits only topics listed in `scheduler.input_fail_open_scope`. For Edge, the Gateway's evaluate returns deny for enforce and enterprise-strict sessions, and allow marked degraded for observe sessions. See the [failure and partition behavior contract](contract/failure-behavior.md).
 
@@ -562,7 +562,7 @@ cluster once the pods are ready. Re-run it if you replace the cluster.
 
 3. **Message delivery guarantees**: NATS JetStream provides at-least-once delivery for job requests. Messages published during a partition may be lost if not yet replicated. The reconciler (`cordum:reconciler:default`) will detect stuck jobs and re-queue them.
 
-4. **Manual replay**: For orphaned PENDING jobs, the scheduler's pending replayer periodically scans and re-dispatches them. Monitor `cordum_scheduler_orphan_replayed_total` to confirm replay is working.
+4. **Manual replay**: For orphaned PENDING jobs, the scheduler's pending replayer periodically scans and re-dispatches them. Monitor `cordum_scheduler_scheduler_orphan_replayed_total` to confirm replay is working.
 
 5. **Recovery**: If a NATS node is permanently lost:
    ```bash
@@ -604,20 +604,9 @@ cluster once the pods are ready. Re-run it if you replace the cluster.
      https://cordum.example.com/api/v1/dlq/JOB_ID
    ```
 
-4. **Alerting threshold**: Set an alert when DLQ depth exceeds your SLO:
-   ```yaml
-   - alert: CordumDLQDepthHigh
-     expr: cordum_dlq_entries > 100
-     for: 10m
-     labels:
-       severity: warning
-     annotations:
-       summary: DLQ depth exceeds 100 entries
-   ```
-
 ### Runbook: High Latency
 
-**Symptoms**: `cordum_scheduler_dispatch_latency_seconds` p99 > 1s, `cordum_http_request_duration_seconds` p99 > 500ms, dashboard feels slow.
+**Symptoms**: `cordum_scheduler_scheduler_dispatch_latency_seconds` p99 > 1s, `cordum_api_gateway_http_request_duration_seconds` p99 > 500ms, dashboard feels slow.
 
 **Impact**: Job throughput degrades, workflow completion times increase, user experience suffers.
 
@@ -626,16 +615,16 @@ cluster once the pods are ready. Re-run it if you replace the cluster.
 1. **Identify the bottleneck**:
    ```promql
    # Gateway latency by route
-   histogram_quantile(0.99, rate(cordum_http_request_duration_seconds_bucket[5m]))
+   histogram_quantile(0.99, rate(cordum_api_gateway_http_request_duration_seconds_bucket[5m]))
 
    # Scheduler dispatch latency
-   histogram_quantile(0.99, rate(cordum_scheduler_dispatch_latency_seconds_bucket[5m]))
+   histogram_quantile(0.99, rate(cordum_scheduler_scheduler_dispatch_latency_seconds_bucket[5m]))
 
    # Output policy check latency
-   histogram_quantile(0.99, rate(cordum_output_check_latency_seconds_bucket[5m]))
+   histogram_quantile(0.99, rate(cordum_scheduler_output_check_latency_seconds_bucket[5m]))
 
    # Safety kernel evaluation (should be < 5ms p99)
-   histogram_quantile(0.99, rate(cordum_output_eval_duration_seconds_bucket[5m]))
+   histogram_quantile(0.99, rate(cordum_scheduler_output_eval_duration_seconds_bucket[5m]))
    ```
 
 2. **Redis latency**: Check Redis slowlog:
@@ -658,11 +647,11 @@ cluster once the pods are ready. Re-run it if you replace the cluster.
 5. **Quick wins**:
    - Increase gateway/scheduler replicas manually if HPA is too slow
    - Check for hot topics (single topic consuming all scheduler capacity)
-   - Verify job lock contention: `cordum_scheduler_job_lock_wait_seconds`
+   - Verify job lock contention: `cordum_scheduler_scheduler_job_lock_wait_seconds`
 
 ### Runbook: Worker Pool Unresponsive
 
-**Symptoms**: Jobs stuck in DISPATCHED state, heartbeats missing for a pool, `cordum_scheduler_stale_jobs{state="dispatched"}` rising.
+**Symptoms**: Jobs stuck in DISPATCHED state, heartbeats missing for a pool, `cordum_scheduler_scheduler_stale_jobs{state="dispatched"}` rising.
 
 **Steps**:
 
@@ -699,7 +688,7 @@ cluster once the pods are ready. Re-run it if you replace the cluster.
 
 **Gateway**: Fully stateless. Add replicas freely. Each instance handles HTTP + gRPC + WebSocket connections independently. The production overlay HPA scales on CPU (70%) and memory (80%).
 
-**Safety Kernel**: Fully stateless — policies are loaded into memory from Redis/config and cached. Each instance evaluates independently. Scale when `cordum_output_eval_duration_seconds` p99 exceeds 5ms.
+**Safety Kernel**: Fully stateless — policies are loaded into memory from Redis/config and cached. Each instance evaluates independently. Scale when `cordum_scheduler_output_eval_duration_seconds` p99 exceeds 5ms.
 
 **Scheduler**: Multiple replicas are safe. The reconciler uses a distributed Redis lock (`cordum:reconciler:default`, TTL = 2x poll interval) so only one instance runs timeout checks at a time. Job handling is concurrent across all replicas via NATS queue groups. Scale when dispatch latency rises.
 
@@ -745,7 +734,7 @@ groups:
   - alert: CordumSafetyKernelSlow
     expr: |
       histogram_quantile(0.99,
-        rate(cordum_output_eval_duration_seconds_bucket[5m])
+        rate(cordum_scheduler_output_eval_duration_seconds_bucket[5m])
       ) > 0.005
     for: 5m
     labels:
@@ -756,23 +745,11 @@ groups:
         Output policy evaluation is slower than the 5ms p99 target.
         Consider scaling safety kernel replicas.
 
-  # DLQ depth
-  - alert: CordumDLQDepthHigh
-    expr: cordum_dlq_entries > 100
-    for: 10m
-    labels:
-      severity: warning
-    annotations:
-      summary: DLQ depth exceeds 100 entries
-      description: >
-        Dead-letter queue has {{ $value }} entries.
-        Triage and retry or delete entries.
-
   # Job failure rate
   - alert: CordumJobFailureRateHigh
     expr: |
-      rate(cordum_jobs_completed_total{status="failed"}[5m])
-      / rate(cordum_jobs_completed_total[5m]) > 0.1
+      rate(cordum_scheduler_jobs_completed_total{status="failed"}[5m])
+      / rate(cordum_scheduler_jobs_completed_total[5m]) > 0.1
     for: 10m
     labels:
       severity: warning
@@ -782,24 +759,11 @@ groups:
         More than 10% of completed jobs are failing.
         Check worker logs and DLQ for root cause.
 
-  # Worker heartbeat gaps
-  - alert: CordumWorkerHeartbeatGap
-    expr: |
-      time() - cordum_last_heartbeat_timestamp > 60
-    for: 5m
-    labels:
-      severity: warning
-    annotations:
-      summary: Worker heartbeat gap exceeds 60 seconds
-      description: >
-        A worker pool has not sent a heartbeat in over 60 seconds.
-        Check worker connectivity and NATS health.
-
   # Dispatch latency
   - alert: CordumDispatchLatencyHigh
     expr: |
       histogram_quantile(0.99,
-        rate(cordum_scheduler_dispatch_latency_seconds_bucket[5m])
+        rate(cordum_scheduler_scheduler_dispatch_latency_seconds_bucket[5m])
       ) > 1
     for: 5m
     labels:
@@ -812,7 +776,7 @@ groups:
 
   # Saga compensation failures
   - alert: CordumSagaCompensationFailing
-    expr: rate(cordum_saga_compensation_failed_total[10m]) > 0
+    expr: rate(cordum_scheduler_saga_compensation_failed_total[10m]) > 0
     for: 10m
     labels:
       severity: warning
@@ -824,7 +788,7 @@ groups:
 
   # Stale jobs (reconciler not clearing them)
   - alert: CordumStaleJobsHigh
-    expr: cordum_scheduler_stale_jobs > 50
+    expr: cordum_scheduler_scheduler_stale_jobs > 50
     for: 15m
     labels:
       severity: warning
@@ -836,7 +800,7 @@ groups:
 
   # Output policy quarantine spike
   - alert: CordumOutputQuarantineSpike
-    expr: rate(cordum_output_policy_quarantined_total[5m]) > 1
+    expr: rate(cordum_scheduler_output_policy_quarantined_total[5m]) > 1
     for: 5m
     labels:
       severity: warning

@@ -371,7 +371,7 @@ cordumctl topic list
 
 ## 3. Safety Kernel Unavailable
 
-**Symptoms**: `cordum_safety_unavailable_total` rising, jobs stuck, scheduler logs show `safety_unavailable`.
+**Symptoms**: `cordum_scheduler_safety_unavailable_total` rising, jobs stuck, scheduler logs show `safety_unavailable`.
 
 ### TLS misconfiguration
 
