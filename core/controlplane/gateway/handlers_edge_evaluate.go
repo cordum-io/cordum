@@ -169,15 +169,7 @@ func (s *server) handleEdgeEvaluate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, outcome.response)
 		return
 	}
-	outcome := edgeEvaluateOutcomeFromSafety(policyInput.event.EventID, safetyResp)
-	outcome = s.decorateEdgeEvaluateTierEvidence(r.Context(), policyInput.event.Labels, outcome)
-	// An enforcing session binds every approval to the original input, so a
-	// hook evaluation must carry the Edge client's commitment to it.
-	inputCommitment := strings.TrimSpace(evalCtx.req.InputCommitment)
-	if inputCommitment == "" && policyInput.event.Layer == edgecore.LayerHook && evalCtx.session.PolicyMode != edgecore.PolicyModeObserve {
-		outcome = outcome.edgeEvaluateDeny("Edge input commitment required; upgrade cordum-agentd")
-	}
-	actionHash, err := edgeEvaluateActionHash(policyInput.event, outcome.policySnapshot, inputCommitment)
+	outcome, actionHash, err := s.edgeEvaluateDecide(r.Context(), evalCtx, policyInput, safetyResp)
 	if err != nil {
 		writeEdgeEventRequestError(w, r, err, "invalid edge evaluate request")
 		return
@@ -203,6 +195,11 @@ func (s *server) handleEdgeEvaluate(w http.ResponseWriter, r *http.Request) {
 					writeJSON(w, timeoutOutcome.response)
 					return
 				}
+			}
+			outcome, actionHash, err = s.edgeEvaluateAfterWait(r, evalCtx, policyInput, outcome)
+			if err != nil {
+				writeEdgeEventRequestError(w, r, err, "invalid edge evaluate request")
+				return
 			}
 		}
 
@@ -286,7 +283,12 @@ func (s *server) handleEdgeEvaluate(w http.ResponseWriter, r *http.Request) {
 					break
 				}
 			}
-			waitedOutcome, waitErr := s.consumeEdgeEvaluateApproval(r.Context(), evalCtx.store, appended, outcome, approval.ApprovalRef, actionHash)
+			current, currentHash, err := s.edgeEvaluateAfterWait(r, evalCtx, policyInput, outcome)
+			if err != nil {
+				writeEdgeEventRequestError(w, r, err, "invalid edge evaluate request")
+				return
+			}
+			waitedOutcome, waitErr := s.consumeEdgeEvaluateApproval(r.Context(), evalCtx.store, appended, current, approval.ApprovalRef, currentHash)
 			if waitErr != nil {
 				writeEdgeApprovalStoreError(w, r, waitErr, "consume edge evaluate approval after wait")
 				return
@@ -450,6 +452,50 @@ func (s *server) evaluateEdgeSafety(ctx context.Context, req *pb.PolicyCheckRequ
 	evalCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	return s.safetyClient.Evaluate(evalCtx, req)
+}
+
+// edgeEvaluateDecide turns a safety response into the evaluate outcome and the
+// action hash that an approval for that outcome is bound to.
+func (s *server) edgeEvaluateDecide(ctx context.Context, evalCtx edgeEvaluateContext, policyInput edgeEvaluatePolicyInput, safetyResp *pb.PolicyCheckResponse) (edgeEvaluateDecisionOutcome, string, error) {
+	outcome := edgeEvaluateOutcomeFromSafety(policyInput.event.EventID, safetyResp)
+	outcome = s.decorateEdgeEvaluateTierEvidence(ctx, policyInput.event.Labels, outcome)
+	// An enforcing session binds every approval to the original input, so a
+	// hook evaluation must carry the Edge client's commitment to it.
+	inputCommitment := strings.TrimSpace(evalCtx.req.InputCommitment)
+	if inputCommitment == "" && policyInput.event.Layer == edgecore.LayerHook && evalCtx.session.PolicyMode != edgecore.PolicyModeObserve {
+		outcome = outcome.edgeEvaluateDeny("Edge input commitment required; upgrade cordum-agentd")
+	}
+	actionHash, err := edgeEvaluateActionHash(policyInput.event, outcome.policySnapshot, inputCommitment)
+	return outcome, actionHash, err
+}
+
+// edgeEvaluateAfterWait re-checks authority once a server-side approval wait
+// returns. The caller's credential must still authenticate as the same
+// principal, and policy is evaluated again. The consume that follows uses this
+// outcome, so a deny that applies by now wins and the approval stays unconsumed.
+func (s *server) edgeEvaluateAfterWait(r *http.Request, evalCtx edgeEvaluateContext, policyInput edgeEvaluatePolicyInput, waited edgeEvaluateDecisionOutcome) (edgeEvaluateDecisionOutcome, string, error) {
+	if !s.edgeEvaluateCallerAuthenticatesAs(r, evalCtx.principalID) {
+		return waited.edgeEvaluateDeny("caller credential no longer authenticates; this action was not run"), "", nil
+	}
+	safetyResp, err := s.evaluateEdgeSafety(r.Context(), policyInput.policyRequest)
+	if err != nil {
+		return edgeEvaluateOutcomeFromSafetyUnavailable(policyInput.event.EventID, evalCtx.session.PolicyMode, policyInput.classification), "", nil
+	}
+	return s.edgeEvaluateDecide(r.Context(), evalCtx, policyInput, safetyResp)
+}
+
+// edgeEvaluateCallerAuthenticatesAs authenticates the request's credential
+// again and resolves its principal the way prepareEdgeEvaluateContext did.
+func (s *server) edgeEvaluateCallerAuthenticatesAs(r *http.Request, principalID string) bool {
+	if s.auth == nil {
+		return true
+	}
+	authCtx, err := s.auth.AuthenticateHTTP(r)
+	if err != nil || authCtx == nil {
+		return false
+	}
+	current, err := s.resolveEdgeAuthPrincipal(r.WithContext(context.WithValue(r.Context(), auth.ContextKey{}, authCtx)))
+	return err == nil && strings.TrimSpace(current) == principalID
 }
 
 func edgeEvaluateOutcomeFromSafety(eventID string, resp *pb.PolicyCheckResponse) edgeEvaluateDecisionOutcome {
