@@ -4937,6 +4937,11 @@ export interface components {
         EdgeSession: {
             agent_product?: string;
             agent_version?: string;
+            /**
+             * @description Server-derived on each response from the policy mode, the enforcement layers, the session status and the agent heartbeat. `stale` means the session has ended or has no heartbeat within the session heartbeat TTL. Combinations that match no rule report `unsupported`. `executor-enforced` is reserved and not reported. Managed-settings status and binary integrity are not inputs yet.
+             * @enum {string}
+             */
+            assurance_state?: "compatibility" | "hook-mediated" | "executor-enforced" | "unsupported" | "stale";
             cwd?: string;
             device_id?: string;
             /** Format: date-time */

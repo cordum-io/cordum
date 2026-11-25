@@ -306,7 +306,7 @@ claims:
     public_sources: ["cordum:docs/adr/008-spa-auth-localstorage.md:38","Cordum-site:docs-site/docs/concepts/adr/adr-008-spa-auth-localstorage.md:45"]
   - id: CLM-051
     statement: "MCP tool calls are admitted only by the caller identity's server and tool allowlists, absent lists admit nothing, and SSE sessions re-authenticate and disconnect when the credential stops authenticating."
-    boundary: "The gateway HTTP MCP transport and cordum-mcp, which enable scope enforcement; MCP servers reached without Cordum are not covered."
+    boundary: "The gateway HTTP MCP transport, which enables scope enforcement; cordum-mcp enables its local scope check only with an agent id, and that check is advisory; MCP servers reached without Cordum are not covered."
     status: supported
     invariants: ["I01","I07"]
     findings: ["R15"]
