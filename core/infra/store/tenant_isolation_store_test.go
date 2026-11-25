@@ -20,13 +20,20 @@ func TestTenantIsolationAgentIdentityReadOnly(t *testing.T) {
 	if err != nil || before == nil {
 		t.Fatalf("seed read: %v", err)
 	}
-	got, err := s.Get(ctx, "tenant-a", created.ID)
-	if err != nil || got != nil {
-		t.Errorf("foreign read: %v, %v", got, err)
-	}
-	after, err := s.Get(ctx, "tenant-b", created.ID)
-	if err != nil || !reflect.DeepEqual(before, after) {
-		t.Errorf("B identity changed: %v", err)
+	for _, tenant := range []string{"tenant-a", ""} {
+		t.Run("tenant="+tenant, func(t *testing.T) {
+			got, err := s.Get(ctx, tenant, created.ID)
+			if got != nil {
+				t.Error("foreign read returned B identity")
+			}
+			if tenant != "" && err != nil {
+				t.Errorf("foreign read: %v", err)
+			}
+			after, err := s.Get(ctx, "tenant-b", created.ID)
+			if err != nil || !reflect.DeepEqual(before, after) {
+				t.Errorf("B identity changed: %v", err)
+			}
+		})
 	}
 }
 
