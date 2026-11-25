@@ -237,7 +237,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 	}, memoryID)
 
 	// Resolve agent context for audit events (same as HTTP path).
-	grpcAgentID, grpcAgentName, grpcAgentRiskTier := s.resolveAgentForAudit(ctx, payloadReq.Labels["agent_id"])
+	grpcAgentID, grpcAgentName, grpcAgentRiskTier := s.resolveAgentForAudit(ctx, orgID, payloadReq.Labels["agent_id"])
 	actorForAudit, identitySource, identityLabel, roleForAudit := grpcAuditActor(ctx)
 
 	if policyResult.Denied {
@@ -550,9 +550,8 @@ func (s *server) requireRoleGRPC(ctx context.Context, roles ...string) error {
 
 // bindGRPCSubmitAgentID returns the agent linked to principalID in orgID, or
 // "" when there is none. Like handleSubmitJobHTTP, it refuses a client
-// labels.agent_id that does not equal that agent: resolveAgentForAudit reads
-// the label without a tenant check, so an unchecked label could name any
-// tenant's agent in the policy check and the audit trail. Binding needs a
+// labels.agent_id that does not equal that agent. Policy and audit context
+// use the agent bound to that principal within the job tenant. Binding needs a
 // credential-backed principal (AuthenticatedPrincipal): SubmitJob attributes
 // the job to the request's principal_id when the auth context has none, and
 // to a caller-asserted x-principal-id, but a caller must not get another
