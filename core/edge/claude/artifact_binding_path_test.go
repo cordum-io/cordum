@@ -198,7 +198,7 @@ func artifactReaderWindows(t *testing.T, cwd string) {
 		artifactWriteFiles(t, real, map[string]string{"m.yaml": "kind: ConfigMap\n"})
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if out, err := exec.CommandContext(ctx, "cmd", "/c", "mklink", "/J", filepath.Join(cwd, "j"), real).CombinedOutput(); err != nil {
+		if out, err := exec.CommandContext(ctx, "cmd", "/c", "mklink", "/J", filepath.Join(cwd, "j"), real).CombinedOutput(); err != nil { // no-shell-exec-lint: mklink is a cmd builtin; this bounded fixture uses only test-owned paths.
 			t.Fatalf("mklink: %v %s", err, out)
 		}
 		artifactCheckReaderPath(t, cwd, "kubectl apply -f j/m.yaml", map[string]string{"KUBECONFIG": filepath.Join(cwd, "kc.yaml")}, "")
