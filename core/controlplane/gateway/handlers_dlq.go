@@ -102,13 +102,8 @@ func (s *server) handleDeleteDLQ(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if s.jobStore != nil {
-		if tenant, _ := s.jobStore.GetTenant(r.Context(), jobID); tenant != "" {
-			if err := s.requireTenantAccess(r, tenant); err != nil {
-				writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
-				return
-			}
-		}
+	if !s.requireJobTenantAccess(w, r, jobID) {
+		return
 	}
 	if err := s.dlqStore.Delete(r.Context(), jobID); err != nil {
 		slog.Error("dlq delete failed", "error", err, "job_id", jobID) // #nosec -- job id is validated and used for diagnostics.

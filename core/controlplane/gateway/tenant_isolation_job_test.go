@@ -3,6 +3,8 @@ package gateway
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +18,9 @@ import (
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/redis/go-redis/v9"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func tenantObjectRequest(method, path, tenant, id string) *http.Request {
@@ -130,70 +135,195 @@ func expireTenantObjectJobMeta(t *testing.T, s *server, id string) {
 }
 
 func TestTenantIsolationGatewayJobReads(t *testing.T) {
-	for _, tc := range []struct {
-		surface string
-		expired bool
-	}{
-		{"detail", false}, {"decisions", false}, {"stream", false},
-		{"dlq-list", false}, {"dlq-page", false}, {"dlq-delete", false}, {"policy-output", false},
-		{"detail", true}, {"stream", true}, {"dlq-list", true}, {"dlq-page", true},
-	} {
-		surface, expired := tc.surface, tc.expired
-		t.Run(fmt.Sprintf("%s/expired=%t", surface, expired), func(t *testing.T) {
-			s, _, _ := newTestGateway(t)
-			s.auth = newBasicAuthForTest(t, nil)
-			id := seedTenantObjectJob(t, s)
-			handlers := map[string]http.HandlerFunc{"detail": s.handleGetJob, "decisions": s.handleListJobDecisions,
-				"stream": s.handleJobStream, "dlq-list": s.handleListDLQ, "dlq-page": s.handleListDLQPage,
-				"dlq-delete": s.handleDeleteDLQ, "policy-output": s.handleListPolicyAudit}
-			handler := handlers[surface]
-			paths := map[string]string{"detail": "/api/v1/jobs/" + id, "decisions": "/api/v1/jobs/" + id + "/decisions",
-				"stream": "/api/v1/jobs/" + id + "/stream", "dlq-list": "/api/v1/dlq", "dlq-page": "/api/v1/dlq/page",
-				"dlq-delete": "/api/v1/dlq/" + id, "policy-output": "/api/v1/policy/audit?type=output"}
-			path := paths[surface]
-			if surface != "stream" && surface != "dlq-delete" {
-				owner := httptest.NewRecorder()
-				handler(owner, tenantObjectRequest(http.MethodGet, path, "tenant-b", id))
-				if owner.Code != http.StatusOK || !strings.Contains(owner.Body.String(), "private-") {
-					t.Fatalf("owner control did not return seeded data: %d %s", owner.Code, owner.Body.String())
+	for _, expired := range []bool{false, true} {
+		for _, surface := range []string{"detail", "decisions", "stream", "dlq-list", "dlq-page", "dlq-delete", "policy-output"} {
+			t.Run(fmt.Sprintf("%s/expired=%t", surface, expired), func(t *testing.T) {
+				s, _, _ := newTestGateway(t)
+				s.auth = newBasicAuthForTest(t, nil)
+				id := seedTenantObjectJob(t, s)
+				handlers := map[string]http.HandlerFunc{"detail": s.handleGetJob, "decisions": s.handleListJobDecisions,
+					"stream": s.handleJobStream, "dlq-list": s.handleListDLQ, "dlq-page": s.handleListDLQPage,
+					"dlq-delete": s.handleDeleteDLQ, "policy-output": s.handleListPolicyAudit}
+				handler := handlers[surface]
+				paths := map[string]string{"detail": "/api/v1/jobs/" + id, "decisions": "/api/v1/jobs/" + id + "/decisions",
+					"stream": "/api/v1/jobs/" + id + "/stream", "dlq-list": "/api/v1/dlq", "dlq-page": "/api/v1/dlq/page",
+					"dlq-delete": "/api/v1/dlq/" + id, "policy-output": "/api/v1/policy/audit?type=output"}
+				path := paths[surface]
+				if surface != "stream" && surface != "dlq-delete" {
+					owner := httptest.NewRecorder()
+					handler(owner, tenantObjectRequest(http.MethodGet, path, "tenant-b", id))
+					if owner.Code != http.StatusOK || !strings.Contains(owner.Body.String(), "private-") {
+						t.Fatalf("owner control did not return seeded data: %d %s", owner.Code, owner.Body.String())
+					}
 				}
+				if expired {
+					expireTenantObjectJobMeta(t, s, id)
+				}
+				tenantObjectUnchanged(t, s)
+				rr := httptest.NewRecorder()
+				method := http.MethodGet
+				if surface == "dlq-delete" {
+					method = http.MethodDelete
+				}
+				handler(rr, tenantObjectRequest(method, path, "tenant-a", id))
+				if strings.Contains(rr.Body.String(), "private-") || strings.Contains(rr.Body.String(), "tenant-b") {
+					t.Errorf("response released tenant B data: %s", rr.Body.String())
+				}
+				if rr.Code >= http.StatusInternalServerError {
+					t.Errorf("infrastructure error is not an isolation result: %d", rr.Code)
+				}
+				if surface == "stream" && (rr.Code != http.StatusForbidden && rr.Code != http.StatusNotFound || len(s.clients) != 0) {
+					t.Errorf("stream was not refused before upgrade: %d", rr.Code)
+				}
+			})
+		}
+	}
+}
+
+func TestTenantIsolationGatewayJobGRPC(t *testing.T) {
+	for _, expired := range []bool{false, true} {
+		t.Run(fmt.Sprintf("expired=%t", expired), func(t *testing.T) {
+			s, _, _ := newTestGateway(t)
+			id := seedTenantObjectJob(t, s)
+			req := &pb.GetJobStatusRequest{JobId: id}
+			ownerCtx := tenantObjectRequest(http.MethodGet, "/", "tenant-b", id).Context()
+			owner, err := s.GetJobStatus(ownerCtx, req)
+			if err != nil || owner.GetResultPtr() != "redis://res:"+id || owner.GetStatus() != string(model.JobStateQuarantined) {
+				t.Fatalf("owner control: %v, %v", owner, err)
 			}
 			if expired {
 				expireTenantObjectJobMeta(t, s, id)
 			}
 			tenantObjectUnchanged(t, s)
-			rr := httptest.NewRecorder()
-			method := http.MethodGet
-			if surface == "dlq-delete" {
-				method = http.MethodDelete
-			}
-			handler(rr, tenantObjectRequest(method, path, "tenant-a", id))
-			if strings.Contains(rr.Body.String(), "private-") || strings.Contains(rr.Body.String(), "tenant-b") {
-				t.Errorf("response released tenant B data: %s", rr.Body.String())
-			}
-			if rr.Code >= http.StatusInternalServerError {
-				t.Errorf("infrastructure error is not an isolation result: %d", rr.Code)
-			}
-			if surface == "stream" && (rr.Code != http.StatusForbidden && rr.Code != http.StatusNotFound || len(s.clients) != 0) {
-				t.Errorf("stream was not refused before upgrade: %d", rr.Code)
+			ctx := tenantObjectRequest(http.MethodGet, "/", "tenant-a", id).Context()
+			got, err := s.GetJobStatus(ctx, req)
+			if err == nil || got != nil {
+				t.Errorf("cross-tenant status returned data: %v, %v", got, err)
 			}
 		})
 	}
 }
 
-func TestTenantIsolationGatewayJobGRPC(t *testing.T) {
-	s, _, _ := newTestGateway(t)
-	id := seedTenantObjectJob(t, s)
-	req := &pb.GetJobStatusRequest{JobId: id}
-	ownerCtx := tenantObjectRequest(http.MethodGet, "/", "tenant-b", id).Context()
-	owner, err := s.GetJobStatus(ownerCtx, req)
-	if err != nil || owner.GetResultPtr() != "redis://res:"+id || owner.GetStatus() != string(model.JobStateQuarantined) {
-		t.Fatalf("owner control: %v, %v", owner, err)
+func crossTenantJobRequest(method, path, id string) *http.Request {
+	r := tenantObjectRequest(method, path, "tenant-a", id)
+	auth.FromRequest(r).AllowCrossTenant = true
+	return r
+}
+
+func tenantObjectJSON(t *testing.T, handler http.HandlerFunc, r *http.Request, out any) {
+	t.Helper()
+	rr := httptest.NewRecorder()
+	handler(rr, r)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("%s: %d %s", r.URL.Path, rr.Code, rr.Body.String())
 	}
-	tenantObjectUnchanged(t, s)
-	ctx := tenantObjectRequest(http.MethodGet, "/", "tenant-a", id).Context()
-	got, err := s.GetJobStatus(ctx, req)
-	if err == nil || got != nil {
-		t.Errorf("cross-tenant status returned data: %v, %v", got, err)
+	if err := json.Unmarshal(rr.Body.Bytes(), out); err != nil {
+		t.Fatal(err)
 	}
+}
+
+type tenantObjectRoute struct {
+	method, path string
+	handler      http.HandlerFunc
+}
+
+func TestTenantIsolationGatewayJobWithoutTenant(t *testing.T) {
+	const outputPath, statsPath = "/api/v1/policy/audit?type=output", "/api/v1/policy/output/stats"
+	for _, expired := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cross-tenant/expired=%t", expired), func(t *testing.T) {
+			s, _, _ := newTestGateway(t)
+			s.auth = newBasicAuthForTest(t, nil)
+			id := seedTenantObjectJob(t, s)
+			if expired {
+				expireTenantObjectJobMeta(t, s, id)
+			}
+			rr := httptest.NewRecorder()
+			s.handleListJobDecisions(rr, crossTenantJobRequest(http.MethodGet, "/api/v1/jobs/"+id+"/decisions", id))
+			if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "private-decision-b") {
+				t.Errorf("decisions: %d %s", rr.Code, rr.Body.String())
+			}
+			got, err := s.GetJobStatus(crossTenantJobRequest(http.MethodGet, "/", id).Context(), &pb.GetJobStatusRequest{JobId: id})
+			if err != nil || got.GetStatus() != string(model.JobStateQuarantined) || got.GetResultPtr() != "redis://res:"+id {
+				t.Errorf("status: %v, %v", got, err)
+			}
+			var list struct {
+				Items []map[string]any `json:"items"`
+			}
+			tenantObjectJSON(t, s.handleListPolicyAudit, crossTenantJobRequest(http.MethodGet, outputPath, id), &list)
+			var stats map[string]any
+			tenantObjectJSON(t, s.handlePolicyOutputStats, crossTenantJobRequest(http.MethodGet, statsPath, id), &stats)
+			if len(list.Items) != 1 || list.Items[0]["job_id"] != id || stats["quarantined_24h"] != float64(1) {
+				t.Errorf("output: %v %v", list.Items, stats)
+			}
+			rr = httptest.NewRecorder()
+			s.handleDeleteDLQ(rr, crossTenantJobRequest(http.MethodDelete, "/api/v1/dlq/"+id, id))
+			if _, err := s.dlqStore.Get(context.Background(), id); rr.Code != http.StatusNoContent || !errors.Is(err, redis.Nil) {
+				t.Errorf("dlq delete: %d %s, entry lookup %v", rr.Code, rr.Body.String(), err)
+			}
+		})
+	}
+	t.Run("owner/expired=true", func(t *testing.T) {
+		s, bus, _ := newTestGateway(t)
+		s.auth = newBasicAuthForTest(t, nil)
+		id := seedTenantObjectJob(t, s)
+		expireTenantObjectJobMeta(t, s, id)
+		tenantObjectUnchanged(t, s)
+		published := len(bus.published)
+		routes := []tenantObjectRoute{
+			{http.MethodGet, "/api/v1/jobs/" + id + "/decisions", s.handleListJobDecisions},
+			{http.MethodPost, "/api/v1/jobs/" + id + "/cancel", s.handleCancelJob},
+			{http.MethodDelete, "/api/v1/dlq/" + id, s.handleDeleteDLQ},
+			{http.MethodPost, "/api/v1/dlq/" + id + "/retry", s.handleRetryDLQ},
+		}
+		for _, tenant := range []string{"tenant-b", ""} {
+			for _, route := range routes {
+				rr := httptest.NewRecorder()
+				route.handler(rr, tenantObjectRequest(route.method, route.path, tenant, id))
+				if rr.Code != http.StatusNotFound || strings.Contains(rr.Body.String(), "private-") {
+					t.Errorf("tenant %q %s %s: %d %s", tenant, route.method, route.path, rr.Code, rr.Body.String())
+				}
+			}
+			ctx := tenantObjectRequest(http.MethodGet, "/", tenant, id).Context()
+			if got, err := s.GetJobStatus(ctx, &pb.GetJobStatusRequest{JobId: id}); status.Code(err) != codes.NotFound || got != nil {
+				t.Errorf("tenant %q status: %v, %v", tenant, got, err)
+			}
+			var list struct {
+				Items []map[string]any `json:"items"`
+			}
+			tenantObjectJSON(t, s.handleListPolicyAudit, tenantObjectRequest(http.MethodGet, outputPath, tenant, id), &list)
+			var stats map[string]any
+			tenantObjectJSON(t, s.handlePolicyOutputStats, tenantObjectRequest(http.MethodGet, statsPath, tenant, id), &stats)
+			if len(list.Items) != 0 || stats["total_checks_24h"] != float64(0) {
+				t.Errorf("tenant %q output: %v %v", tenant, list.Items, stats)
+			}
+		}
+		if len(bus.published) != published {
+			t.Errorf("published %d messages", len(bus.published)-published)
+		}
+	})
+	t.Run("lookup-error", func(t *testing.T) {
+		s, _, _ := newTestGateway(t)
+		s.auth = newBasicAuthForTest(t, nil)
+		id := seedTenantObjectJob(t, s)
+		if err := s.jobStore.Client().Close(); err != nil {
+			t.Fatal(err)
+		}
+		for _, route := range []tenantObjectRoute{
+			{http.MethodGet, "/api/v1/jobs/" + id + "/decisions", s.handleListJobDecisions},
+			{http.MethodDelete, "/api/v1/dlq/" + id, s.handleDeleteDLQ},
+		} {
+			rr := httptest.NewRecorder()
+			route.handler(rr, tenantObjectRequest(route.method, route.path, "tenant-b", id))
+			if rr.Code != http.StatusServiceUnavailable || strings.Contains(rr.Body.String(), "private-") {
+				t.Errorf("%s %s: %d %s", route.method, route.path, rr.Code, rr.Body.String())
+			}
+		}
+		ctx := tenantObjectRequest(http.MethodGet, "/", "tenant-b", id).Context()
+		if got, err := s.GetJobStatus(ctx, &pb.GetJobStatusRequest{JobId: id}); status.Code(err) != codes.Unavailable || got != nil {
+			t.Errorf("status: %v, %v", got, err)
+		}
+		if entry, err := s.dlqStore.Get(context.Background(), id); err != nil || entry == nil || entry.Reason != "private-dlq-b" {
+			t.Errorf("DLQ entry: %v, %v", entry, err)
+		}
+	})
 }

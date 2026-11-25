@@ -220,10 +220,8 @@ func (s *server) handlePolicyOutputStats(w http.ResponseWriter, r *http.Request)
 	var lastCheckMicros int64
 
 	for _, job := range jobs {
-		if tenant := strings.TrimSpace(job.Tenant); tenant != "" {
-			if err := s.requireTenantAccess(r, tenant); err != nil {
-				continue
-			}
+		if !s.jobTenantAllowed(r, job.Tenant) {
+			continue
 		}
 		record, err := s.jobStore.GetOutputDecision(r.Context(), job.ID)
 		if err != nil || record.Decision == "" {
@@ -963,10 +961,8 @@ func (s *server) listOutputPolicyAudit(r *http.Request, ruleID string, limit int
 		if job.State != model.JobStateQuarantined {
 			continue
 		}
-		if tenant := strings.TrimSpace(job.Tenant); tenant != "" {
-			if err := s.requireTenantAccess(r, tenant); err != nil {
-				continue
-			}
+		if !s.jobTenantAllowed(r, job.Tenant) {
+			continue
 		}
 		record, err := s.jobStore.GetOutputDecision(r.Context(), job.ID)
 		if err != nil || record.Decision == "" {

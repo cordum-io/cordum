@@ -603,8 +603,14 @@ func resolveGRPCTenant(ctx context.Context, requested, fallback string) (string,
 }
 
 func (s *server) GetJobStatus(ctx context.Context, req *pb.GetJobStatusRequest) (*pb.GetJobStatusResponse, error) {
-	if auth := auth.FromContext(ctx); auth != nil && auth.Tenant != "" && s.jobStore != nil {
-		if tenant, _ := s.jobStore.GetTenant(ctx, req.GetJobId()); tenant != "" && tenant != auth.Tenant && !auth.AllowCrossTenant {
+	if ac := auth.FromContext(ctx); ac != nil && !ac.AllowCrossTenant && s.jobStore != nil {
+		tenant, err := s.jobStore.GetTenant(ctx, req.GetJobId())
+		switch {
+		case err != nil && !errors.Is(err, redis.Nil):
+			return nil, status.Error(codes.Unavailable, "job store unavailable")
+		case strings.TrimSpace(tenant) == "":
+			return nil, status.Error(codes.NotFound, "job not found")
+		case ac.Tenant != "" && tenant != ac.Tenant:
 			return nil, status.Error(codes.PermissionDenied, "tenant access denied")
 		}
 	}
