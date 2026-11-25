@@ -21,8 +21,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   working directory. Any other call is labelled `artifact.binding=unbound` with an
   `artifact.unbound_reason` (an unrecognized command, inline code, shell syntax, a URL
   or network path, a Windows device or path that depends on the current drive, a
-  directory, an unreadable or oversized file, a read-size mismatch such as a
-  reader-dependent procfs/sysfs file, files that take over a second to read, an unknown
+  directory, an unreadable or oversized file, a name under /proc, /dev or /sys, by any
+  spelling or symlink, a Windows device or namespace link target, a read-size mismatch,
+  files that take over a second to read, an unknown
   kube context, or a test or build command), so a policy can deny it. Where inputs can
   be collected, the digest still covers the files it names. PowerShell, Monitor and
   any other non-Bash tool carrying a command are labelled unbound without a digest.

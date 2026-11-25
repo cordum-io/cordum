@@ -143,6 +143,9 @@ func artifactKubeTarget(fields []string, cwd string, env map[string]string) (str
 	}
 	kubeContext, namespace := flags["context"], flags["namespace"]
 	current, namespaces := artifactKubeconfigs(kubeconfig, cwd, env)
+	if namespaces == nil {
+		return "", "" // a special file can change the target even with --context
+	}
 	if kubeContext == "" {
 		kubeContext = current
 	}
@@ -166,7 +169,7 @@ func artifactKubeconfigs(kubeconfig, cwd string, env map[string]string) (string,
 			home = envValue(env, "USERPROFILE")
 		}
 		if home != "" {
-			paths = []string{filepath.Join(home, ".kube", "config")}
+			paths = []string{artifactPath(home, ".kube/config")}
 		}
 	}
 	current, namespaces := "", map[string]string{}
@@ -174,7 +177,11 @@ func artifactKubeconfigs(kubeconfig, cwd string, env map[string]string) (string,
 		if path == "" {
 			continue
 		}
-		file, reason := artifactOpen(artifactPath(cwd, path))
+		path = artifactPath(cwd, path)
+		if artifactSpecialPath(path) {
+			return "", nil
+		}
+		file, reason := artifactOpen(path)
 		if reason != "" {
 			continue
 		}

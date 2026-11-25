@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -162,6 +164,17 @@ func TestArtifactBindingPolicyDeniesUnboundCommand(t *testing.T) {
 		{"assignment_prefix_denied_by_rule", "Bash", "X=x/bash ./bin/kubectl apply -k github.com/org/repo", 0},
 		{"powershell_denied_by_rule", "PowerShell", artifactBindingCommand, 0},
 		{"bound_requires_approval", "Bash", artifactBindingCommand, 1},
+	}
+	if runtime.GOOS == "linux" {
+		file, err := os.Open(filepath.Join(cwd, "manifest.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = file.Close() }()
+		cases = append(cases, struct {
+			name, tool, command string
+			approvals           int
+		}{"reader_relative_denied_by_rule", "Bash", fmt.Sprintf("bash /proc/self/fd/%d", file.Fd()), 0})
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -1,6 +1,8 @@
 package claude
 
 import (
+	"io/fs"
+	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -108,7 +110,7 @@ func artifactWindowsDevice(name string) bool {
 	stem, _, _ := strings.Cut(filepath.Base(name), ".")
 	stem = strings.ToUpper(strings.TrimRight(stem, " "))
 	switch stem {
-	case "CON", "PRN", "AUX", "NUL":
+	case "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$":
 		return true
 	}
 	port, found := strings.CutPrefix(stem, "COM")
@@ -116,4 +118,85 @@ func artifactWindowsDevice(name string) bool {
 		port, found = strings.CutPrefix(stem, "LPT")
 	}
 	return found && (len(port) == 1 && '0' <= port[0] && port[0] <= '9' || port == "¹" || port == "²" || port == "³")
+}
+
+// artifactSpecialPath checks each hop before following it: resolving a procfs
+// magic link first would hide the reader-dependent name behind an ordinary file.
+func artifactSpecialPath(path string) bool {
+	if artifactNamespacePath(path) {
+		return true
+	}
+	if !filepath.IsAbs(path) {
+		wd, err := os.Getwd()
+		if err != nil {
+			return true
+		}
+		path = artifactPath(wd, path)
+	}
+	var cur string
+	var names []string
+	if !artifactQueuePath(path, &cur, &names) {
+		return true
+	}
+	for links := 0; len(names) > 0; {
+		name := names[0]
+		names = names[1:]
+		switch name {
+		case ".":
+			continue
+		case "..":
+			cur = filepath.Dir(cur) // cur is link-free, so this is the kernel's parent
+			continue
+		}
+		next := filepath.Join(cur, name)
+		if artifactPseudoPath(next) {
+			return true
+		}
+		info, err := os.Lstat(next)
+		if err != nil {
+			return false // addFile's stat decides missing or unreadable names
+		}
+		if info.Mode()&(fs.ModeSymlink|fs.ModeIrregular) == 0 {
+			cur = next
+			continue
+		}
+		// Windows junctions report ModeIrregular; Readlink resolves them too.
+		target, err := os.Readlink(next)
+		links++
+		if err != nil || links > 40 || !artifactQueuePath(target, &cur, &names) {
+			return true
+		}
+	}
+	return false
+}
+
+// artifactQueuePath prepends a written path or link target without cleaning '..'.
+// Absolute targets restart at their root; relative ones keep the link's parent.
+func artifactQueuePath(path string, cur *string, names *[]string) bool {
+	if artifactNamespacePath(path) || runtime.GOOS == "windows" && artifactWindowsDevice(path) {
+		return false
+	}
+	if filepath.IsAbs(path) {
+		vol := filepath.VolumeName(path)
+		*cur, path = vol+string(filepath.Separator), path[len(vol):]
+	}
+	parts := strings.FieldsFunc(path, func(r rune) bool { return r < 0x80 && os.IsPathSeparator(byte(r)) })
+	*names = append(parts, *names...)
+	return true
+}
+
+func artifactPseudoPath(path string) bool {
+	if runtime.GOOS != "windows" {
+		for _, root := range []string{"/proc", "/dev", "/sys"} {
+			if path == root || strings.HasPrefix(path, root+"/") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// artifactNamespacePath rejects Windows device, NT and network namespaces.
+func artifactNamespacePath(path string) bool {
+	return runtime.GOOS == "windows" && (len(path) >= 2 && os.IsPathSeparator(path[0]) && os.IsPathSeparator(path[1]) || strings.HasPrefix(path, `\??\`))
 }

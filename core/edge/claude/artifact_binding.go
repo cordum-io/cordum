@@ -191,6 +191,9 @@ func (in *artifactInputs) addFile(cwd, name string) string {
 		return "unreadable"
 	}
 	path := artifactPath(cwd, name)
+	if artifactSpecialPath(path) {
+		return "unreadable"
+	}
 	info, err := os.Stat(path)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -254,7 +257,7 @@ func artifactOpen(path string) (*os.File, string) {
 // artifactPath joins name to cwd without a lexical clean: the kernel resolves
 // ".." after a symlink to the link target's parent, as the command will.
 func artifactPath(cwd, name string) string {
-	if cwd == "" || filepath.IsAbs(name) {
+	if cwd == "" || filepath.IsAbs(name) || artifactNamespacePath(name) {
 		return name
 	}
 	return cwd + string(filepath.Separator) + name
