@@ -1,6 +1,7 @@
 package edge
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -449,6 +450,53 @@ func TestPolicyMapper_StripMetricEmittedPerNamespace(t *testing.T) {
 			t.Errorf("namespace=%q strip counter did not increment: before=%v after=%v",
 				want.ns, want.before, got)
 		}
+	}
+}
+
+// TestPolicyMapper_SystemLabelsCannotBeSetByRequest pins that "_" is the
+// system-label namespace on Edge. The Safety Kernel reads _delegation.* as
+// gateway-verified delegation metadata (and _action.descriptor_json,
+// _content.* as gateway-built input). Edge has no path that verifies them,
+// so request and session labels must never carry them into the policy input.
+// GHSA-j33m-mr27-pmw3.
+func TestPolicyMapper_SystemLabelsCannotBeSetByRequest(t *testing.T) {
+	event := newBaseHookEvent("Bash", map[string]any{"command": "npm test"})
+	event.Labels = Labels{
+		"_delegation.depth":        "1",
+		"_delegation.issuer":       "trusted-root",
+		"_delegation.issuer_chain": "trusted-root",
+		"_delegation.scope":        "admin",
+		" _delegation.jti":         "padded-key",
+		"_action.descriptor_json":  `{"tool":"forged"}`,
+		"_content.prompt":          "harmless",
+		"benign_label":             "kept",
+	}
+	classification, err := ClassifyEvent(event)
+	if err != nil {
+		t.Fatalf("ClassifyEvent: %v", err)
+	}
+
+	before := readStripCounter(t, "_")
+	req, err := MapEventToPolicyCheckRequest(event, classification, PolicyMappingOptions{})
+	if err != nil {
+		t.Fatalf("MapEventToPolicyCheckRequest: %v", err)
+	}
+
+	for name, labels := range map[string]map[string]string{
+		"labels":      req.GetLabels(),
+		"meta.labels": req.GetMeta().GetLabels(),
+	} {
+		for key, value := range labels {
+			if strings.HasPrefix(key, "_") {
+				t.Errorf("client system label reached policy %s: %s=%q", name, key, value)
+			}
+		}
+		if labels["benign_label"] != "kept" {
+			t.Errorf("benign label dropped from policy %s: %#v", name, labels)
+		}
+	}
+	if got := readStripCounter(t, "_"); got <= before {
+		t.Errorf(`namespace="_" strip counter did not increment: before=%v after=%v`, before, got)
 	}
 }
 
