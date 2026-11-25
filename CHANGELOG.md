@@ -1321,6 +1321,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   stop backup and retention Jobs before restoring; validate both stream snapshots
   before deleting either stream and stop at the first restore error (task-35d87632).
 
+## [v1.3.2] - 2026-11-25
+
+Security patch release: the v1.3.1 tag plus one fix, cherry-picked from main
+onto the `release/1.3` branch.
+
+### Security
+
+#### Edge evaluate no longer passes client-supplied system labels to the Safety Kernel (2026-11-25, GHSA-j33m-mr27-pmw3)
+
+- Landed on main in #603 (3a9c9e1f).
+- `POST /api/v1/edge/evaluate` passed request and session labels with a `_`
+  prefix to the Safety Kernel. With `CORDUM_DELEGATION_POLICY_ENABLED=true`,
+  the kernel read forged `_delegation.*` labels as gateway-verified delegation
+  metadata. A caller with `jobs:write` could then change the result of rules
+  that use `match.delegation` or a `delegation.*` predicate on
+  `job.edge.action`.
+- The Edge policy mapper now drops every untrusted label with a `_` prefix,
+  which is the rule the gateway already applies on job submit. Each drop
+  increments `cordum_edge_request_labels_stripped_total{namespace="_"}`.
+- Affected: 1.0.0 through 1.3.1, only when delegation policy is enabled and a
+  policy bundle has delegation rules that match `job.edge.action`.
+- Operators: upgrade. No configuration change is necessary.
+- Reported by Yuchen Xue (theodorically).
+
 ## [v1.3.1] - 2026-11-11
 
 Changes on main since the v1.3.0 tag (d027ae97, 2026-11-11).

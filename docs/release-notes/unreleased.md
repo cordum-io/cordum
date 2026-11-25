@@ -6,20 +6,10 @@ these entries into a versioned release note and reset this file.
 
 ## Security
 
-- **edge: client-supplied system labels can no longer reach the Safety Kernel
-  from Edge evaluate (GHSA-j33m-mr27-pmw3).** `POST /api/v1/edge/evaluate`
-  passed request and session labels with a `_` prefix to the kernel. With
-  `CORDUM_DELEGATION_POLICY_ENABLED=true`, the kernel read forged
-  `_delegation.*` labels as gateway-verified delegation metadata. A caller
-  with `jobs:write` could then change the result of rules that use
-  `match.delegation` or a `delegation.*` predicate on `job.edge.action`. The
-  Edge policy mapper now drops every untrusted label with a `_` prefix, the
-  same rule the gateway applies on job submit, and counts each drop in
-  `cordum_edge_request_labels_stripped_total{namespace="_"}`.
-  - **Affected:** 1.0.0 through 1.3.1, only when delegation policy is enabled
-    and a policy bundle has delegation rules that match `job.edge.action`.
-  - **Operator action:** upgrade. No configuration change is necessary. Until
-    you upgrade, do not rely on delegation rules for Edge actions.
+- **edge: the fix for GHSA-j33m-mr27-pmw3 is already released in v1.3.2.**
+  `main` has the same fix (#603): Edge evaluate drops client-supplied labels
+  with a `_` prefix before policy evaluation. See the
+  [v1.3.2 notes](v1.3.2.md). The next release from `main` includes it.
 
 - **Authenticated worker trust is now a bound proof/session contract, not a
   self-reported capability (task-a4b71af7).** Current stable CAP Go, Python,
