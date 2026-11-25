@@ -61,6 +61,9 @@ func TestArtifactBindingUnboundReasons(t *testing.T) {
 	cases := []struct{ name, command, family, want string }{
 		{"shell syntax", "cat build.mk | wc -l", "", "shell-syntax"},
 		{"inline code", "bash -c ls", "", "inline-code"},
+		{"code option in a cluster", "bash -ec ls", "", "inline-code"},
+		{"module run", "python3 -m deploy", "", "inline-code"},
+		{"attached module, versioned interpreter", "python3.12 -mdeploy", "", "inline-code"},
 		{"url", "wget https://example.invalid/build.mk", "", "url"},
 		{"directory", "ls sub", "", "directory"},
 		{"device", "cat " + os.DevNull, "", "unreadable"},
@@ -201,6 +204,38 @@ func TestArtifactBindingKubeTarget(t *testing.T) {
 			labels := artifactBindingLabels(context.Background(), artifactHookInput(cwd, tc.command), tc.env, "unknown")
 			if labels["artifact.binding"] != "bound" || labels["kube.context"] != tc.context || labels["kube.namespace"] != tc.namespace {
 				t.Fatalf("labels = %v, want bound %s/%s", labels, tc.context, tc.namespace)
+			}
+		})
+	}
+}
+
+func TestArtifactBindingFollowsFlagSpellings(t *testing.T) {
+	cwd := t.TempDir()
+	artifactWriteFiles(t, cwd, map[string]string{"other.yaml": "kind: ConfigMap\n",
+		"kc.yaml": "current-context: dev\ncontexts:\n- name: dev\n  context: {}\n"})
+	env := map[string]string{"KUBECONFIG": filepath.Join(cwd, "kc.yaml")}
+	for _, command := range []string{
+		"kubectl apply -fmanifest.yaml",
+		"kubectl apply -Rfmanifest.yaml",
+		"kubectl apply -f other.yaml,manifest.yaml",
+		"kubectl apply -f=other.yaml,manifest.yaml",
+		"kubectl apply --filename=other.yaml,manifest.yaml",
+		"kubectl create configmap cm --from-file=cfg=manifest.yaml",
+		"kubectl create configmap cm --from-file=a=other.yaml,cfg=manifest.yaml",
+		"kubectl create configmap cm --from-env-file=other.yaml,manifest.yaml",
+	} {
+		t.Run(command, func(t *testing.T) {
+			digest := func(manifest string) string {
+				t.Helper()
+				artifactWriteFiles(t, cwd, map[string]string{"manifest.yaml": manifest})
+				labels := artifactBindingLabels(context.Background(), artifactHookInput(cwd, command), env, "unknown")
+				if labels["artifact.binding"] != "bound" {
+					t.Fatalf("labels = %v, want bound", labels)
+				}
+				return labels["artifact.digest"]
+			}
+			if digest("v1") == digest("v2") {
+				t.Fatal("the digest must change when the manifest the command names changes")
 			}
 		})
 	}

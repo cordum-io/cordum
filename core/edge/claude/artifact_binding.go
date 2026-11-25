@@ -32,8 +32,6 @@ const (
 	artifactShellSyntax = "'\"\\;&|<>`$(){}*?[~\n"
 )
 
-var artifactInterpreters = []string{"sh", "bash", "zsh", "dash", "python", "python3", "node", "perl", "ruby"}
-
 // artifactInputs is what the binding digest covers. Files maps each resolved
 // path to the sha256 of its content; json.Marshal sorts the keys.
 type artifactInputs struct {
@@ -139,19 +137,13 @@ func artifactCollect(command, cwd string, env map[string]string) (*artifactInput
 	// Bash splits words on space and tab only (newline is rejected above), so
 	// a field here is the word bash will see.
 	fields := strings.FieldsFunc(command, func(r rune) bool { return r == ' ' || r == '\t' })
-	// Any -c or -e after the first interpreter is also after every later one.
-	if i := slices.IndexFunc(fields, func(field string) bool {
-		return slices.Contains(artifactInterpreters, filepath.Base(field))
-	}); i >= 0 && (slices.Contains(fields[i+1:], "-c") || slices.Contains(fields[i+1:], "-e")) {
+	// Any code option after the first interpreter is also after every later one.
+	if i := slices.IndexFunc(fields, artifactIsInterpreter); i >= 0 && slices.ContainsFunc(fields[i+1:], artifactIsCodeOption) {
 		return nil, "inline-code"
 	}
 	inputs := &artifactInputs{Files: map[string]string{}}
 	for _, field := range fields {
-		names := []string{field}
-		if _, value, ok := strings.Cut(field, "="); ok && value != "" {
-			names = append(names, value)
-		}
-		for _, name := range names {
+		for _, name := range artifactNames(field) {
 			if reason := inputs.addFile(cwd, name); reason != "" {
 				return nil, reason
 			}
@@ -171,6 +163,9 @@ func artifactCollect(command, cwd string, env map[string]string) (*artifactInput
 // reason when name is a URL, a directory or another non-regular file, cannot
 // be read, or goes past the file limits.
 func (in *artifactInputs) addFile(cwd, name string) string {
+	if name == "" {
+		return ""
+	}
 	if strings.Contains(name, "://") {
 		return "url"
 	}
