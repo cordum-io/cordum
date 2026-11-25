@@ -22,6 +22,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Keys created by a managed API key with an expiry inherit that expiry when
+  `expiresAt` is omitted or empty. An explicit later expiry returns 403;
+  callers must request an equal or earlier expiry.
+
 - Production requires `SAFETY_KERNEL_TLS_CLIENT_CA` and
   `CONTEXT_ENGINE_TLS_CLIENT_CA`; the respective service will not start without
   its client CA. Safety Kernel callers must set `SAFETY_KERNEL_TLS_CLIENT_CERT`
