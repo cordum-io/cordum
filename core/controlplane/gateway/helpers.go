@@ -939,6 +939,9 @@ func (s *server) enforceMemoryID(ctx context.Context, orgID, teamID, workflowID,
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := s.enforceMemoryOwner(ctx, orgID, "", memoryID); err != nil {
+		return err
+	}
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 	defer cancel()
 	if _, err := s.configSvc.Get(cctx, configsvc.ScopeSystem, "default"); err != nil && !errors.Is(err, redis.Nil) {
@@ -963,6 +966,37 @@ func (s *server) enforceMemoryID(ctx context.Context, orgID, teamID, workflowID,
 	allowed, reason := config.MemoryIDAllowed(cfg, memoryID)
 	if !allowed {
 		return memoryPolicyError{status: http.StatusForbidden, msg: reason}
+	}
+	return nil
+}
+
+func (s *server) enforceMemoryOwner(ctx context.Context, tenant, ownRunID, memoryID string) error {
+	denied := memoryPolicyError{status: http.StatusForbidden, msg: "memory id not available to this tenant"}
+	if strings.HasPrefix(memoryID, "run:") {
+		runID := strings.TrimPrefix(memoryID, "run:")
+		if runID == "" {
+			return denied
+		}
+		if runID == ownRunID {
+			return nil
+		}
+		if s == nil || s.workflowStore == nil {
+			return memoryPolicyError{status: http.StatusServiceUnavailable, msg: "workflow store unavailable"}
+		}
+		cctx, cancel := context.WithTimeout(ctx, time.Second)
+		defer cancel()
+		run, err := s.workflowStore.GetRun(cctx, runID)
+		if errors.Is(err, redis.Nil) {
+			return denied
+		}
+		if err != nil {
+			return memoryPolicyError{status: http.StatusServiceUnavailable, msg: "workflow store unavailable"}
+		}
+		if run == nil || run.OrgID == "" || run.OrgID != tenant {
+			return denied
+		}
+	} else if idx := strings.IndexRune(memoryID, '/'); idx > 0 && memoryID[:idx] != tenant {
+		return denied
 	}
 	return nil
 }
