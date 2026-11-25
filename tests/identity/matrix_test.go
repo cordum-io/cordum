@@ -225,6 +225,7 @@ func TestContractTable(t *testing.T) {
 		MCPGateway:             gateway,
 		GRPCAPI:                {APIKeyStatic, APIKeyManaged, GatewayJWT, OIDCBearer},
 		BusGatewayHeartbeatTap: {WorkerSession},
+		BusGatewayDLQ:          {ServiceToken},
 		BusGatewayStream:       {WorkerSession, ServiceToken},
 		BusJobSubmit:           {ServiceToken},
 		BusWorker:              {WorkerSession},
@@ -251,8 +252,8 @@ func TestContractTable(t *testing.T) {
 			}
 		}
 	}
-	if allowed != 30 {
-		t.Errorf("allowed cells = %d, want 30", allowed)
+	if allowed != 31 {
+		t.Errorf("allowed cells = %d, want 31", allowed)
 	}
 	if Allowed("ghost", HTTPAPI) || Allowed(APIKeyStatic, "ghost") {
 		t.Errorf("unknown values must give false")

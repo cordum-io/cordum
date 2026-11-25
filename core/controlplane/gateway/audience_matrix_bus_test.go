@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordum/cordum/core/auth/servicetoken"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
@@ -41,28 +42,12 @@ func TestAudienceMatrixBusGatewayHeartbeatTap(t *testing.T) {
 			return 0
 		}
 		return matrixEmit(t, "worker registry entries", registered, func() { m.bus.emit(capsdk.SubjectHeartbeat, p) })
-	},
-		identity.Skip(identity.Anonymous, "PR1-30"),
-		identity.Skip(identity.UserSession, "PR1-30"),
-		identity.Skip(identity.APIKeyStatic, "PR1-30"),
-		identity.Skip(identity.APIKeyManaged, "PR1-30"),
-		identity.Skip(identity.GatewayJWT, "PR1-30"),
-		identity.Skip(identity.GatewayJWTWrongAudience, "PR1-30"),
-		identity.Skip(identity.OIDCBearer, "PR1-30"),
-		identity.Skip(identity.OIDCBearerWrongAudience, "PR1-30"),
-		identity.Skip(identity.DelegationToken, "PR1-30"),
-		identity.Skip(identity.ServiceToken, "PR1-30"),
-		identity.Skip(identity.WorkerCredential, "PR1-30"),
-		identity.Skip(identity.WorkerSessionWrongAudience, "PR1-30"),
-		identity.Skip(identity.SCIMBearer, "PR1-30"),
-		identity.Skip(identity.AgentdNonce, "PR1-30"),
-		identity.Skip(identity.AgentIDHeader, "PR1-30"),
-	)
+	})
 }
 
 // TestAudienceMatrixBusGatewayDLQ presents every credential on the scheduler's
-// sys.job.dlq result. The protected effect is the job's DLQ entry. No
-// credential is meant for this tap; the baseline publishes as the scheduler does.
+// sys.job.dlq result. The protected effect is the job's DLQ entry. The
+// baseline publishes as the scheduler does, with its service token.
 func TestAudienceMatrixBusGatewayDLQ(t *testing.T) {
 	m := newAudienceMatrix(t)
 	m.matrixStartTaps(t)
@@ -70,26 +55,15 @@ func TestAudienceMatrixBusGatewayDLQ(t *testing.T) {
 		return m.matrixDLQ(t, m.matrixCarry(t, matrixPacket(matrixSchedulerSender), c, "worker-matrix-dlq-"+string(c)), "job-matrix-dlq-"+string(c))
 	}
 	baseline := func(t *testing.T) identity.Result {
-		return m.matrixDLQ(t, matrixPacket(matrixSchedulerSender), "job-matrix-dlq-baseline")
+		token, err := m.s.sessionIssuer.MintServiceToken(servicetoken.IdentityScheduler)
+		if err != nil {
+			t.Fatalf("scheduler service token: %v", err)
+		}
+		p := matrixPacket(matrixSchedulerSender)
+		p.AuthToken = token
+		return m.matrixDLQ(t, p, "job-matrix-dlq-baseline")
 	}
-	identity.Run(t, identity.BusGatewayDLQ, present, identity.Baseline(baseline),
-		identity.Skip(identity.Anonymous, "PR1-30"),
-		identity.Skip(identity.UserSession, "PR1-30"),
-		identity.Skip(identity.APIKeyStatic, "PR1-30"),
-		identity.Skip(identity.APIKeyManaged, "PR1-30"),
-		identity.Skip(identity.GatewayJWT, "PR1-30"),
-		identity.Skip(identity.GatewayJWTWrongAudience, "PR1-30"),
-		identity.Skip(identity.OIDCBearer, "PR1-30"),
-		identity.Skip(identity.OIDCBearerWrongAudience, "PR1-30"),
-		identity.Skip(identity.DelegationToken, "PR1-30"),
-		identity.Skip(identity.ServiceToken, "PR1-30"),
-		identity.Skip(identity.WorkerCredential, "PR1-30"),
-		identity.Skip(identity.WorkerSession, "PR1-30"),
-		identity.Skip(identity.WorkerSessionWrongAudience, "PR1-30"),
-		identity.Skip(identity.SCIMBearer, "PR1-30"),
-		identity.Skip(identity.AgentdNonce, "PR1-30"),
-		identity.Skip(identity.AgentIDHeader, "PR1-30"),
-	)
+	identity.Run(t, identity.BusGatewayDLQ, present, identity.Baseline(baseline))
 }
 
 // TestAudienceMatrixBusGatewayStream presents every credential on one

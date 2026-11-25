@@ -77,7 +77,7 @@ const (
 	MCPGateway             Entry = "mcp_gateway"               // gateway /mcp/sse, /mcp/message and /mcp/status, core/controlplane/gateway/handlers_mcp.go
 	GRPCAPI                Entry = "grpc_api"                  // gateway gRPC CordumApi, core/controlplane/gateway/handlers_grpc.go
 	BusGatewayHeartbeatTap Entry = "bus_gateway_heartbeat_tap" // gateway sys.heartbeat subscription, core/controlplane/gateway/handlers_stream.go
-	BusGatewayDLQ          Entry = "bus_gateway_dlq"           // gateway sys.job.dlq subscription, core/controlplane/gateway/handlers_stream.go; no Credential is meant for it; Run needs a Baseline
+	BusGatewayDLQ          Entry = "bus_gateway_dlq"           // gateway sys.job.dlq subscription, core/controlplane/gateway/handlers_stream.go
 	BusGatewayStream       Entry = "bus_gateway_stream"        // gateway sys.job.> and sys.audit.> subscriptions, core/controlplane/gateway/handlers_stream.go
 	BusJobSubmit           Entry = "bus_job_submit"            // scheduler sys.job.submit, core/controlplane/scheduler/engine.go
 	BusWorker              Entry = "bus_worker"                // to the scheduler from a worker about itself: sys.heartbeat, sys.job.progress, sys.handshake and its own results on sys.job.result
@@ -134,7 +134,9 @@ var grants = map[Entry]map[Credential]string{
 	BusGatewayHeartbeatTap: {
 		WorkerSession: "workers send sys.heartbeat under their bound session, and the production profile requires handshake enforce (core/controlplane/scheduler/engine.go, core/controlplane/scheduler/production_profile.go)",
 	},
-	BusGatewayDLQ: {},
+	BusGatewayDLQ: {
+		ServiceToken: "the scheduler's emitDLQ and the gateway's DLQ publishes attach their service token to sys.job.dlq, and the gateway's DLQ tap stores only packets whose token names one of those publishers (core/controlplane/scheduler/engine.go, core/controlplane/gateway/handlers_approvals.go)",
+	},
 	BusGatewayStream: {
 		WorkerSession: "workers publish sys.job.result and sys.job.progress under their bound session (core/controlplane/scheduler/engine.go)",
 		ServiceToken:  "control-plane services attach the service token to sys.job.submit, sys.job.cancel and their results (core/controlplane/gateway/handlers_jobs.go, core/controlplane/scheduler/engine_accepted_event.go)",

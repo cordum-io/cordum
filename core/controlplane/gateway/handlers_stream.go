@@ -303,8 +303,14 @@ func (s *server) stopWorkerExpiry() {
 
 // startBusTaps subscribes to heartbeats and system events once for the lifetime of the gateway.
 func (s *server) startBusTaps() error {
+	tapAuth := s.newBusTapAuth()
 	// Heartbeats -> worker registry snapshot
 	if err := s.bus.Subscribe(capsdk.SubjectHeartbeat, "", func(p *pb.BusPacket) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, ok := tapAuth.admit(ctx, busTapHeartbeat, p); !ok {
+			return nil
+		}
 		if hb := p.GetHeartbeat(); hb != nil {
 			s.workerMu.Lock()
 			s.workers[hb.WorkerId] = hb
@@ -326,13 +332,16 @@ func (s *server) startBusTaps() error {
 	// WS forwarding is handled separately by the sys.job.> broadcast subscription.
 	if s.dlqStore != nil {
 		if err := s.bus.Subscribe(capsdk.SubjectDLQ, "cordum-gateway", func(p *pb.BusPacket) error {
+			dlqCtx, dlqCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer dlqCancel()
+			if _, ok := tapAuth.admit(dlqCtx, busTapDLQ, p); !ok {
+				return nil
+			}
 			if jr := p.GetJobResult(); jr != nil {
 				jobID := strings.TrimSpace(jr.JobId)
 				topic := ""
 				lastState := ""
 				attempts := 0
-				dlqCtx, dlqCancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer dlqCancel()
 				if s.jobStore != nil && jobID != "" {
 					if t, err := s.jobStore.GetTopic(dlqCtx, jobID); err == nil {
 						topic = t
