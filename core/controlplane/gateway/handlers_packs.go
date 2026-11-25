@@ -94,6 +94,9 @@ func (s *server) handleInstallPack(w http.ResponseWriter, r *http.Request) {
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPacksInstall, []string{"admin"}, s.lockStore) {
 		return
 	}
+	if !s.requireSystemPolicyAuthority(w, r) {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, packs.MaxPackUploadBytes)
 	if err := r.ParseMultipartForm(packs.MaxPackUploadBytes); err != nil {
 		writeJSONError(w, http.StatusBadRequest, errorCodePackInstallInvalid, "invalid multipart form")
@@ -376,6 +379,9 @@ func (s *server) handleUninstallPack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPacksUninstall, []string{"admin"}, s.lockStore) {
+		return
+	}
+	if !s.requireSystemPolicyAuthority(w, r) {
 		return
 	}
 	packID := strings.TrimSpace(r.PathValue("id"))
@@ -1251,6 +1257,9 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPacksInstall, []string{"admin"}, s.lockStore) {
+		return
+	}
+	if !s.requireSystemPolicyAuthority(w, r) {
 		return
 	}
 	var req packs.MarketplaceInstallRequest
