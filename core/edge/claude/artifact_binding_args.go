@@ -15,21 +15,42 @@ func artifactIsInterpreter(field string) bool {
 	return slices.Contains(artifactInterpreters, strings.TrimRight(name, "0123456789."))
 }
 
-// artifactIsCodeOption reports -c, -e or -m, alone or in a cluster of short
-// options (bash -ec ls, python3 -mdeploy): the interpreter then runs code or
-// a module that the command line does not name as a file.
-func artifactIsCodeOption(field string) bool {
-	cluster, ok := strings.CutPrefix(field, "-")
-	return ok && strings.ContainsAny(cluster[:artifactFlagRun(cluster)], "cem")
+// artifactRecognized returns "" when the binding models the program and every
+// argument of a command, and the unbound reason otherwise. KUBECONFIG=
+// assignments may come first. kubectl is modeled when artifactKubectlArgs
+// recognizes its arguments. A listed interpreter is modeled when its first
+// argument is a script file in the digest; the arguments after it belong to
+// the script. With no argument, or an option first (bash also reads +c as
+// -c), it runs code the command line does not name as a file.
+func artifactRecognized(fields []string, cwd string, inputs *artifactInputs) string {
+	for len(fields) > 0 && strings.HasPrefix(fields[0], "KUBECONFIG=") {
+		fields = fields[1:]
+	}
+	switch {
+	case len(fields) == 0:
+		return "unrecognized"
+	case artifactIsKubectl(fields[0]):
+		if _, ok := artifactKubectlArgs(fields[1:]); ok {
+			return ""
+		}
+	case artifactIsInterpreter(fields[0]):
+		if len(fields) == 1 || strings.IndexByte("-+", fields[1][0]) >= 0 {
+			return "inline-code"
+		}
+		if _, ok := inputs.Files[artifactPath(cwd, fields[1])]; ok {
+			return ""
+		}
+	}
+	return "unrecognized"
 }
 
 // artifactNames returns each string in a field that may name a file, read the
 // way command-line parsers read values: the field, the text after each '=',
 // ',', ':' or '@' (key=path, a,b, src:dst, @path), and every value a short
 // option or a cluster of them can carry attached (-fFILE, -RfFILE), each also
-// cut at the next ',' or ':'. A string that names no file costs one stat; a
-// named file missing from the digest would keep an approval valid after the
-// file changed.
+// cut at the next ',' and at the next ':' (a comma-list item may hold a ':').
+// A string that names no file costs one stat; a named file missing from the
+// digest would keep an approval valid after the file changed.
 func artifactNames(field string) []string {
 	starts := []int{0}
 	for i := range len(field) {
@@ -42,11 +63,13 @@ func artifactNames(field string) []string {
 			starts = append(starts, i+2)
 		}
 	}
-	names := make([]string, 0, 2*len(starts))
+	names := make([]string, 0, 3*len(starts))
 	for _, start := range starts {
 		rest := field[start:]
-		if end := strings.IndexAny(rest, ",:"); end >= 0 {
-			names = append(names, rest[:end])
+		for _, sep := range []string{",", ":"} {
+			if before, _, found := strings.Cut(rest, sep); found {
+				names = append(names, before)
+			}
 		}
 		names = append(names, rest)
 	}
