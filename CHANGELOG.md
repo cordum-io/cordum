@@ -78,6 +78,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   (task-cdd75ab9).
 - The governed MCP demo worker retries a `429` on the approval poll, and its
   README lists the MCP, agent identity and endpoint prerequisites.
+- Schemas: a new schema id belongs to the tenant that registers it. A caller
+  bound to one tenant lists and reads platform schemas and its own tenant's;
+  another tenant's schema, like an id with no schema, answers `404` to a read
+  or delete. A register over another tenant's id, and a register over or
+  delete of a platform schema, answer `403`. Schemas registered before this
+  release, by pack install or by a cross-tenant caller, are platform schemas:
+  every tenant can read them and only a cross-tenant caller can change or
+  delete them (task-01abd084).
 - Edge approvals: a held MCP call whose arguments differ from a still-pending
   hold of the same tool in the same session now gets its own approval ref. It
   used to get the first hold's ref, so resuming it failed with `-32096`
