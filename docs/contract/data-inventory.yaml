@@ -407,7 +407,7 @@ not_tenant_data:
   - {path: core/controlplane/scheduler/session_token.go, patterns: ['legacy:'], reason: 'Constant version tag inside session:worker keys (DI-C45), not a key or tenant value'}
   - {path: core/controlplane/scheduler/session_token_store.go, patterns: ['v2:'], reason: 'Constant version tag inside session:worker keys (DI-C45), not a key or tenant value'}
   - {path: core/controlplane/topicregistry/service.go, patterns: ['tenant:{field}'], reason: 'Map key inside the cfg:system:topics config document (DI-C54 cfg: keys), not a Redis key'}
-  - {path: core/edge/agentd/evaluator.go, patterns: ['edge-evaluate:{hash}'], reason: 'In-process safe-allow cache key (DI-E03), not a Redis key'}
+  - {path: core/edge/agentd/evaluator.go, patterns: ['edge-evaluate:{hash}', 'hmac-sha256:{digest}'], reason: 'In-process safe-allow cache key (DI-E03) and input-commitment encoding prefix; neither is a Redis key'}
   - {path: core/edge/claude/mapper.go, patterns: ['sha256:{digest}'], reason: 'Digest string prefix, not a Redis key'}
   - {path: core/edge/copilot/hooksettings.go, patterns: ['authorization:{text}'], reason: 'Secret-marker substring used to refuse hook settings, not a Redis key'}
   - {path: core/edge/observability.go, patterns: ['file:{label}', 'mcp:{label}', 'runtime:{label}', 'shell:{label}'], reason: 'Human-readable action summary labels, not Redis keys'}

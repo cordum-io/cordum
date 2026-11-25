@@ -7,6 +7,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Edge approvals: an approval of a Bash command now also covers the files the command
+  names, the git HEAD of its working directory and, for kubectl, the target context and
+  namespace. cordum-hook adds a keyed digest of them to the approval's action identity
+  and checks them again before an allowed command starts, so a change after the
+  approval blocks the command until it is approved again. When the hook cannot tell
+  what a command reads (shell syntax, inline code or a module run, a URL or network
+  path, a directory, an unreadable or oversized file, files that take over a second to
+  read, an unknown kube context, or a test or build command), it labels the call
+  `artifact.binding=unbound` with an `artifact.unbound_reason`, so a policy can deny it.
+  Files a script or tool opens on its own are not covered (task-14d105fb).
 - Python SDK: remove template-unused imports during generation with the pinned Ruff
   cleanup hook before formatting, without changing API or version markers (task-90b8033a).
 - Edge hook: a CONSTRAIN decision that carries a constraint kind the hook cannot apply
@@ -14,15 +24,41 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   those kinds. An approved action whose consumed ALLOW still carries such a kind blocks
   the same way. The hook applies none of the five kinds (budgets, sandbox, toolchain,
   diff, redaction level) yet (task-aa7ceb05).
+- Edge sessions: the session create, get, list, end and export responses, and the
+  session started and ended audit events, carry a server-derived `assurance_state`
+  (compatibility, hook-mediated, unsupported or stale). Get, list and export derive it
+  from the current facts, so a session whose heartbeat has lapsed or that has ended
+  reports stale. `executor-enforced` is reserved and not reported (task-50b24bdf).
+- Edge approvals: an approval now applies only to the exact original tool input it was
+  granted for, through a keyed commitment that cordum-agentd computes before redaction
+  and the Gateway binds into the approval's action hash. In enforce and
+  enterprise-strict sessions a hook evaluation without a commitment is denied, so
+  upgrade the Gateway and cordum-agentd together (task-6f885a33).
+- Edge approvals: after a server-side approval wait, the Gateway re-checks the caller's
+  credential and re-runs the policy check before it consumes the approval. A deny that
+  applies by then, or a credential that no longer authenticates as the same principal,
+  blocks the tool call and leaves the approval unconsumed (task-142fa2f0).
 
 ### Documentation
 
 - Metric names: `docs/scheduler-internals.md` section 10, `docs/CORE.md` and `docs/AGENT_PROTOCOL.md` now use the exported names, for example `cordum_scheduler_jobs_received_total`, `cordum_scheduler_scheduler_dispatch_latency_seconds` and `cordum_scheduler_validation_rejections_total` (task-f8ddafe6).
+- Security contract: `docs/contract/README.md` indexes the M0 contract artifacts, names the check for each, states contract version 1 and lists the enforced-cell test gaps at the freeze. New cross-check tests in `tests/contract` reject a `verified` claim that names a `violated` invariant, and a claim invariant id missing from `invariants.yaml` (task-e2f303cd).
 - Protected-operation contract: `docs/contract/protected-operation.md` now points to [ADR-011](docs/adr/011-execution-grant-format.md), the proposed execution-grant format, for M2A-01's open questions and the grant issuer key row. ADR-011 is a design; it implements no schema, verifier, broker or protected operation (task-e43b5876).
 - Enforcement matrix: `docs/contract/enforcement-matrix.yaml` has a `ref_tests` section that links each code ref of an enforced cell to existing tests, or records a gap where none exists (three today: the agentd throttle mapping, the scheduler throttle requeue and the `budgets.max_concurrent_jobs` limit). `tests/contract` rejects a missing or orphan entry, an unknown test, an empty list without a gap and a gap alongside tests (task-4c0b9fe8).
 - MCP docs: `docs/mcp/approval_hold.md` and `docs/mcp-server.md` now state that a policy-gated `tools/call` with a blank agent ID answers `-32098` `no_identity` before any approval access, and that missing tenant, session or execution metadata answers `-32097` `missing_mcp_metadata` for plain and ref-bearing calls (task-850c7a0e).
 
 ### Breaking changes
+
+- Edge classifier: build and test commands (package-manager test and build scripts,
+  `go test` and `go build`, `pytest`, `vitest`, `cargo test` and `cargo build`,
+  `make build` and `make test`) are labelled `command.class=arbitrary_code` instead of
+  `safe`, because they run repository code. Only the read-only git commands stay `safe`.
+  agentd never serves these commands from the safe-allow cache and, in enforce mode,
+  denies them while the gateway is unavailable. The label does not confine a command
+  once it is allowed. The example Edge pack's production template now requires
+  approval for them (`claude-code.require-approval-for-build-test`), and the demo
+  policy still allows them. Upgrade note: a policy rule matching `command.class: safe`
+  for these commands no longer matches; match `arbitrary_code` (task-d040242d).
 
 - Delegation tokens: child issuance requires the parent's tenant and caps expiry
   at the parent's expiry. Chain-link expiry checks use the configured clock leeway.
@@ -110,6 +146,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Docs: Edge overview, Claude Code, CLI and runbook outage statements now follow
+  the failure and partition behavior contract's measured hook and Gateway probes.
+  The P0 decision table is labeled design intent; agentd Gateway-outage handling
+  in enforce and observe remains not measured (M0-06-DOCS-EDGE-OVERVIEW, task-0a0d8d11).
 - Guardrails demo: `tools/scripts/demo_guardrails_run.sh` reads `CORDUM_API_KEY`
   (then `API_KEY`) and `REDIS_PASSWORD` from the repository's `.env` when the
   environment does not set them, taking a key's last definition as Docker
