@@ -64,6 +64,9 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	scope := configsvc.Scope(scopeStr)
+	if scope == configsvc.ScopeSystem && strings.TrimSpace(scopeID) == packs.PolicyConfigID && !s.requireSystemPolicyAuthority(w, r) {
+		return
+	}
 	if scope == configsvc.ScopeOrg {
 		tenant, err := s.resolveTenant(r, scopeID)
 		if err != nil {
