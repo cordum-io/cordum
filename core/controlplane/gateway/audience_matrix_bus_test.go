@@ -15,6 +15,7 @@ import (
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/cordum/cordum/tests/identity"
 	"github.com/redis/go-redis/v9"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -81,32 +82,22 @@ func TestAudienceMatrixBusGatewayStream(t *testing.T) {
 		}
 		result := m.matrixCarry(t, matrixPacket(sender), c, worker)
 		result.Payload = &pb.BusPacket_JobResult{JobResult: &pb.JobResult{JobId: job, WorkerId: sender, Status: pb.JobStatus_JOB_STATUS_SUCCEEDED}}
-		audit := m.matrixCarry(t, matrixPacket(sender), c, worker)
+		// Reuse the cell's active credential; issuing a second session replaces the first.
+		audit := proto.Clone(result).(*pb.BusPacket)
 		audit.Payload = &pb.BusPacket_JobProgress{JobProgress: &pb.JobProgress{
 			JobId: job, StepId: "output_policy", Percent: 100, Status: pb.JobStatus_JOB_STATUS_DENIED, Message: "output policy event",
 		}}
 		relayed := 0
 		effect := func(t *testing.T) int { relayed += m.matrixRelayed(t, client, job); return relayed }
-		return matrixEmit(t, "relayed stream events", effect, func() {
+		observed := matrixEmit(t, "relayed stream events", effect, func() {
 			m.bus.emit(capsdk.SubjectResult, result)
 			m.bus.emit("sys.audit.output_policy", audit)
 		})
-	},
-		identity.Skip(identity.Anonymous, "PR1-30"),
-		identity.Skip(identity.UserSession, "PR1-30"),
-		identity.Skip(identity.APIKeyStatic, "PR1-30"),
-		identity.Skip(identity.APIKeyManaged, "PR1-30"),
-		identity.Skip(identity.GatewayJWT, "PR1-30"),
-		identity.Skip(identity.GatewayJWTWrongAudience, "PR1-30"),
-		identity.Skip(identity.OIDCBearer, "PR1-30"),
-		identity.Skip(identity.OIDCBearerWrongAudience, "PR1-30"),
-		identity.Skip(identity.DelegationToken, "PR1-30"),
-		identity.Skip(identity.WorkerCredential, "PR1-30"),
-		identity.Skip(identity.WorkerSessionWrongAudience, "PR1-30"),
-		identity.Skip(identity.SCIMBearer, "PR1-30"),
-		identity.Skip(identity.AgentdNonce, "PR1-30"),
-		identity.Skip(identity.AgentIDHeader, "PR1-30"),
-	)
+		if (c == identity.WorkerSession || c == identity.ServiceToken) && relayed != 2 {
+			t.Fatalf("active credential must relay both subjects, got %d events", relayed)
+		}
+		return observed
+	})
 }
 
 // matrixStartTaps starts the gateway's bus taps and checks each is subscribed,

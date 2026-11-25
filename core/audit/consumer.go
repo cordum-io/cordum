@@ -186,16 +186,22 @@ func WithPublisherAuth(controlPlane *policysign.TrustStore, publishers map[strin
 				(claims.Subject == servicetoken.IdentityGateway || claims.Subject == servicetoken.IdentityScheduler) {
 				return true
 			}
-			for identity, key := range publishers {
-				lookup := func(string) (ed25519.PublicKey, bool) { return key, true }
-				claims, typ, err := servicetoken.Verify(token, lookup, at)
-				if err == nil && typ == servicetoken.TypService && claims.Subject == identity {
-					return true
-				}
-			}
-			return false
+			return VerifyPublisherToken(token, publishers, at)
 		}
 	}
+}
+
+// VerifyPublisherToken checks a service token against each publisher's own key
+// and subject. Empty publisher trust refuses every token.
+func VerifyPublisherToken(token string, publishers map[string]ed25519.PublicKey, at time.Time) bool {
+	for identity, key := range publishers {
+		lookup := func(string) (ed25519.PublicKey, bool) { return key, true }
+		claims, typ, err := servicetoken.Verify(token, lookup, at)
+		if err == nil && typ == servicetoken.TypService && claims.Subject == identity {
+			return true
+		}
+	}
+	return false
 }
 
 type contextAuditSubscriber interface {

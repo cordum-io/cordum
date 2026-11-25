@@ -303,7 +303,10 @@ func (s *server) stopWorkerExpiry() {
 
 // startBusTaps subscribes to heartbeats and system events once for the lifetime of the gateway.
 func (s *server) startBusTaps() error {
-	tapAuth := s.newBusTapAuth()
+	tapAuth, err := s.newBusTapAuth()
+	if err != nil {
+		return err
+	}
 	// Heartbeats -> worker registry snapshot
 	if err := s.bus.Subscribe(capsdk.SubjectHeartbeat, "", func(p *pb.BusPacket) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -398,7 +401,16 @@ func (s *server) startBusTaps() error {
 	// Event taps -> broadcast channel
 	for _, subj := range []string{"sys.job.>", "sys.audit.>"} {
 		subject := subj
+		tap := busTapAuditStream
+		if subject == "sys.job.>" {
+			tap = busTapJobStream
+		}
 		if err := s.bus.Subscribe(subject, "", func(p *pb.BusPacket) error {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if _, ok := tapAuth.admit(ctx, tap, p); !ok {
+				return nil
+			}
 			// Always broadcast to WS clients first — duplicate broadcasts are
 			// harmless (dashboard re-renders) and ensures visibility even on retry.
 			s.enqueueBusPacket(p)
@@ -488,6 +500,15 @@ func (s *server) enqueueBusPacket(p *pb.BusPacket) {
 		return
 	}
 	p = filtered
+
+	// Stream only a credential-free copy; other bus subscribers still need p.
+	if p.GetAuthToken() != "" || p.GetHeartbeat().GetAuthToken() != "" {
+		p = proto.Clone(p).(*pb.BusPacket)
+		p.AuthToken = ""
+		if hb := p.GetHeartbeat(); hb != nil {
+			hb.AuthToken = ""
+		}
+	}
 
 	data, err := marshalBusPacketForWS(p)
 	if err != nil {

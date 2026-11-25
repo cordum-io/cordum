@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+- With `CORDUM_SDK_HANDSHAKE=warn` or `enforce`, the gateway's heartbeat,
+  DLQ and event-stream subscriptions check packet session or service tokens.
+  Warn mode still admits packets without a token. DLQ and output-policy audit
+  publishers attach their service token; relayed stream events carry no credential.
+  Set `CORDUM_SDK_HANDSHAKE` and `CORDUM_HEARTBEAT_MODE` identically on the
+  gateway and scheduler (as in Docker Compose, Helm and the production K8s overlay).
+
 - The workflow engine's accepted-result consumer checks the scheduler service
   token at `bus.PublishedAt` when JetStream delivery metadata is present,
   otherwise at receive time.
