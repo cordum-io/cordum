@@ -870,6 +870,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   cross-tenant access, who can read its decisions and status and delete its
   DLQ entry. The DLQ entry keeps its own expiry
   (`CORDUM_DLQ_ENTRY_TTL_DAYS`, 30 days by default) (task-e845f244).
+- Workflow runs: `POST /api/v1/workflows/{id}/runs` stores each `Idempotency-Key`
+  reservation per tenant and workflow, under `wf:run:idem:{hash}`. A key stored
+  as `wf:run:idempotency:{key}` before this release still returns its run when
+  the repeat comes from that run's tenant and workflow (task-0b797b4b).
 - Config: `PUT` and `POST /api/v1/config` accept only the scopes `system`,
   `org`, `team`, `workflow` and `step`, the same set `GET /api/v1/config`
   accepts. Any other `scope` string gets 400 `CONFIG_REQUEST_INVALID`
