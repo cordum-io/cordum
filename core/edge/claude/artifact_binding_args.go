@@ -24,15 +24,16 @@ func artifactIsCodeOption(field string) bool {
 }
 
 // artifactNames returns each string in a field that may name a file, read the
-// way flag parsers such as kubectl's read it: the field, the text after each
-// '=' or ',', and every value a short option or a cluster of them can carry
-// attached (-fFILE, -RfFILE), each also cut at the next ','. A string that
-// names no file costs one stat; a named file missing from the digest would
-// keep an approval valid after the file changed.
+// way command-line parsers read values: the field, the text after each '=',
+// ',', ':' or '@' (key=path, a,b, src:dst, @path), and every value a short
+// option or a cluster of them can carry attached (-fFILE, -RfFILE), each also
+// cut at the next ',' or ':'. A string that names no file costs one stat; a
+// named file missing from the digest would keep an approval valid after the
+// file changed.
 func artifactNames(field string) []string {
 	starts := []int{0}
 	for i := range len(field) {
-		if field[i] == '=' || field[i] == ',' {
+		if strings.IndexByte("=,:@", field[i]) >= 0 {
 			starts = append(starts, i+1)
 		}
 	}
@@ -44,8 +45,8 @@ func artifactNames(field string) []string {
 	names := make([]string, 0, 2*len(starts))
 	for _, start := range starts {
 		rest := field[start:]
-		if head, _, cut := strings.Cut(rest, ","); cut {
-			names = append(names, head)
+		if end := strings.IndexAny(rest, ",:"); end >= 0 {
+			names = append(names, rest[:end])
 		}
 		names = append(names, rest)
 	}

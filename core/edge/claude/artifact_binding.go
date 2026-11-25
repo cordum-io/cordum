@@ -160,13 +160,15 @@ func artifactCollect(command, cwd string, env map[string]string) (*artifactInput
 }
 
 // addFile records name when it names a regular file. It returns the unbound
-// reason when name is a URL, a directory or another non-regular file, cannot
-// be read, or goes past the file limits.
+// reason when name is a URL or a network path, a directory or another
+// non-regular file, cannot be read, or goes past the file limits. A network
+// path (//host/share, a share on Windows) is never stat'ed, so naming one
+// opens no connection.
 func (in *artifactInputs) addFile(cwd, name string) string {
 	if name == "" {
 		return ""
 	}
-	if strings.Contains(name, "://") {
+	if strings.Contains(name, "://") || strings.HasPrefix(name, "//") {
 		return "url"
 	}
 	path := artifactPath(cwd, name)

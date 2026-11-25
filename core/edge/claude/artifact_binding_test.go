@@ -65,6 +65,7 @@ func TestArtifactBindingUnboundReasons(t *testing.T) {
 		{"module run", "python3 -m deploy", "", "inline-code"},
 		{"attached module, versioned interpreter", "python3.12 -mdeploy", "", "inline-code"},
 		{"url", "wget https://example.invalid/build.mk", "", "url"},
+		{"network path", "kubectl apply -f//127.0.0.1/share/build.mk", "", "url"},
 		{"directory", "ls sub", "", "directory"},
 		{"device", "cat " + os.DevNull, "", "unreadable"},
 		{"too many files", "cat " + strings.Join(many, " "), "", "limit"},
@@ -223,8 +224,13 @@ func TestArtifactBindingFollowsFlagSpellings(t *testing.T) {
 		"kubectl create configmap cm --from-file=cfg=manifest.yaml",
 		"kubectl create configmap cm --from-file=a=other.yaml,cfg=manifest.yaml",
 		"kubectl create configmap cm --from-env-file=other.yaml,manifest.yaml",
+		"curl -d @manifest.yaml localhost",
+		"docker run -v ./manifest.yaml:/srv/manifest.yaml nginx",
 	} {
 		t.Run(command, func(t *testing.T) {
+			if runtime.GOOS == "windows" && strings.HasPrefix(command, "docker ") {
+				t.Skip("a ':' in a path is not a Windows file name: stat fails and the call is unbound")
+			}
 			digest := func(manifest string) string {
 				t.Helper()
 				artifactWriteFiles(t, cwd, map[string]string{"manifest.yaml": manifest})
