@@ -2,9 +2,13 @@ package gateway
 
 import (
 	"context"
+	"crypto/ed25519"
+	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
+	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/auth/servicetoken"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -12,26 +16,37 @@ import (
 
 // Bus tap names, as written in refusal logs.
 const (
-	busTapHeartbeat = "heartbeat"
-	busTapDLQ       = "dlq"
+	busTapHeartbeat   = "heartbeat"
+	busTapDLQ         = "dlq"
+	busTapJobStream   = "job_stream"
+	busTapAuditStream = "audit_stream"
 )
 
 // busTapAuth admits a bus tap packet only when it carries the credential the
 // identity contract names for that tap (tests/identity/matrix.go).
 type busTapAuth struct {
-	mw *scheduler.SessionTokenMiddleware
+	mw         *scheduler.SessionTokenMiddleware
+	publishers map[string]ed25519.PublicKey
 }
 
 // newBusTapAuth fixes the tap mode once: the production profile enforces,
 // otherwise CORDUM_SDK_HANDSHAKE applies and an unset mode is off.
-func (s *server) newBusTapAuth() *busTapAuth {
+func (s *server) newBusTapAuth() (*busTapAuth, error) {
 	mode := s.handshakeMode
 	if s.capProfile.IsProduction() {
 		mode = scheduler.HandshakeModeEnforce
 	} else if mode == "" {
 		mode = scheduler.HandshakeModeOff
 	}
-	return &busTapAuth{mw: scheduler.NewSessionTokenMiddleware(s.sessionIssuer, mode, scheduler.NewHandshakeMissingTracker())}
+	a := &busTapAuth{mw: scheduler.NewSessionTokenMiddleware(s.sessionIssuer, mode, scheduler.NewHandshakeMissingTracker())}
+	if mode == scheduler.HandshakeModeWarn || mode == scheduler.HandshakeModeEnforce {
+		var err error
+		a.publishers, err = audit.LoadPublisherTrustFromEnv()
+		if err != nil {
+			return nil, fmt.Errorf("load bus tap publisher trust: %w", err)
+		}
+	}
+	return a, nil
 }
 
 // admit reports whether the tap may act on p. Off admits every packet and
@@ -54,6 +69,9 @@ func (a *busTapAuth) admit(ctx context.Context, tap string, p *pb.BusPacket) (*s
 		}
 		return nil, true
 	default:
+		if tap == busTapAuditStream && audit.VerifyPublisherToken(p.GetAuthToken(), a.publishers, time.Now()) {
+			return nil, true
+		}
 		a.refuse(tap, res.Verdict.String())
 	}
 	return nil, false
@@ -79,6 +97,13 @@ func busTapIdentityMatches(tap string, p *pb.BusPacket, c *scheduler.SessionToke
 			strings.TrimSpace(c.Audience) == scheduler.WorkerHandshakeAudience
 	case busTapDLQ:
 		return sub == servicetoken.IdentityScheduler || sub == servicetoken.IdentityGateway
+	case busTapJobStream, busTapAuditStream:
+		if servicetoken.IsReservedIdentity(sub) {
+			return true
+		}
+		return strings.TrimSpace(c.Audience) == scheduler.WorkerHandshakeAudience &&
+			sub == strings.TrimSpace(p.GetSenderId()) &&
+			(p.GetJobResult() == nil || sub == strings.TrimSpace(p.GetJobResult().GetWorkerId()))
 	}
 	return false
 }

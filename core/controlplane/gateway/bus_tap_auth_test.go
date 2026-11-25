@@ -2,19 +2,26 @@ package gateway
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/auth/servicetoken"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/infra/capprofile"
 	"github.com/cordum/cordum/core/infra/store"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	wf "github.com/cordum/cordum/core/workflow"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -228,6 +235,7 @@ func TestBusTapAuthRefusalLog(t *testing.T) {
 	bus.emit(capsdk.SubjectHeartbeat, busTapHeartbeatPacket(worker, sender, hbToken))
 	bus.emit(capsdk.SubjectDLQ, busTapDLQPacket(job, message, dlqToken))
 	bus.emit(capsdk.SubjectDLQ, busTapDLQPacket(job, message, invalid))
+	bus.emit(capsdk.SubjectAuditExport, busTapDLQPacket(job, message, invalid))
 	_, warnBus := busTapGateway(t, scheduler.HandshakeModeWarn, false)
 	for range 2 {
 		warnBus.emit(capsdk.SubjectHeartbeat, busTapHeartbeatPacket(sender, sender, ""))
@@ -248,9 +256,145 @@ func TestBusTapAuthRefusalLog(t *testing.T) {
 		`level=WARN msg="bus tap packet refused" tap=heartbeat reason=identity`,
 		`level=WARN msg="bus tap packet refused" tap=dlq reason=identity`,
 		`level=WARN msg="bus tap packet refused" tap=dlq reason=reject_invalid`,
+		`level=WARN msg="bus tap packet refused" tap=job_stream reason=identity`,
+		`level=WARN msg="bus tap packet refused" tap=job_stream reason=reject_invalid`,
+		`level=WARN msg="bus tap packet refused" tap=audit_stream reason=reject_invalid`,
 		`level=WARN msg="bus tap admitted a packet without a session token" tap=heartbeat`,
 	}
+	slices.Sort(got)
+	slices.Sort(want)
 	if !slices.Equal(got, want) {
 		t.Errorf("bus tap log lines:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// busTapWorkflow uses the dispatched-run fixture from the workflow result tests.
+func busTapWorkflow(t *testing.T, s *server, bus *stubBus) *wf.WorkflowRun {
+	t.Helper()
+	ctx := context.Background()
+	s.workflowEng = wf.NewEngine(s.workflowStore, bus).WithMemory(s.memStore)
+	definition := &wf.Workflow{ID: "wf-stream", OrgID: matrixTenant, Steps: map[string]*wf.Step{
+		"step": {ID: "step", Type: wf.StepTypeWorker, Topic: "job.default"},
+	}}
+	if err := s.workflowStore.SaveWorkflow(ctx, definition); err != nil {
+		t.Fatal(err)
+	}
+	run := &wf.WorkflowRun{ID: "run-stream", WorkflowID: definition.ID, OrgID: matrixTenant,
+		Steps: map[string]*wf.StepRun{}, Status: wf.RunStatusPending, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+	if err := s.workflowStore.CreateRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.workflowEng.StartRun(ctx, definition.ID, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	dispatched, err := s.workflowStore.GetRun(ctx, run.ID)
+	if err != nil || dispatched == nil || dispatched.Steps["step"] == nil || dispatched.Steps["step"].JobID == "" {
+		t.Fatalf("expected dispatched step: run=%+v err=%v", dispatched, err)
+	}
+	return dispatched
+}
+
+func TestBusTapAuthStreamWorkflow(t *testing.T) {
+	const worker, other = "worker-stream", "other-stream"
+	aud := scheduler.WorkerHandshakeAudience
+	cases := []struct {
+		name, sender, worker string
+		mode                 scheduler.HandshakeMode
+		token                busTapToken
+		admitted             bool
+	}{
+		{"tokenless", worker, worker, scheduler.HandshakeModeEnforce, busTapFixed(""), false},
+		{"wrong_audience", worker, worker, scheduler.HandshakeModeEnforce, busTapSession(worker, matrixWrongAudience), false},
+		{"wrong_sender", other, worker, scheduler.HandshakeModeEnforce, busTapSession(worker, aud), false},
+		{"wrong_worker", worker, other, scheduler.HandshakeModeEnforce, busTapSession(worker, aud), false},
+		{"revoked", worker, worker, scheduler.HandshakeModeEnforce, busTapRevoked(worker), false},
+		{"session", worker, worker, scheduler.HandshakeModeEnforce, busTapSession(worker, aud), true},
+		{"service", servicetoken.IdentityWorkflow, worker, scheduler.HandshakeModeEnforce, busTapService(servicetoken.IdentityWorkflow), true},
+		{"off", worker, worker, scheduler.HandshakeModeOff, busTapFixed(""), true},
+		{"warn_missing", worker, worker, scheduler.HandshakeModeWarn, busTapFixed(""), true},
+		{"warn_invalid", worker, worker, scheduler.HandshakeModeWarn, busTapFixed("invalid-stream-token"), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s, bus := busTapGateway(t, c.mode, false)
+			before := busTapWorkflow(t, s, bus)
+			job := before.Steps["step"].JobID
+			client := registerGatewayEdgeStreamClient(t, s, "", true)
+			p := &pb.BusPacket{SenderId: c.sender, AuthToken: c.token(t, s), Payload: &pb.BusPacket_JobResult{
+				JobResult: &pb.JobResult{JobId: job, WorkerId: c.worker, Status: pb.JobStatus_JOB_STATUS_SUCCEEDED},
+			}}
+			bus.emit(capsdk.SubjectResult, p)
+			relayed := (&audienceMatrix{s: s}).matrixRelayed(t, client, job)
+			after, err := s.workflowStore.GetRun(context.Background(), before.ID)
+			if err != nil || after == nil {
+				t.Fatalf("read workflow: %v", err)
+			}
+			if c.admitted {
+				if relayed != 1 || after.Status != wf.RunStatusSucceeded || after.Steps["step"].Status != wf.StepStatusSucceeded {
+					t.Fatalf("accepted result: relayed=%d run=%s step=%s", relayed, after.Status, after.Steps["step"].Status)
+				}
+			} else if relayed != 0 || !reflect.DeepEqual(before, after) {
+				t.Fatalf("refused result changed effects: relayed=%d run_equal=%t", relayed, reflect.DeepEqual(before, after))
+			}
+		})
+	}
+}
+
+func TestBusTapAuthStreamAuditKeys(t *testing.T) {
+	for _, publisher := range []string{servicetoken.IdentityMCP, servicetoken.IdentitySafetyKernel} {
+		t.Run(publisher, func(t *testing.T) {
+			public, private, err := ed25519.GenerateKey(rand.Reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			name := audit.EnvPublisherPublicKeyPrefix + strings.ReplaceAll(strings.ToUpper(publisher), "-", "_")
+			t.Setenv(name, base64.StdEncoding.EncodeToString(public))
+			s, bus := busTapGateway(t, scheduler.HandshakeModeEnforce, false)
+			// Trust is loaded once; a later environment change cannot change this tap.
+			t.Setenv(name, "invalid-after-start")
+			client := registerGatewayEdgeStreamClient(t, s, "", true)
+			for _, c := range []struct {
+				subject, identity string
+				want              int
+			}{
+				{capsdk.SubjectAuditExport, publisher, 1},
+				{capsdk.SubjectResult, publisher, 0},
+				{capsdk.SubjectAuditExport, servicetoken.IdentityGateway, 0},
+			} {
+				t.Run(c.subject+"/"+c.identity, func(t *testing.T) {
+					token, err := servicetoken.MintService(private, "audit", c.identity, time.Now())
+					if err != nil {
+						t.Fatal(err)
+					}
+					p := &pb.BusPacket{SenderId: c.identity, AuthToken: token, Payload: &pb.BusPacket_JobResult{
+						JobResult: &pb.JobResult{JobId: "audit-job", WorkerId: c.identity, Status: pb.JobStatus_JOB_STATUS_SUCCEEDED},
+					}}
+					bus.emit(c.subject, p)
+					if n := (&audienceMatrix{s: s}).matrixRelayed(t, client, "audit-job"); n != c.want {
+						t.Fatalf("relayed %d, want %d", n, c.want)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestBusTapAuthStreamMalformedAuditKey(t *testing.T) {
+	for _, mode := range []scheduler.HandshakeMode{scheduler.HandshakeModeOff, scheduler.HandshakeModeWarn, scheduler.HandshakeModeEnforce} {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Setenv(audit.EnvPublisherPublicKeyPrefix+"CORDUM_MCP", "invalid-key")
+			s, bus, _ := newTestGateway(t)
+			wireSessionIssuer(t, s)
+			s.handshakeMode = mode
+			err := s.startBusTaps()
+			t.Cleanup(func() { s.stopBusTaps(); s.stopWorkerExpiry() })
+			if mode == scheduler.HandshakeModeOff {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), "CORDUM_AUDIT_PUBLIC_KEY_CORDUM_MCP") || len(bus.subs) != 0 {
+				t.Fatalf("active mode must fail before subscribing: err=%v subscriptions=%d", err, len(bus.subs))
+			}
+		})
 	}
 }
