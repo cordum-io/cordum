@@ -1308,7 +1308,7 @@ func (s *server) enrichAgentContext(ctx context.Context, tenant string, labels m
 	identity := s.getAgentFromCache(cacheKey)
 	if identity == nil {
 		var err error
-		identity, err = s.agentStore.Get(ctx, "", agentID)
+		identity, err = s.agentStore.Get(ctx, tenant, agentID)
 		if err != nil {
 			slog.Warn("safety-kernel: agent identity lookup failed", "agent_id", agentID, "error", err)
 			return

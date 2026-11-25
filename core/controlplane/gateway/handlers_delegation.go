@@ -81,7 +81,7 @@ func (r gatewayDelegationPermissionsResolver) ResolveAgentPermissions(ctx contex
 	if r.store == nil {
 		return delegation.AgentPermissions{}, fmt.Errorf("agent identity store unavailable")
 	}
-	identity, err := r.store.Get(ctx, "", agentID)
+	identity, err := r.store.GetAnyTenant(ctx, agentID)
 	if err != nil {
 		return delegation.AgentPermissions{}, err
 	}

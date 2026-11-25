@@ -159,13 +159,29 @@ func (s *AgentIdentityStore) Create(ctx context.Context, identity AgentIdentity)
 	return &identity, nil
 }
 
-// Get returns the agent identity by ID scoped to tenantID, or nil if not
-// found OR if the stored TenantID does not match. An empty tenantID bypasses
-// the tenant check and is reserved for internal/system lookups (audit
-// enrichment, worker handshake) where the caller is not a tenant principal.
-// Returning nil (not a forbidden error) on mismatch prevents an existence
-// oracle for cross-tenant ID guesses.
+// Get returns the agent identity by ID within a non-empty tenant, or nil if
+// the tenant is empty, the identity is missing, or its tenant does not match.
 func (s *AgentIdentityStore) Get(ctx context.Context, tenantID, id string) (*AgentIdentity, error) {
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		return nil, nil
+	}
+	identity, err := s.load(ctx, id)
+	if err != nil || identity == nil {
+		return nil, err
+	}
+	if strings.TrimSpace(identity.TenantID) != tenantID {
+		return nil, nil
+	}
+	return identity, nil
+}
+
+// GetAnyTenant reads an identity for internal lookups acting for no tenant principal.
+func (s *AgentIdentityStore) GetAnyTenant(ctx context.Context, id string) (*AgentIdentity, error) {
+	return s.load(ctx, id)
+}
+
+func (s *AgentIdentityStore) load(ctx context.Context, id string) (*AgentIdentity, error) {
 	if s == nil || s.client == nil {
 		return nil, fmt.Errorf("agent_identity_store: redis client not initialized")
 	}
@@ -187,11 +203,6 @@ func (s *AgentIdentityStore) Get(ctx context.Context, tenantID, id string) (*Age
 		return nil, fmt.Errorf("unmarshal agent identity %s: %w", id, err)
 	}
 	identity = normalizeAgentIdentity(identity)
-	if tenantID = strings.TrimSpace(tenantID); tenantID != "" {
-		if strings.TrimSpace(identity.TenantID) != tenantID {
-			return nil, nil
-		}
-	}
 	return &identity, nil
 }
 
@@ -334,10 +345,8 @@ func (s *AgentIdentityStore) List(ctx context.Context, tenantID, cursor string, 
 }
 
 // Update applies partial updates to an existing agent identity scoped to
-// tenantID. An empty tenantID bypasses the tenant check. When tenantID is
-// set and the stored identity's TenantID differs, Update returns a "not
-// found" error — the same error class as a missing record — to avoid an
-// existence oracle for cross-tenant probes.
+// tenantID. An empty or mismatched tenant returns a "not found" error,
+// the same error as a missing identity.
 func (s *AgentIdentityStore) Update(ctx context.Context, tenantID, id string, updates AgentIdentity) (*AgentIdentity, error) {
 	if s == nil || s.client == nil {
 		return nil, fmt.Errorf("agent_identity_store: redis client not initialized")
@@ -504,7 +513,7 @@ func (s *AgentIdentityStore) LinkWorker(ctx context.Context, agentID, workerID s
 	if agentID == "" || workerID == "" {
 		return fmt.Errorf("agent id and worker id required")
 	}
-	agent, err := s.Get(ctx, "", agentID)
+	agent, err := s.GetAnyTenant(ctx, agentID)
 	if err != nil {
 		return fmt.Errorf("link worker %s: %w", workerID, err)
 	}

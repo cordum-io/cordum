@@ -26,6 +26,22 @@ func enableAgentIdentityEntitlement(t *testing.T, s *server) {
 	})
 }
 
+func TestResolveAgentForAuditReadsStoredIdentity(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+	agent, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+		TenantID: "default", Name: "audit-agent", Owner: "owner", RiskTier: "high",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, name, risk := s.resolveAgentForAudit(ctx, agent.ID)
+	if id != agent.ID || name != agent.Name || risk != agent.RiskTier {
+		t.Fatalf("audit identity = (%q, %q, %q), want (%q, %q, %q)",
+			id, name, risk, agent.ID, agent.Name, agent.RiskTier)
+	}
+}
+
 func TestCreateAgent(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	enableAgentIdentityEntitlement(t, s)
