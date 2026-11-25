@@ -97,7 +97,7 @@ var storeKeyManifest = []storeKeyEntry{
 	{"job:idempotency:{key}", "core/infra/store", "global-id", "TestTenantIsolationJobIdempotencyLegacyOwnerUnknown"},
 	{"dlq:entry:{job}", "core/infra/store", "global-id", "TestTenantIsolationGatewayJobReads"},
 	{"dlq:index", "core/infra/store", "global-id", "pending:PR1-03F"},
-	{"agent:identity:{agent}", "core/infra/store", "tenant-in-value", "open-finding:PR1-03H-F2"},
+	{"agent:identity:{agent}", "core/infra/store", "tenant-in-value", "TestTenantIsolationAgentIdentityReadOnly"},
 	{"agent:identity:index", "core/infra/store", "global-id", "pending:PR1-03F"},
 	{"agent:by-worker:{worker}", "core/infra/store", "global-id", "pending:PR1-03F"},
 	{"agent:worker-links:{tenant}", "core/infra/store", "tenant-in-key", "pending:PR1-03F"},
