@@ -115,9 +115,9 @@ Notes:
 Redis, production overlay:
 - `appendonly yes`: keep. Set at `deploy/k8s/production/redis.yaml:22` and `deploy/k8s/base.yaml:388`.
 - `appendfsync everysec`: write it explicitly. Not set today; the Redis default applies.
-- `min-replicas-to-write 1` and `min-replicas-max-lag 10`: not set today. A primary that has lost
-  its replica stops accepting writes after 10 seconds, which limits what a cut-off primary can
-  accept and later lose.
+- `min-replicas-to-write 1` and `min-replicas-max-lag 10`: not set today. Once set, a primary that
+  has lost its replica stops accepting writes after 10 seconds, which limits what a cut-off primary
+  can accept and later lose.
 - `cluster-node-timeout 5000`: keep (`deploy/k8s/production/redis.yaml:26`). A primary on the
   minority side of a partition stops accepting writes after this timeout. Writes it accepted in
   that window are lost when its replica is promoted; an L1 or L2 write in that window gets no
@@ -142,7 +142,8 @@ JetStream, production overlay:
   An existing stream keeps its replica count, because stream setup treats an existing stream as
   success and does not update it (`core/infra/bus/nats.go:1158`).
 - File storage (`core/infra/bus/nats.go:1149`) and `sync_interval: "1s"`
-  (`deploy/k8s/production/patches/nats-config.yaml:15`): keep. With three replicas this gives L1.
+  (`deploy/k8s/production/patches/nats-config.yaml:15`): keep. Target: on a stream with three
+  replicas, these are the JetStream side of L1.
   `sync_interval: always` would be needed for L2, and no class above needs L2 from JetStream.
 - `NATS_JS_MAX_AGE`, default 7 days (`core/infra/bus/nats.go:81`): a message older than this is
   removed even if no consumer acknowledged it. Target: longer than the longest time a job may
