@@ -1320,6 +1320,7 @@ func (s *server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 	// Static keys are identified by the authentication provider, not by the
 	// secret's prefix. Revalidate managed keys before granting their scopes.
 	var parentID string
+	var parentExpiresAt time.Time
 	if caller := auth.FromRequest(r); caller != nil && caller.AuthSource == auth.AuthSourceAPIKey &&
 		caller.KeyID != "static:"+auth.APIKeyFingerprint(caller.APIKey) {
 		parent, err := s.keyStore.ValidateKey(r.Context(), caller.APIKey)
@@ -1356,6 +1357,7 @@ func (s *server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		parentID = parent.ID
+		parentExpiresAt = parent.ExpiresAt
 	}
 
 	var expiresAt time.Time
@@ -1370,6 +1372,14 @@ func (s *server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		expiresAt = parsed
+	}
+	if !parentExpiresAt.IsZero() {
+		if expiresAt.IsZero() {
+			expiresAt = parentExpiresAt
+		} else if expiresAt.After(parentExpiresAt) {
+			writeErrorJSON(w, http.StatusForbidden, "key grant denied")
+			return
+		}
 	}
 
 	rawKey, err := auth.GenerateRawKey()
