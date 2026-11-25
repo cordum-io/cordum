@@ -35,10 +35,28 @@ func TestResolveAgentForAuditReadsStoredIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, name, risk := s.resolveAgentForAudit(ctx, agent.ID)
+	id, name, risk := s.resolveAgentForAudit(ctx, agent.TenantID, agent.ID)
 	if id != agent.ID || name != agent.Name || risk != agent.RiskTier {
 		t.Fatalf("audit identity = (%q, %q, %q), want (%q, %q, %q)",
 			id, name, risk, agent.ID, agent.Name, agent.RiskTier)
+	}
+}
+
+func TestResolveAgentForAuditUnknownTenant(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	agent, err := s.agentIdentityStore.Create(t.Context(), store.AgentIdentity{
+		TenantID: "tenant-b", Name: "audit-agent", Owner: "owner", RiskTier: "high",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tenant := range []string{"tenant-a", "", " "} {
+		t.Run("tenant="+tenant, func(t *testing.T) {
+			id, name, risk := s.resolveAgentForAudit(t.Context(), tenant, agent.ID)
+			if id != agent.ID || name != agent.ID || risk != "" {
+				t.Fatalf("audit identity = (%q, %q, %q), want (%q, %q, empty)", id, name, risk, agent.ID, agent.ID)
+			}
+		})
 	}
 }
 

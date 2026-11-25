@@ -1605,7 +1605,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		DeadlineMs:      req.DeadlineMs,
 	}, memoryID)
 	// Resolve agent context for audit events and tracing.
-	submitAgentID, submitAgentName, submitAgentRiskTier := s.resolveAgentForAudit(r.Context(), req.Labels["agent_id"])
+	submitAgentID, submitAgentName, submitAgentRiskTier := s.resolveAgentForAudit(r.Context(), orgID, req.Labels["agent_id"])
 	submitActorID, submitIdentitySource, submitIdentityLabel := policybundles.PolicyActorIdentity(r)
 
 	// Write authoritative agent identity onto the request span (not from
