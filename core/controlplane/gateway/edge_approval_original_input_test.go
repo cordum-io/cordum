@@ -37,7 +37,14 @@ func originalInputRunTool(t *testing.T, out claude.ClaudeHookOutput) string {
 	if out.Decision == "block" || permission == "deny" {
 		return marker
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// A -race -cover gateway test binary can outlast a short fixed budget on a loaded CI runner.
+	deadline, ok := t.Deadline()
+	if ok {
+		deadline = deadline.Add(-10 * time.Second)
+	} else {
+		deadline = time.Now().Add(2 * time.Minute)
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestOriginalInputToolHelper$")
 	cmd.Env = append(os.Environ(), "CORDUM_ORIGINAL_INPUT_MARKER="+marker)
