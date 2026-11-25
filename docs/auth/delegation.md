@@ -22,7 +22,10 @@ authority.
   `CORDUM_DELEGATION_MAX_DEPTH` (default `3`).
 - **Policy bypass attempts:** the raw JWT is never forwarded to the Safety
   Kernel. Only `_delegation.*` labels derived from a verified token are passed
-  downstream.
+  downstream. Client-supplied labels with a `_` prefix never reach the Safety
+  Kernel from job submit or from Edge evaluate (request and session labels).
+  Edge evaluate has no delegation-token input, so an Edge action is always a
+  direct call.
 
 ## JWT model
 
