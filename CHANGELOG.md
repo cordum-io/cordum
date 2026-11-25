@@ -94,6 +94,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `policy_mismatch`. An identical retry still returns the existing ref
   (task-29afcbe9).
 
+- Policy replay: `POST /api/v1/policy/replay` evaluates only jobs whose tenant
+  the caller may access, the same check `GET /api/v1/jobs/{id}` applies. The
+  `filters.tenant` field narrows that set, so a filter naming a tenant the
+  caller cannot access matches no jobs. A job with no stored tenant is
+  replayed only for a caller whose access spans all tenants (task-d14273c2).
 - The dashboard test run no longer fails after every test passes when a console line, written by work that outlived its test file, is still being delivered as the Vitest worker shuts down (`EnvironmentTeardownError: Closing rpc while "onUserConsoleLog" was pending`). `dashboard/vitest.config.ts` ignores exactly that error, so every other unhandled error still fails the run. `KeyboardShortcutsHelp.test.tsx`, which produced it, now answers the AppShell's requests in-process and waits for them to settle (task-04eef2b3).
 
 #### core/mcp — the MCP invocation audit keeps a consumed human approval when scope preapproval also applies (2026-11-12, task-74f4c01e)
