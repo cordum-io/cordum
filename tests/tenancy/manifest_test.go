@@ -174,7 +174,7 @@ var storeKeyManifest = []storeKeyEntry{
 	{"session:handshake:challenge:{challenge}", "core/controlplane/scheduler", "global-id", "TestTenantIsolationSchedulerHandshakeReplayKeys"},
 	{"saga:{workflow}:stack", "core/controlplane/scheduler", "global-id", "TestSagaRollbackFollowsWorkflowID"},
 	{"saga:{workflow}:recorded", "core/controlplane/scheduler", "global-id", "TestTenantIsolationSchedulerSagaRecorded"},
-	{"cordum:velocity:{rule}:{key}", "core/controlplane/safetykernel", "global-id", "open-finding:PR1-03C-F1"},
+	{"cordum:velocity:{rule}:{key}", "core/controlplane/safetykernel", "tenant-in-key, enforced at velocityKey", "TestTenantIsolationVelocityCounter"},
 	{"cap:resource:{tenant}:{job}:{resource}", "core/controlplane/safetykernel", "tenant-in-key", "pending:PR1-03B"},
 	{"cap:resource:{tenant}:{job}:{resource}", "cmd/cordum-scheduler", "tenant-in-key", "pending:PR1-03B"},
 }
