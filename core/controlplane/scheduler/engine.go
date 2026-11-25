@@ -1876,7 +1876,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 	if readinessRequired {
 		readiness = e.registry.ReadinessSnapshot()
 	}
-	workers = e.filterBoundWorkers(workers, readiness, topic)
+	workers = e.filterBoundWorkers(workers, readiness, topic, req.GetTenantId())
 	if len(workers) == 0 {
 		slog.Warn("no workers in registry",
 			"topic", topic,
@@ -1891,9 +1891,9 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			if readinessRequired {
 				readiness = e.registry.ReadinessSnapshot()
 			}
-			workers = e.filterBoundWorkers(workers, readiness, topic)
+			workers = e.filterBoundWorkers(workers, readiness, topic, req.GetTenantId())
 		}
-		if e.activeSessionMode() && len(workers) == 0 {
+		if e.authenticatedDispatch() && len(workers) == 0 {
 			err = fmt.Errorf("%w: no trusted worker authorized for topic %q", ErrNoWorkers, topic)
 			break
 		}

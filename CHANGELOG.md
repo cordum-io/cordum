@@ -115,6 +115,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   checked. A caller whose access spans all tenants verifies any token
   (task-810a4b3a).
 
+- Worker dispatch: with `WORKER_ATTESTATION=enforce`, or with
+  `CORDUM_SDK_HANDSHAKE` at `warn` or `enforce`, the scheduler dispatches a
+  job only to a worker whose credential belongs to the job's tenant. A job
+  gets no worker when it has no tenant or when the credential list cannot be
+  read, and a worker whose credential is missing, revoked or has no tenant
+  gets no job; such a job is retried as when its pool has no worker. Each
+  worker credential serves one tenant, so a worker that runs jobs for several
+  tenants needs a worker ID and credential per tenant. With
+  `WORKER_ATTESTATION` at `off` or `warn` and `CORDUM_SDK_HANDSHAKE=off`,
+  dispatch reads no worker credentials (task-c5aaf69c).
 - The dashboard test run no longer fails after every test passes when a console line, written by work that outlived its test file, is still being delivered as the Vitest worker shuts down (`EnvironmentTeardownError: Closing rpc while "onUserConsoleLog" was pending`). `dashboard/vitest.config.ts` ignores exactly that error, so every other unhandled error still fails the run. `KeyboardShortcutsHelp.test.tsx`, which produced it, now answers the AppShell's requests in-process and waits for them to settle (task-04eef2b3).
 
 #### core/mcp — the MCP invocation audit keeps a consumed human approval when scope preapproval also applies (2026-11-12, task-74f4c01e)
