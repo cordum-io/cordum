@@ -44,11 +44,18 @@ type artifactInputs struct {
 	KubeNamespace string            `json:"kube_namespace,omitempty"`
 }
 
-// artifactBindingLabels returns the binding labels of a PreToolUse Bash call,
-// and nil for any other hook call. family is the call's command.family label.
+// artifactBindingLabels returns binding labels for PreToolUse commands. Only
+// Bash is modeled; other command tools are unbound. Non-command hooks get no
+// labels. family is the call's command.family label.
 func artifactBindingLabels(ctx context.Context, input HookInput, env map[string]string, family string) map[string]string {
-	if input.HookEventName != "PreToolUse" || !strings.EqualFold(input.ToolName, "Bash") {
+	if input.HookEventName != "PreToolUse" {
 		return nil
+	}
+	if !strings.EqualFold(input.ToolName, "Bash") {
+		if _, runs := input.ToolInput["command"]; !runs {
+			return nil
+		}
+		return map[string]string{"artifact.binding": "unbound", "artifact.unbound_reason": "unrecognized"}
 	}
 	command, _ := input.ToolInput["command"].(string)
 	inputs, reason := artifactWithinBudget(ctx, func() (*artifactInputs, string) {

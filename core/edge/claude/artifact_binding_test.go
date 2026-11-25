@@ -38,10 +38,35 @@ func TestArtifactBindingOnlyForPreToolUseBash(t *testing.T) {
 	for _, input := range []HookInput{
 		{HookEventName: "PostToolUse", ToolName: "Bash", ToolInput: map[string]any{"command": "ls"}},
 		{HookEventName: "PreToolUse", ToolName: "Write", ToolInput: map[string]any{"file_path": "a.txt"}},
+		{HookEventName: "PreToolUse", ToolName: "Read", ToolInput: map[string]any{"file_path": "a.txt"}},
+		{HookEventName: "PostToolUse", ToolName: "PowerShell", ToolInput: map[string]any{"command": "ls"}},
 	} {
 		if labels := artifactBindingLabels(context.Background(), input, map[string]string{}, ""); labels != nil {
 			t.Fatalf("%s %s got binding labels %v", input.HookEventName, input.ToolName, labels)
 		}
+	}
+}
+
+func TestArtifactBindingUnmodeledCommandTools(t *testing.T) {
+	for _, tool := range []string{"PowerShell", "Monitor", "mcp__shell__run"} {
+		t.Run(tool, func(t *testing.T) {
+			input := artifactHookInput("", "kubectl apply -f manifest.yaml")
+			input.ToolName = tool
+			labels := artifactBindingLabels(context.Background(), input, map[string]string{}, "")
+			if len(labels) != 2 || labels["artifact.binding"] != "unbound" || labels["artifact.unbound_reason"] != "unrecognized" {
+				t.Fatalf("labels = %v, want only unbound with reason unrecognized", labels)
+			}
+		})
+	}
+	for _, command := range []string{"rm -rf build", "", "Get-ChildItem"} {
+		t.Run("risk/"+command, func(t *testing.T) {
+			input := artifactHookInput("", command)
+			bashRisk := riskyPreToolUse(input)
+			input.ToolName = "PowerShell"
+			if risk := riskyPreToolUse(input); risk != bashRisk || command == "rm -rf build" && !risk {
+				t.Fatalf("PowerShell %q risky = %v, Bash = %v; want the same, and true for rm -rf", command, risk, bashRisk)
+			}
+		})
 	}
 }
 

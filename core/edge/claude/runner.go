@@ -367,7 +367,7 @@ func riskyPreToolUse(input HookInput) bool {
 	if _, ok := fileMutationTools[input.ToolName]; ok {
 		return true
 	}
-	if !strings.EqualFold(input.ToolName, "Bash") {
+	if !strings.EqualFold(input.ToolName, "Bash") && !strings.EqualFold(input.ToolName, "PowerShell") {
 		return false
 	}
 	raw, ok := input.ToolInput["command"]
