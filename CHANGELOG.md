@@ -29,6 +29,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Edge classifier: build and test commands (package-manager test and build scripts,
+  `go test` and `go build`, `pytest`, `vitest`, `cargo test` and `cargo build`,
+  `make build` and `make test`) are labelled `command.class=arbitrary_code` instead of
+  `safe`, because they run repository code. Only the read-only git commands stay `safe`.
+  agentd never serves these commands from the safe-allow cache and, in enforce mode,
+  denies them while the gateway is unavailable. The label does not confine a command
+  once it is allowed. The example Edge pack's production template now requires
+  approval for them (`claude-code.require-approval-for-build-test`), and the demo
+  policy still allows them. Upgrade note: a policy rule matching `command.class: safe`
+  for these commands no longer matches; match `arbitrary_code` (task-d040242d).
+
 - Delegation tokens: child issuance requires the parent's tenant and caps expiry
   at the parent's expiry. Chain-link expiry checks use the configured clock leeway.
   Upgrade note: a token with an expired chain link beyond that leeway is no longer
