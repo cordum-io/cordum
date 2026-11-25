@@ -91,20 +91,24 @@ func artifactBindingStarted(t *testing.T, out claude.ClaudeHookOutput) bool {
 }
 
 func TestArtifactBindingApprovalFollowsManifestAndKubeTarget(t *testing.T) {
+	editManifest := func(t *testing.T, cwd, _ string) {
+		artifactBindingWrite(t, filepath.Join(cwd, "manifest.yaml"), "kind: ConfigMap\nmetadata:\n  name: changed\n")
+	}
 	cases := []struct {
-		name   string
-		change func(t *testing.T, cwd, kubeconfig string)
+		name, command string
+		change        func(t *testing.T, cwd, kubeconfig string)
 	}{
-		{"unchanged_positive_control", nil},
-		{"manifest_edited", func(t *testing.T, cwd, _ string) {
-			artifactBindingWrite(t, filepath.Join(cwd, "manifest.yaml"), "kind: ConfigMap\nmetadata:\n  name: changed\n")
-		}},
-		{"kube_context_switched", func(t *testing.T, _, kubeconfig string) {
+		{"unchanged_positive_control", artifactBindingCommand, nil},
+		{"manifest_edited", artifactBindingCommand, editManifest},
+		{"kube_context_switched", artifactBindingCommand, func(t *testing.T, _, kubeconfig string) {
 			artifactBindingWrite(t, kubeconfig, artifactBindingKubeconfig("prod", "dev-ns"))
 		}},
-		{"kube_namespace_changed", func(t *testing.T, _, kubeconfig string) {
+		{"kube_namespace_changed", artifactBindingCommand, func(t *testing.T, _, kubeconfig string) {
 			artifactBindingWrite(t, kubeconfig, artifactBindingKubeconfig("dev", "other-ns"))
 		}},
+		{"attached_flag_positive_control", "kubectl apply -fmanifest.yaml", nil},
+		{"attached_flag_manifest_edited", "kubectl apply -fmanifest.yaml", editManifest},
+		{"comma_list_manifest_edited", "kubectl apply -f other.yaml,manifest.yaml", editManifest},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -113,14 +117,14 @@ func TestArtifactBindingApprovalFollowsManifestAndKubeTarget(t *testing.T) {
 			defer httpServer.Close()
 			evaluator := referencedFileEvaluator(t, httpServer.URL, session)
 			cwd, kubeconfig, env := artifactBindingWorkspace(t)
-			if artifactBindingStarted(t, artifactBindingHook(t, evaluator, session, artifactBindingCommand, cwd, env)) {
+			if artifactBindingStarted(t, artifactBindingHook(t, evaluator, session, tc.command, cwd, env)) {
 				t.Fatal("pending tool must not start")
 			}
 			referencedFileApprove(t, s, session)
 			if tc.change != nil {
 				tc.change(t, cwd, kubeconfig)
 			}
-			started := artifactBindingStarted(t, artifactBindingHook(t, evaluator, session, artifactBindingCommand, cwd, env))
+			started := artifactBindingStarted(t, artifactBindingHook(t, evaluator, session, tc.command, cwd, env))
 			if started != (tc.change == nil) {
 				t.Fatalf("after %s the approved tool started = %v", tc.name, started)
 			}
