@@ -189,6 +189,7 @@ func TestArtifactBindingKubeTarget(t *testing.T) {
 		{"flags with equals", "kubectl apply --context=staging -n=team -f manifest.yaml", kc, "staging", "team"},
 		{"short namespace flag", "kubectl -n team get pods", kc, "dev", "team"},
 		{"short namespace attached", "kubectl -nteam get pods", kc, "dev", "team"},
+		{"namespace attached in a cluster", "kubectl -Rnteam get pods", kc, "dev", "team"},
 		{"flags after -- belong to the command", "kubectl -n team exec pod -- ls -n other", kc, "dev", "team"},
 		{"kubectl.exe", "kubectl.exe get pods", kc, "dev", "dev-ns"},
 		{"context flag reads its namespace", "kubectl --context staging get pods", kc, "staging", "staging-ns"},
