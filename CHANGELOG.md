@@ -107,6 +107,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `allow_cross_tenant` or a token with that claim. The single
   `CORDUM_API_KEY`, managed keys and password sessions do not carry it.
   Existing pools, topic routes and workers are unchanged (task-5e780668).
+- Agents: `GET /api/v1/agents/{id}/denied-events` resolves the agent in the
+  caller's tenant first, and answers `404 AGENT_NOT_FOUND` when it cannot, as
+  `GET /api/v1/agents/{id}` does. `POST /api/v1/agents/verify-delegation`
+  verifies a token for a caller bound to one tenant only when the token's
+  tenant claim names that tenant; any other token gets `403` before it is
+  checked. A caller whose access spans all tenants verifies any token
+  (task-810a4b3a).
+
 - The dashboard test run no longer fails after every test passes when a console line, written by work that outlived its test file, is still being delivered as the Vitest worker shuts down (`EnvironmentTeardownError: Closing rpc while "onUserConsoleLog" was pending`). `dashboard/vitest.config.ts` ignores exactly that error, so every other unhandled error still fails the run. `KeyboardShortcutsHelp.test.tsx`, which produced it, now answers the AppShell's requests in-process and waits for them to settle (task-04eef2b3).
 
 #### core/mcp — the MCP invocation audit keeps a consumed human approval when scope preapproval also applies (2026-11-12, task-74f4c01e)
