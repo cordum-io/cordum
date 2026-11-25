@@ -66,9 +66,7 @@ func TestAudienceMatrixMCPGateway(t *testing.T) {
 // plus its sys.job.submit publish.
 func TestAudienceMatrixGRPCAPI(t *testing.T) {
 	m := newAudienceMatrix(t)
-	identity.Run(t, identity.GRPCAPI, m.matrixPresentGRPC,
-		identity.Skip(identity.UserSession, "PR1-31"),
-	)
+	identity.Run(t, identity.GRPCAPI, m.matrixPresentGRPC)
 }
 
 // matrixWithProvider adds provider to deployment d's composite, as RunWithAuth
