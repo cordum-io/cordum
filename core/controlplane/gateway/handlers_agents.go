@@ -619,10 +619,7 @@ func (s *server) resolveAgentForAudit(ctx context.Context, agentID string) (stri
 	if s.agentIdentityStore == nil {
 		return agentID, agentID, ""
 	}
-	// Audit enrichment is a system-internal lookup — tenant scoping is
-	// enforced at the calling handler boundary, not here. Pass empty
-	// tenantID to skip the store-level tenant check.
-	agent, err := s.agentIdentityStore.Get(ctx, "", agentID)
+	agent, err := s.agentIdentityStore.GetAnyTenant(ctx, agentID)
 	if err != nil || agent == nil {
 		return agentID, agentID, ""
 	}
