@@ -14,6 +14,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   those kinds. An approved action whose consumed ALLOW still carries such a kind blocks
   the same way. The hook applies none of the five kinds (budgets, sandbox, toolchain,
   diff, redaction level) yet (task-aa7ceb05).
+- Edge sessions: the session create, get, list, end and export responses, and the
+  session started and ended audit events, carry a server-derived `assurance_state`
+  (compatibility, hook-mediated, unsupported or stale). Get, list and export derive it
+  from the current facts, so a session whose heartbeat has lapsed or that has ended
+  reports stale. `executor-enforced` is reserved and not reported (task-50b24bdf).
 
 ### Documentation
 

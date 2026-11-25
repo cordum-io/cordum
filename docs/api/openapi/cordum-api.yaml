@@ -10267,6 +10267,16 @@ components:
         status:
           type: string
           enum: [starting, running, waiting_for_approval, degraded, ended, failed]
+        assurance_state:
+          type: string
+          enum: [compatibility, hook-mediated, executor-enforced, unsupported, stale]
+          description: >-
+            Server-derived on each response from the policy mode, the enforcement layers,
+            the session status and the agent heartbeat. `stale` means the session has
+            ended or has no heartbeat within the session heartbeat TTL. Combinations
+            that match no rule report `unsupported`. `executor-enforced` is reserved
+            and not reported. Managed-settings status and binary integrity are not
+            inputs yet.
         risk_summary:
           $ref: '#/components/schemas/EdgeRiskSummary'
         started_at:
