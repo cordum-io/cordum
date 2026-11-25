@@ -99,6 +99,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `filters.tenant` field narrows that set, so a filter naming a tenant the
   caller cannot access matches no jobs. A job with no stored tenant is
   replayed only for a caller whose access spans all tenants (task-d14273c2).
+- Worker pools: the eight `/api/v1/pools` routes (list, read, create, update,
+  delete, drain, and adding or removing a topic) answer `403` to a caller
+  whose access does not span all tenants, before any pool data is read or
+  written. Pools and their topic routes serve every tenant, so these routes
+  and `cordumctl pool` need a `CORDUM_API_KEYS` entry with
+  `allow_cross_tenant` or a token with that claim. The single
+  `CORDUM_API_KEY`, managed keys and password sessions do not carry it.
+  Existing pools, topic routes and workers are unchanged (task-5e780668).
 - Agents: `GET /api/v1/agents/{id}/denied-events` resolves the agent in the
   caller's tenant first, and answers `404 AGENT_NOT_FOUND` when it cannot, as
   `GET /api/v1/agents/{id}` does. `POST /api/v1/agents/verify-delegation`
