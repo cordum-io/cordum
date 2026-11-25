@@ -73,6 +73,38 @@ func newIsolationMemory(t *testing.T) (*Service, isolationMemorySnapshot) {
 	return svc, before
 }
 
+// The request names B's memory id with no tenant, as a caller that is not tenant B.
+func TestTenantIsolationContextEngineBuildWindow(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		mode    pb.ContextMode
+		payload string
+		marker  string
+	}{
+		{"events", pb.ContextMode_CONTEXT_MODE_CHAT, `{"prompt":"next"}`, isolationMemoryMarker + "-EVENT"},
+		{"summary", pb.ContextMode_CONTEXT_MODE_RAG, `{"prompt":"next"}`, isolationMemoryMarker + "-SUMMARY"},
+		{"chunks", pb.ContextMode_CONTEXT_MODE_RAG, `{"file_path":"/app/main.go","prompt":"next"}`, isolationMemoryMarker + "-CHUNK"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, before := newIsolationMemory(t)
+			resp, err := svc.BuildWindow(context.Background(), &pb.BuildWindowRequest{
+				MemoryId: isolationMemoryID, Mode: tc.mode, LogicalPayload: []byte(tc.payload),
+			})
+			if after := readIsolationMemory(t, svc); !reflect.DeepEqual(before, after) {
+				t.Error("tenant B memory changed during foreign read")
+			}
+			if err != nil {
+				t.Fatalf("build window: %v", err)
+			}
+			for _, msg := range resp.GetMessages() {
+				if strings.Contains(msg.GetContent(), tc.marker) {
+					t.Error("foreign read returned tenant B memory")
+				}
+			}
+		})
+	}
+}
+
 func TestTenantIsolationContextEngineSharedWrite(t *testing.T) {
 	for _, tenant := range []string{"tenant-a", ""} {
 		t.Run("tenant="+tenant, func(t *testing.T) {
@@ -91,5 +123,20 @@ func TestTenantIsolationContextEngineSharedWrite(t *testing.T) {
 				t.Error("tenant B memory changed during rejected write")
 			}
 		})
+	}
+}
+
+func TestTenantIsolationContextEngineChatWrite(t *testing.T) {
+	svc, before := newIsolationMemory(t)
+	_, err := svc.UpdateMemory(context.Background(), &pb.UpdateMemoryRequest{
+		MemoryId: isolationMemoryID, TenantId: "tenant-a",
+		Mode: pb.ContextMode_CONTEXT_MODE_CHAT, WriteKind: pb.MemoryWriteKind_MEMORY_WRITE_KIND_CHAT,
+		WriterAgentId: "tenant-a/writer", ModelResponse: []byte("foreign write"),
+	})
+	if err != nil && !errors.Is(err, ErrSharedWriteTenantMismatch) {
+		t.Errorf("unexpected write error: %v", err)
+	}
+	if after := readIsolationMemory(t, svc); !reflect.DeepEqual(before, after) {
+		t.Error("tenant B memory changed during foreign CHAT write")
 	}
 }

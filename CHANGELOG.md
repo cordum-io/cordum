@@ -7,6 +7,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Context engine memory is stored per tenant. `BuildWindowRequest` has a new
+  `tenant_id` field. `BuildWindow` and `UpdateMemory` use stored memory only
+  for a request whose `tenant_id` is set, under the id
+  `<tenant>/<memory id>`. An id that already starts with `<tenant>/` is used
+  as is, and any other id containing `/` is refused. Without a usable
+  tenant, `BuildWindow` builds the window from the request payload alone,
+  and a chat or RAG `UpdateMemory` returns an error. Workflow-run chat
+  stores its history under the same id, qualified with the run's tenant.
+  Memory stored under an id without a tenant segment before this release is
+  not read (task-eeaba4b9).
+
 - Config: documents at team, workflow and step scope are stored per tenant,
   under `cfg:{scope}:{tenant}/{id}` with the tenant path-escaped.
   `GET /api/v1/config` and `PUT`/`POST /api/v1/config` at those scopes use
