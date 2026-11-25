@@ -425,10 +425,8 @@ func (s *AgentIdentityStore) Update(ctx context.Context, tenantID, id string, up
 }
 
 // Delete soft-deletes an agent identity by setting status to "revoked",
-// scoped to tenantID. An empty tenantID bypasses the tenant check. When
-// tenantID is set and the stored identity's TenantID differs, Delete
-// returns a "not found" error — the same error class as a missing record
-// — to avoid an existence oracle for cross-tenant probes.
+// scoped to tenantID. An empty or mismatched tenant returns a "not found"
+// error, the same error as a missing identity.
 func (s *AgentIdentityStore) Delete(ctx context.Context, tenantID, id string) error {
 	if s == nil || s.client == nil {
 		return fmt.Errorf("agent_identity_store: redis client not initialized")
