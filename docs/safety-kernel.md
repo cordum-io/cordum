@@ -340,6 +340,7 @@ When the safety kernel is unreachable during pre-dispatch policy checks, the sch
 **Configuration**:
 - Mode: config-service key `scheduler.input_fail_mode` (values: `closed`, `open`), system-wide or per tenant.
 - Scope: config-service key `scheduler.input_fail_open_scope`, a system- or tenant-level list of named rules with exact topics. A tenant list replaces the system list, and an empty list opts out. Malformed entries, wildcard topics and approval-gate subjects are ignored.
+- Updates: the scheduler reloads both system keys on a config-change notification and every 30 seconds by default (`SCHEDULER_CONFIG_RELOAD_INTERVAL`). It caches each tenant's effective configuration, system keys included, and refreshes an entry in the background once it is older than 30 seconds, so a change reaches a tenant only after its entry is refreshed. Until a tenant's configuration has loaded, that tenant's jobs are requeued, even in `open` mode; the `default` tenant uses the system keys directly.
 - `POLICY_CHECK_FAIL_MODE` selects the Gateway's submit-time pre-check: `closed` (default) rejects a submit while the kernel is unavailable, and `open` accepts it. It does not select the scheduler's mode.
 - `input_policy.fail_mode` in `config/safety.yaml` selects neither mode.
 
