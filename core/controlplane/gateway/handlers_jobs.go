@@ -131,6 +131,10 @@ func (s *server) handleGetWorkers(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermissionOrRole(w, r, auth.PermWorkersRead, "admin") {
 		return
 	}
+	_, ids, allowed := s.workerReadScope(w, r)
+	if !allowed {
+		return
+	}
 	// Prefer Redis snapshot (consistent across all replicas). The
 	// response shape layers session authority (online, session_valid,
 	// session_exp_ms, session_revoked, session_state) over the existing
@@ -142,6 +146,9 @@ func (s *server) handleGetWorkers(w http.ResponseWriter, r *http.Request) {
 	if err == nil && snap != nil {
 		items := make([]map[string]any, 0, len(snap.Workers))
 		for _, ws := range snap.Workers {
+			if ids != nil && !ids[ws.WorkerID] {
+				continue
+			}
 			items = append(items, s.workerStatusFromSummary(r.Context(), ws, snap.CapturedAt))
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -162,6 +169,9 @@ func (s *server) handleGetWorkers(w http.ResponseWriter, r *http.Request) {
 	}
 	s.workerMu.RUnlock()
 	for _, hb := range hbs {
+		if ids != nil && !ids[hb.GetWorkerId()] {
+			continue
+		}
 		items = append(items, s.workerStatusResponse(r.Context(), hb, seenCopy[hb.GetWorkerId()]))
 	}
 	w.Header().Set("Content-Type", "application/json")

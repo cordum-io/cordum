@@ -46,6 +46,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Worker reads: a worker belongs to the tenant of its worker credential. For a
+  caller without cross-tenant access, `GET /api/v1/workers` lists only that
+  tenant's workers, `GET /api/v1/workers/{id}` and
+  `GET /api/v1/workers/{id}/jobs` answer 404 for any other worker, and the jobs
+  list holds only that tenant's jobs. A worker without a credential record is
+  listed only to callers with cross-tenant access (task-fa19ec96).
+
 - MCP approval resume: a call resumed with `_approval_ref` is refused with
   `-32096` `policy_snapshot_changed` when policy was published between the
   approval claim and the call's `mcp.tool.pre` stamp. Nothing runs and the
