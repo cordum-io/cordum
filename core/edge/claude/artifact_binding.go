@@ -12,6 +12,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -160,8 +161,9 @@ func artifactCollect(command, cwd string, env map[string]string) (*artifactInput
 }
 
 // addFile records name when it names a regular file. It returns the unbound
-// reason when name is a URL or a network path, a directory or another
-// non-regular file, cannot be read, or goes past the file limits. A network
+// reason when name is a URL or a network path, a Windows name that depends on
+// a current drive, a directory or another non-regular file, cannot be read,
+// or goes past the file limits. A network
 // path (//host/share, a share on Windows) is never stat'ed, so naming one
 // opens no connection.
 func (in *artifactInputs) addFile(cwd, name string) string {
@@ -170,6 +172,12 @@ func (in *artifactInputs) addFile(cwd, name string) string {
 	}
 	if strings.Contains(name, "://") || strings.HasPrefix(name, "//") {
 		return "url"
+	}
+	if runtime.GOOS == "windows" && !filepath.IsAbs(name) && (name[0] == '/' || filepath.VolumeName(name) != "") {
+		// Windows resolves a rooted (/dir) or drive-relative (D:dir) name
+		// against a current drive the binding does not know, and Git Bash
+		// rewrites a rooted name through its mount table first.
+		return "unreadable"
 	}
 	path := artifactPath(cwd, name)
 	info, err := os.Stat(path)
@@ -211,7 +219,7 @@ func artifactOpen(path string) (*os.File, string) {
 	if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
 		return nil, "unreadable"
 	}
-	file, err := os.Open(filepath.Clean(path))
+	file, err := os.Open(path) // #nosec G304 -- a file the command names, opened read-only to hash it; a lexical clean would resolve ".." differently from the command
 	if err != nil {
 		return nil, "unreadable"
 	}
@@ -227,11 +235,13 @@ func artifactOpen(path string) (*os.File, string) {
 	return file, ""
 }
 
+// artifactPath joins name to cwd without a lexical clean: the kernel resolves
+// ".." after a symlink to the link target's parent, as the command will.
 func artifactPath(cwd, name string) string {
-	if filepath.IsAbs(name) {
-		return filepath.Clean(name)
+	if cwd == "" || filepath.IsAbs(name) {
+		return name
 	}
-	return filepath.Join(cwd, name)
+	return cwd + string(filepath.Separator) + name
 }
 
 // artifactDigest is the keyed sha256 of the bound inputs, written as 8-char

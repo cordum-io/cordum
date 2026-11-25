@@ -2,6 +2,7 @@ package claude
 
 import (
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 )
@@ -49,12 +50,17 @@ func artifactRecognized(fields []string, cwd string, inputs *artifactInputs) str
 // ',', ':' or '@' (key=path, a,b, src:dst, @path), and every value a short
 // option or a cluster of them can carry attached (-fFILE, -RfFILE), each also
 // cut at the next ',' and at the next ':' (a comma-list item may hold a ':').
+// On Windows a ':' ends a drive letter (D:/dir), so no name starts after it.
 // A string that names no file costs one stat; a named file missing from the
 // digest would keep an approval valid after the file changed.
 func artifactNames(field string) []string {
+	separators := "=,:@"
+	if runtime.GOOS == "windows" {
+		separators = "=,@"
+	}
 	starts := []int{0}
 	for i := range len(field) {
-		if strings.IndexByte("=,:@", field[i]) >= 0 {
+		if strings.IndexByte(separators, field[i]) >= 0 {
 			starts = append(starts, i+1)
 		}
 	}

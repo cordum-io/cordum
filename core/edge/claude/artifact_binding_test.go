@@ -172,9 +172,10 @@ func TestArtifactBindingCoversGitHead(t *testing.T) {
 
 func TestArtifactBindingKubeTarget(t *testing.T) {
 	cwd, home := t.TempDir(), t.TempDir()
+	kubeconfig := "current-context: dev\ncontexts:\n- name: dev\n  context:\n    namespace: dev-ns\n" +
+		"- name: staging\n  context:\n    namespace: staging-ns\n"
 	artifactWriteFiles(t, cwd, map[string]string{
-		"kc.yaml": "current-context: dev\ncontexts:\n- name: dev\n  context:\n    namespace: dev-ns\n" +
-			"- name: staging\n  context:\n    namespace: staging-ns\n",
+		"kc.yaml": kubeconfig, "sub/kubectl": kubeconfig,
 		"a.yaml": "contexts:\n- name: x\n  context:\n    namespace: ns-a\n",
 		"b.yaml": "current-context: x\ncontexts:\n- name: x\n  context:\n    namespace: ns-b\n",
 	})
@@ -195,6 +196,7 @@ func TestArtifactBindingKubeTarget(t *testing.T) {
 		{"context flag reads its namespace", "kubectl --context staging get pods", kc, "staging", "staging-ns"},
 		{"kubeconfig flag relative to cwd", "kubectl --kubeconfig kc.yaml get pods", map[string]string{}, "dev", "dev-ns"},
 		{"KUBECONFIG assignment", "KUBECONFIG=kc.yaml kubectl get pods", map[string]string{}, "dev", "dev-ns"},
+		{"KUBECONFIG naming a file called kubectl", "KUBECONFIG=sub/kubectl kubectl get pods", map[string]string{}, "dev", "dev-ns"},
 		{"merged KUBECONFIG list", "kubectl get pods", map[string]string{
 			"KUBECONFIG": filepath.Join(cwd, "a.yaml") + string(os.PathListSeparator) + filepath.Join(cwd, "b.yaml"),
 		}, "x", "ns-a"},
