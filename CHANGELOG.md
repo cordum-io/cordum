@@ -99,6 +99,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `filters.tenant` field narrows that set, so a filter naming a tenant the
   caller cannot access matches no jobs. A job with no stored tenant is
   replayed only for a caller whose access spans all tenants (task-d14273c2).
+- Worker pools: the eight `/api/v1/pools` routes (list, read, create, update,
+  delete, drain, and adding or removing a topic) answer `403` to a caller
+  whose access does not span all tenants, before any pool data is read or
+  written. Pools and their topic routes serve every tenant, so these routes
+  and `cordumctl pool` need a `CORDUM_API_KEYS` entry with
+  `allow_cross_tenant` or a token with that claim. The single
+  `CORDUM_API_KEY`, managed keys and password sessions do not carry it.
+  Existing pools, topic routes and workers are unchanged (task-5e780668).
 - The dashboard test run no longer fails after every test passes when a console line, written by work that outlived its test file, is still being delivered as the Vitest worker shuts down (`EnvironmentTeardownError: Closing rpc while "onUserConsoleLog" was pending`). `dashboard/vitest.config.ts` ignores exactly that error, so every other unhandled error still fails the run. `KeyboardShortcutsHelp.test.tsx`, which produced it, now answers the AppShell's requests in-process and waits for them to settle (task-04eef2b3).
 
 #### core/mcp — the MCP invocation audit keeps a consumed human approval when scope preapproval also applies (2026-11-12, task-74f4c01e)
