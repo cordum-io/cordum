@@ -872,6 +872,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Audit: submit, approve and reject audit events and spans name the agent in a job's `agent_id` label only when that agent belongs to the job's tenant; otherwise they carry the label's id with no name or risk tier.
+
 - Approvals: when a job's tenant cannot be read, callers without cross-tenant
   access get `404 job not found` from `POST /api/v1/approvals/{job_id}/approve`,
   `/reject` and `/repair`, and a failed tenant lookup returns `503` from all
