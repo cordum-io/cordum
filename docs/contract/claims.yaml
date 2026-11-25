@@ -844,3 +844,13 @@ claims:
     tests: [{"package":"core/workflow","name":"TestDepsSatisfied_NormalDepsEnforced"},{"package":"core/workflow","name":"TestDepsSatisfied_OnErrorBypassesDeps"},{"package":"core/workflow","name":"TestDepsSatisfied_FailedWithOnErrorSucceeded"},{"package":"core/workflow","name":"TestParallelAllSucceed"}]
     evidence: "At 549772371995b9eb5a95a2c6c8685551e0231724 scheduleReady skips steps whose depsSatisfied check fails; depsSatisfied accepts successful dependencies and explicit on_error recovery. The cited tests cover dependency checks and parallel success, not an unrestricted guarantee."
     public_sources: ["Cordum-site:site/src/app/blog/workflow-orchestration-for-ai/page.tsx:87"]
+  - id: CLM-136
+    statement: "On the Edge hook path, an approval of a Bash command binds the content of the files the command names, its cwd and git HEAD, and for kubectl its context and namespace; a change to any of them before the claim makes the claim fail."
+    boundary: "Inputs named on the command line of a PreToolUse Bash call through cordum-hook, cordum-agentd and the Gateway. Not files a script or build tool reads on its own, and not changes after the hook returns. Test and build commands (command.family test or build) are marked unbound because they run code they do not name."
+    status: supported
+    invariants: ["I05"]
+    findings: ["R04"]
+    enforcement_points: [{"path":"core/edge/claude/artifact_binding.go","symbol":"artifactBindingLabels"},{"path":"core/controlplane/gateway/handlers_edge_evaluate.go","symbol":"edgeEvaluateActionHash"}]
+    tests: [{"package":"core/controlplane/gateway","name":"TestArtifactBindingApprovalFollowsManifestAndKubeTarget"},{"package":"core/controlplane/gateway","name":"TestArtifactBindingPolicyDeniesUnboundCommand"}]
+    evidence: "artifactBindingLabels labels a Bash call with artifact.binding, artifact.unbound_reason, a keyed artifact.digest of the named files, git HEAD and kube target, and kube.context and kube.namespace; the labels join edgeEvaluateActionHash, and Run computes them again before an allowed call starts. The cited tests change a manifest, the kube context and the kube namespace after approval and check that the tool does not start, and check that a policy rule on artifact.binding=unbound denies. R04 is narrowed, not closed: files a tool reads on its own, changes after the hook returns and the check-to-use window remain. Immutable inputs are M2 (M2A-07) and the runner that executes bound inputs is M3 (M3-05)."
+    public_sources: ["cordum:CHANGELOG.md:10"]

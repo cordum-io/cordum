@@ -7,6 +7,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Edge approvals: an approval of a Bash command now also covers the files the command
+  names, the git HEAD of its working directory and, for kubectl, the target context and
+  namespace. cordum-hook adds a keyed digest of them to the approval's action identity
+  and checks them again before an allowed command starts, so a change after the
+  approval blocks the command until it is approved again. When the hook cannot tell
+  what a command reads (shell syntax, inline code, a URL, a directory, an unreadable or
+  oversized file, files that take over a second to read, an unknown kube context, or a
+  test or build command), it labels the call `artifact.binding=unbound` with an
+  `artifact.unbound_reason`, so a policy can deny it. Files a script or tool opens on
+  its own are not covered (task-14d105fb).
 - Python SDK: remove template-unused imports during generation with the pinned Ruff
   cleanup hook before formatting, without changing API or version markers (task-90b8033a).
 - Edge hook: a CONSTRAIN decision that carries a constraint kind the hook cannot apply
