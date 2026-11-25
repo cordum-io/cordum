@@ -205,9 +205,13 @@ func TestArtifactBindingKubeTarget(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			want := "bound"
+			if strings.Contains(tc.command, " -- ") {
+				want = "unbound" // what follows -- is not modeled
+			}
 			labels := artifactBindingLabels(context.Background(), artifactHookInput(cwd, tc.command), tc.env, "unknown")
-			if labels["artifact.binding"] != "bound" || labels["kube.context"] != tc.context || labels["kube.namespace"] != tc.namespace {
-				t.Fatalf("labels = %v, want bound %s/%s", labels, tc.context, tc.namespace)
+			if labels["artifact.binding"] != want || labels["kube.context"] != tc.context || labels["kube.namespace"] != tc.namespace {
+				t.Fatalf("labels = %v, want %s %s/%s", labels, want, tc.context, tc.namespace)
 			}
 		})
 	}

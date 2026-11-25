@@ -41,7 +41,7 @@ var artifactKubectlShorthands = map[byte]string{'n': "namespace", 'f': "filename
 // (parseArgs, parseLongArg, parseSingleShortArg). It returns the last value of
 // each modeled flag, by long name, and whether every argument is recognized:
 // only modeled flags, a value for each value flag, no file value of - (stdin),
-// and the subcommand apply with no other positional, create, get or exec. An
+// and the subcommand apply with no other positional, create or get. An
 // unmodeled flag is read as a switch, so the target flags after it still
 // parse. kubectl picks its subcommand before it parses flags (cobra
 // stripFlags), and that lookup reads the word after a bare -R or --recursive
@@ -71,7 +71,7 @@ func artifactKubectlArgs(args []string) (map[string]string, bool) {
 		args = args[1:]
 		switch {
 		case arg == "--":
-			args = nil // what follows is the command kubectl runs, not its flags
+			args, ok = nil, false // what follows is not modeled, and not kubectl's flags
 		case len(positionals) == 0 && (arg == "-R" || arg == "--recursive"):
 			ok = false
 		case len(arg) < 2 || arg[0] != '-':
@@ -121,7 +121,7 @@ func artifactKubectlSubcommand(positionals []string) bool {
 	case positionals[0] == "create":
 		return len(positionals) == 1 || positionals[1] == "configmap" || positionals[1] == "secret"
 	}
-	return positionals[0] == "get" || positionals[0] == "exec"
+	return positionals[0] == "get"
 }
 
 // artifactKubeTarget returns the context and namespace kubectl will use, and
