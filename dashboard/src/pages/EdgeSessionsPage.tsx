@@ -22,6 +22,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { StatusBadge, type BadgeVariant } from "@/components/ui/StatusBadge";
+import { ASSURANCE_STATES, AssuranceStateBadge } from "@/components/edge/AssuranceStateBadge";
 import { useEdgeSessions } from "@/hooks/useEdgeSessions";
 import { cn, formatRelativeTime } from "@/lib/utils";
 
@@ -57,16 +58,18 @@ function statusVariant(status: string): BadgeVariant {
 interface PageFilter {
   status: string;
   policyMode: string;
+  assuranceState: string;
   agentProduct: string;
   search: string;
 }
 
-const EMPTY_FILTER: PageFilter = { status: "", policyMode: "", agentProduct: "", search: "" };
+const EMPTY_FILTER: PageFilter = { status: "", policyMode: "", assuranceState: "", agentProduct: "", search: "" };
 
 function applyClientFilter(items: EdgeSession[], filter: PageFilter): EdgeSession[] {
   const search = filter.search.trim().toLowerCase();
   return items.filter((session) => {
     if (filter.policyMode && session.policyMode !== filter.policyMode) return false;
+    if (filter.assuranceState && session.assuranceState !== filter.assuranceState) return false;
     if (
       search &&
       !session.sessionId.toLowerCase().includes(search) &&
@@ -283,6 +286,13 @@ function SessionsFilters({
         onChange={(value) => setFilter({ ...filter, policyMode: value })}
         testid="edge-sessions-filter-policy"
       />
+      <FilterSelect
+        label="Assurance"
+        value={filter.assuranceState}
+        options={ASSURANCE_STATES}
+        onChange={(value) => setFilter({ ...filter, assuranceState: value })}
+        testid="edge-sessions-filter-assurance"
+      />
       <label className="flex items-center gap-2 text-xs text-muted-foreground">
         Agent
         <input
@@ -377,7 +387,8 @@ function SessionRow({
             {session.sessionId}
           </Link>
           <StatusBadge variant={statusVariant(session.status)}>{session.status}</StatusBadge>
-          <StatusBadge variant="info">{session.policyMode}</StatusBadge>
+          <AssuranceStateBadge state={session.assuranceState} />
+          <StatusBadge variant="info">policy {session.policyMode}</StatusBadge>
           {session.agentProduct ? (
             <span className="text-xs text-muted-foreground">{session.agentProduct}</span>
           ) : null}
