@@ -12,17 +12,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   namespace. cordum-hook adds a keyed digest of them to the approval's action identity
   and checks them again before an allowed command starts, so a change after the
   approval blocks the command until it is approved again. The hook labels a call
-  `artifact.binding=bound` only when it recognizes the program and every argument:
-  `kubectl apply`, `create` (from files, or a configmap or secret), `get` or `exec`
+  `artifact.binding=bound` only for one simple command of plain literal words whose
+  program and every argument it recognizes: `kubectl apply`, `create` (from files,
+  or a configmap or secret) or `get`
   with only the `--context`, `--namespace`/`-n`, `--kubeconfig`, `-f`/`--filename`,
   `--from-file`, `--from-env-file` and `-R`/`--recursive` flags, or `sh`, `bash`,
   `zsh`, `dash`, `python`, `node`, `perl` or `ruby` running a script file from the
   working directory. Any other call is labelled `artifact.binding=unbound` with an
   `artifact.unbound_reason` (an unrecognized command, inline code, shell syntax, a URL
-  or network path, a Windows path that depends on the current drive, a directory, an
-  unreadable or oversized file, files that take over a second to read, an unknown kube
-  context, or a test or build command), so a policy can deny it, and its digest still
-  covers the files it names. Files a script or tool opens on its own are not covered
+  or network path, a Windows device or path that depends on the current drive, a
+  directory, an unreadable or oversized file, a read-size mismatch such as a
+  reader-dependent procfs/sysfs file, files that take over a second to read, an unknown
+  kube context, or a test or build command), so a policy can deny it. Where inputs can
+  be collected, the digest still covers the files it names. PowerShell, Monitor and
+  any other non-Bash tool carrying a command are labelled unbound without a digest.
+  Files a script or tool opens on its own are not covered
   (task-14d105fb).
 - Python SDK: remove template-unused imports during generation with the pinned Ruff
   cleanup hook before formatting, without changing API or version markers (task-90b8033a).
