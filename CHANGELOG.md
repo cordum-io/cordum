@@ -107,6 +107,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `allow_cross_tenant` or a token with that claim. The single
   `CORDUM_API_KEY`, managed keys and password sessions do not carry it.
   Existing pools, topic routes and workers are unchanged (task-5e780668).
+- Agents: `GET /api/v1/agents/{id}/denied-events` resolves the agent in the
+  caller's tenant first, and answers `404 AGENT_NOT_FOUND` when it cannot, as
+  `GET /api/v1/agents/{id}` does. `POST /api/v1/agents/verify-delegation`
+  verifies a token for a caller bound to one tenant only when the token's
+  tenant claim names that tenant; any other token gets `403` before it is
+  checked. A caller whose access spans all tenants verifies any token
+  (task-810a4b3a).
+
+- Worker dispatch: with `WORKER_ATTESTATION=enforce`, or with
+  `CORDUM_SDK_HANDSHAKE` at `warn` or `enforce`, the scheduler dispatches a
+  job only to a worker whose credential belongs to the job's tenant. A job
+  gets no worker when it has no tenant or when the credential list cannot be
+  read, and a worker whose credential is missing, revoked or has no tenant
+  gets no job; such a job is retried as when its pool has no worker. Each
+  worker credential serves one tenant, so a worker that runs jobs for several
+  tenants needs a worker ID and credential per tenant. With
+  `WORKER_ATTESTATION` at `off` or `warn` and `CORDUM_SDK_HANDSHAKE=off`,
+  dispatch reads no worker credentials (task-c5aaf69c).
 - System policy: the routes that write the system policy document (policy
   bundles, publish, rollback, bundle snapshots, global policy, output rules,
   velocity rules, `PUT` and `POST /api/v1/config` for `system`/`policy`, and
