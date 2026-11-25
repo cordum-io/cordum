@@ -2,12 +2,14 @@ package workflow
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 )
 
 func newTestStore(t *testing.T) *RedisStore {
@@ -346,14 +348,14 @@ func TestRunIdempotencyKeyMapping(t *testing.T) {
 	if err := store.CreateRun(ctx, run); err != nil {
 		t.Fatalf("create run: %v", err)
 	}
-	got, err := store.GetRunByIdempotencyKey(ctx, "idem-key-1")
+	got, err := store.GetRunByIdempotencyKey(ctx, "org-1", "wf-1", "idem-key-1")
 	if err != nil {
 		t.Fatalf("get idempotency: %v", err)
 	}
 	if got != run.ID {
 		t.Fatalf("expected run id %s, got %s", run.ID, got)
 	}
-	ok, err := store.TrySetRunIdempotencyKey(ctx, "idem-key-1", "run-idem-2")
+	ok, err := store.TrySetRunIdempotencyKey(ctx, "org-1", "wf-1", "idem-key-1", "run-idem-2")
 	if err != nil {
 		t.Fatalf("try set: %v", err)
 	}
@@ -361,14 +363,101 @@ func TestRunIdempotencyKeyMapping(t *testing.T) {
 		t.Fatalf("expected idempotency key to be taken")
 	}
 
-	if err := store.DeleteRunIdempotencyKey(ctx, "idem-key-1"); err != nil {
+	// The same key in another tenant or workflow reserves that scope's own run.
+	others := []struct{ org, wf, runID string }{
+		{"org-2", "wf-1", "run-idem-org-2"},
+		{"org-1", "wf-2", "run-idem-wf-2"},
+	}
+	for _, o := range others {
+		ok, err := store.TrySetRunIdempotencyKey(ctx, o.org, o.wf, "idem-key-1", o.runID)
+		if err != nil || !ok {
+			t.Fatalf("%s/%s try set = %v, %v; want reserved", o.org, o.wf, ok, err)
+		}
+	}
+
+	if err := store.DeleteRunIdempotencyKey(ctx, "org-1", "wf-1", "idem-key-1"); err != nil {
 		t.Fatalf("delete idempotency key: %v", err)
 	}
-	if got, err := store.GetRunByIdempotencyKey(ctx, "idem-key-1"); err == nil || got != "" {
-		t.Fatalf("expected idempotency key to be removed")
+	if got, err := store.GetRunByIdempotencyKey(ctx, "org-1", "wf-1", "idem-key-1"); !errors.Is(err, redis.Nil) || got != "" {
+		t.Fatalf("expected idempotency key to be removed, got %q, %v", got, err)
 	}
-	if err := store.DeleteRunIdempotencyKey(ctx, ""); err == nil {
+	for _, o := range others {
+		if got, err := store.GetRunByIdempotencyKey(ctx, o.org, o.wf, "idem-key-1"); err != nil || got != o.runID {
+			t.Fatalf("%s/%s after delete = %q, %v; want %s", o.org, o.wf, got, err, o.runID)
+		}
+	}
+	if err := store.DeleteRunIdempotencyKey(ctx, "org-1", "wf-1", ""); err == nil {
 		t.Fatalf("expected error on empty idempotency key")
+	}
+}
+
+func TestTenantIsolationWorkflowRunLegacyIdempotencyKey(t *testing.T) {
+	store := newTestStore(t)
+	defer func() { _ = store.Close() }()
+	ctx := context.Background()
+
+	holder := &WorkflowRun{ID: "run-legacy", WorkflowID: "wf-1", OrgID: "org-1", Status: RunStatusPending, Steps: map[string]*StepRun{}}
+	if err := store.CreateRun(ctx, holder); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	seed := map[string]string{
+		"wf:run:idempotency:legacy-key":  holder.ID,
+		"wf:run:idempotency:orphan-key":  "run-missing",
+		"wf:run:idempotency:corrupt-key": "run-corrupt",
+		runKey("run-corrupt"):            "{",
+	}
+	for k, v := range seed {
+		if err := store.client.Set(ctx, k, v, 0).Err(); err != nil {
+			t.Fatalf("seed %s: %v", k, err)
+		}
+	}
+	holderBefore, err := store.client.Get(ctx, runKey(holder.ID)).Result()
+	if err != nil {
+		t.Fatalf("read holder run: %v", err)
+	}
+
+	// The holder's own tenant and workflow get the stored run.
+	if ok, err := store.TrySetRunIdempotencyKey(ctx, "org-1", "wf-1", "legacy-key", "run-new"); err != nil || ok {
+		t.Fatalf("holder scope try set = %v, %v; want taken", ok, err)
+	}
+	if got, err := store.GetRunByIdempotencyKey(ctx, "org-1", "wf-1", "legacy-key"); err != nil || got != holder.ID {
+		t.Fatalf("holder scope get = %q, %v; want %s", got, err, holder.ID)
+	}
+
+	// Another tenant or workflow sees no holder and reserves its own run.
+	for _, o := range []struct{ org, wf, runID string }{{"org-2", "wf-1", "run-org-2"}, {"org-1", "wf-2", "run-wf-2"}} {
+		if got, err := store.GetRunByIdempotencyKey(ctx, o.org, o.wf, "legacy-key"); !errors.Is(err, redis.Nil) || got != "" {
+			t.Fatalf("%s/%s get before reserve = %q, %v; want redis.Nil", o.org, o.wf, got, err)
+		}
+		if ok, err := store.TrySetRunIdempotencyKey(ctx, o.org, o.wf, "legacy-key", o.runID); err != nil || !ok {
+			t.Fatalf("%s/%s try set = %v, %v; want reserved", o.org, o.wf, ok, err)
+		}
+		if got, err := store.GetRunByIdempotencyKey(ctx, o.org, o.wf, "legacy-key"); err != nil || got != o.runID {
+			t.Fatalf("%s/%s get = %q, %v; want %s", o.org, o.wf, got, err, o.runID)
+		}
+	}
+
+	// A key whose run is missing holds nothing.
+	if ok, err := store.TrySetRunIdempotencyKey(ctx, "org-1", "wf-1", "orphan-key", "run-orphan"); err != nil || !ok {
+		t.Fatalf("orphan try set = %v, %v; want reserved", ok, err)
+	}
+
+	// A run that cannot be read is an error, never a free key.
+	if ok, err := store.TrySetRunIdempotencyKey(ctx, "org-1", "wf-1", "corrupt-key", "run-x"); err == nil || ok {
+		t.Fatalf("corrupt try set = %v, %v; want error", ok, err)
+	}
+	if n, err := store.client.Exists(ctx, runIdempotencyKey("org-1", "wf-1", "corrupt-key")).Result(); err != nil || n != 0 {
+		t.Fatalf("corrupt scoped key exists = %d, %v; want 0", n, err)
+	}
+
+	// The old-format keys and the holder run are unchanged.
+	for k, v := range seed {
+		if got, err := store.client.Get(ctx, k).Result(); err != nil || got != v {
+			t.Fatalf("%s = %q, %v; want %q", k, got, err, v)
+		}
+	}
+	if got, err := store.client.Get(ctx, runKey(holder.ID)).Result(); err != nil || got != holderBefore {
+		t.Fatalf("holder run changed: %q, %v", got, err)
 	}
 }
 
