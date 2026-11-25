@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 )
 
 // Artifact binding ties an Edge approval to the inputs a Bash command names:
@@ -23,8 +24,9 @@ import (
 // allowed command start, so a change in between makes the claim fail. Files a
 // script or tool opens on its own are not bound.
 const (
-	artifactMaxFiles     = 16
-	artifactMaxFileBytes = 8 << 20
+	artifactMaxFiles      = 16
+	artifactMaxFileBytes  = 8 << 20
+	artifactBindingBudget = time.Second
 	// artifactShellSyntax makes the shell, not the command line, decide what
 	// a command reads.
 	artifactShellSyntax = "'\"\\;&|<>`$(){}*?[~\n"
@@ -48,7 +50,9 @@ func artifactBindingLabels(ctx context.Context, input HookInput, env map[string]
 		return nil
 	}
 	command, _ := input.ToolInput["command"].(string)
-	inputs, reason := artifactCollect(command, input.CWD, env)
+	inputs, reason := artifactWithinBudget(ctx, func() (*artifactInputs, string) {
+		return artifactCollect(command, input.CWD, env)
+	})
 	if reason == "" && (family == "test" || family == "build") {
 		// Test and build commands run code they do not name.
 		reason = "implicit-inputs"
@@ -102,6 +106,30 @@ func recheckArtifacts(ctx context.Context, input HookInput, env map[string]strin
 	}
 }
 
+// artifactWithinBudget runs collect for at most artifactBindingBudget. A file
+// read cannot be cancelled and some never return (a FUSE file, /proc/kmsg read
+// as root, a FIFO swapped in after the stat), so a collection that runs out of
+// time leaves the call unbound instead of holding the hook past its deadline.
+func artifactWithinBudget(ctx context.Context, collect func() (*artifactInputs, string)) (*artifactInputs, string) {
+	ctx, cancel := context.WithTimeout(ctx, artifactBindingBudget)
+	defer cancel()
+	type result struct {
+		inputs *artifactInputs
+		reason string
+	}
+	done := make(chan result, 1)
+	go func() {
+		inputs, reason := collect()
+		done <- result{inputs, reason}
+	}()
+	select {
+	case r := <-done:
+		return r.inputs, r.reason
+	case <-ctx.Done():
+		return nil, "timeout"
+	}
+}
+
 // artifactCollect finds the inputs a command names, or the reason they cannot
 // be determined.
 func artifactCollect(command, cwd string, env map[string]string) (*artifactInputs, string) {
@@ -111,11 +139,11 @@ func artifactCollect(command, cwd string, env map[string]string) (*artifactInput
 	// Bash splits words on space and tab only (newline is rejected above), so
 	// a field here is the word bash will see.
 	fields := strings.FieldsFunc(command, func(r rune) bool { return r == ' ' || r == '\t' })
-	for i, field := range fields {
-		if slices.Contains(artifactInterpreters, filepath.Base(field)) &&
-			(slices.Contains(fields[i+1:], "-c") || slices.Contains(fields[i+1:], "-e")) {
-			return nil, "inline-code"
-		}
+	// Any -c or -e after the first interpreter is also after every later one.
+	if i := slices.IndexFunc(fields, func(field string) bool {
+		return slices.Contains(artifactInterpreters, filepath.Base(field))
+	}); i >= 0 && (slices.Contains(fields[i+1:], "-c") || slices.Contains(fields[i+1:], "-e")) {
+		return nil, "inline-code"
 	}
 	inputs := &artifactInputs{Files: map[string]string{}}
 	for _, field := range fields {

@@ -21,7 +21,8 @@ type artifactKubeconfig struct {
 }
 
 func artifactIsKubectl(field string) bool {
-	return filepath.Base(field) == "kubectl"
+	name := strings.ToLower(filepath.Base(field))
+	return name == "kubectl" || name == "kubectl.exe"
 }
 
 // artifactKubeTarget returns the context and namespace kubectl will use, and
@@ -40,9 +41,15 @@ func artifactKubeTarget(fields []string, cwd string, env map[string]string) (str
 	var kubeContext, namespace string
 	args := fields[at+1:]
 	for i, arg := range args {
+		if arg == "--" {
+			break // what follows is the command kubectl runs, not its flags
+		}
 		flag, value, inline := strings.Cut(arg, "=")
 		if !inline && i+1 < len(args) {
 			value = args[i+1]
+		}
+		if attached, ok := strings.CutPrefix(arg, "-n"); ok && attached != "" && attached[0] != '=' {
+			flag, value = "-n", attached
 		}
 		switch flag {
 		case "--kubeconfig":

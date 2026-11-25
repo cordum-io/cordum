@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordum/cordum/core/edge/keychain"
 )
@@ -83,6 +84,25 @@ func TestArtifactBindingUnboundReasons(t *testing.T) {
 				t.Fatalf("implicit-inputs still binds the files it names: %v", labels)
 			}
 		})
+	}
+}
+
+func TestArtifactBindingCollectionTimesOut(t *testing.T) {
+	release := make(chan struct{})
+	watchdog := time.AfterFunc(5*time.Second, func() { close(release) })
+	t.Cleanup(func() {
+		if watchdog.Stop() {
+			close(release)
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	inputs, reason := artifactWithinBudget(ctx, func() (*artifactInputs, string) {
+		<-release // a read that does not return, such as /proc/kmsg or a FUSE file
+		return &artifactInputs{}, ""
+	})
+	if inputs != nil || reason != "timeout" {
+		t.Fatalf("collection = %v, %q; want nil, timeout", inputs, reason)
 	}
 }
 
@@ -164,6 +184,9 @@ func TestArtifactBindingKubeTarget(t *testing.T) {
 		{"flags with values", "kubectl apply --context staging --namespace team -f manifest.yaml", kc, "staging", "team"},
 		{"flags with equals", "kubectl apply --context=staging -n=team -f manifest.yaml", kc, "staging", "team"},
 		{"short namespace flag", "kubectl -n team get pods", kc, "dev", "team"},
+		{"short namespace attached", "kubectl -nteam get pods", kc, "dev", "team"},
+		{"flags after -- belong to the command", "kubectl -n team exec pod -- ls -n other", kc, "dev", "team"},
+		{"kubectl.exe", "kubectl.exe get pods", kc, "dev", "dev-ns"},
 		{"context flag reads its namespace", "kubectl --context staging get pods", kc, "staging", "staging-ns"},
 		{"kubeconfig flag relative to cwd", "kubectl --kubeconfig kc.yaml get pods", map[string]string{}, "dev", "dev-ns"},
 		{"KUBECONFIG assignment", "KUBECONFIG=kc.yaml kubectl get pods", map[string]string{}, "dev", "dev-ns"},
