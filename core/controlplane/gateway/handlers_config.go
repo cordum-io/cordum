@@ -40,6 +40,16 @@ func managedConfigKey(scope configsvc.Scope, scopeID string) string {
 	}
 }
 
+// knownConfigScope reports whether scope is one the config API reads and writes.
+func knownConfigScope(scope configsvc.Scope) bool {
+	switch scope {
+	case configsvc.ScopeSystem, configsvc.ScopeOrg, configsvc.ScopeTeam, configsvc.ScopeWorkflow, configsvc.ScopeStep:
+		return true
+	default:
+		return false
+	}
+}
+
 func sameConfigJSON(a, b any) bool {
 	var canonical [2][]byte
 	for i, value := range []any{a, b} {
@@ -57,6 +67,21 @@ func sameConfigJSON(a, b any) bool {
 		}
 	}
 	return bytes.Equal(canonical[0], canonical[1])
+}
+
+func (s *server) configScopeID(r *http.Request, scope configsvc.Scope, scopeID string) (string, error) {
+	switch scope {
+	case configsvc.ScopeOrg:
+		return s.resolveTenant(r, scopeID)
+	case configsvc.ScopeTeam, configsvc.ScopeWorkflow, configsvc.ScopeStep:
+		tenant, err := s.resolveTenant(r, "")
+		if err != nil {
+			return "", err
+		}
+		return configsvc.TenantScopeID(scope, tenant, scopeID), nil
+	default:
+		return scopeID, nil
+	}
 }
 
 func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
@@ -77,6 +102,10 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 
 	// If body has "scope" as a string, treat as wrapped Document request (backward compat).
 	if sc, ok := raw["scope"].(string); ok && sc != "" {
+		if !knownConfigScope(configsvc.Scope(sc)) {
+			writeJSONError(w, http.StatusBadRequest, errorCodeConfigRequestInvalid, "invalid scope")
+			return
+		}
 		scopeStr = sc
 		if sid, ok := raw["scope_id"].(string); ok {
 			scopeID = sid
@@ -100,13 +129,10 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	scope := configsvc.Scope(scopeStr)
-	if scope == configsvc.ScopeOrg {
-		tenant, err := s.resolveTenant(r, scopeID)
-		if err != nil {
-			writeJSONError(w, http.StatusForbidden, errorCodeConfigKeyForbidden, "tenant access denied")
-			return
-		}
-		scopeID = tenant
+	scopeID, err := s.configScopeID(r, scope, scopeID)
+	if err != nil {
+		writeJSONError(w, http.StatusForbidden, errorCodeConfigKeyForbidden, "tenant access denied")
+		return
 	}
 	if scope == configsvc.ScopeSystem && (scopeID == "" || scopeID == "default") {
 		if _, hasBundles := data[packs.PolicyConfigKey]; hasBundles {
@@ -114,7 +140,7 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	err := s.configSvc.SetWithRetry(r.Context(), scope, scopeID, 3, func(doc *configsvc.Document) error {
+	err = s.configSvc.SetWithRetry(r.Context(), scope, scopeID, 3, func(doc *configsvc.Document) error {
 		// Compare against the revision being replaced, including on CAS retries.
 		if key := managedConfigKey(scope, scopeID); key != "" {
 			if value, present := data[key]; present && !sameConfigJSON(value, doc.Data[key]) {
@@ -141,6 +167,8 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("config managed key refused", "scope", scopeStr, "scope_id", scopeID, "key", managedConfigKey(scope, scopeID), "actor", policybundles.PolicyActorID(r))
 			s.appendAuditEntryNamed(r.Context(), "config.set.rejected", "config", scopeStr+"/"+scopeID, scopeStr, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), msg)
 			writeJSONError(w, http.StatusBadRequest, errorCodeConfigKeyForbidden, "config.managed_key: "+msg)
+		} else if errors.Is(err, configsvc.ErrTenantMismatch) {
+			writeJSONError(w, http.StatusForbidden, errorCodeConfigKeyForbidden, "tenant access denied")
 		} else if errors.Is(err, configsvc.ErrRevisionConflict) {
 			writeJSONError(w, http.StatusConflict, errorCodeConfigVersionConflict, "config update conflict — retry")
 		} else {
@@ -169,10 +197,7 @@ func (s *server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		scope = string(configsvc.ScopeSystem)
 	}
 	// Reject unknown scopes before any data access.
-	switch configsvc.Scope(scope) {
-	case configsvc.ScopeSystem, configsvc.ScopeOrg, configsvc.ScopeTeam, configsvc.ScopeWorkflow, configsvc.ScopeStep:
-		// valid
-	default:
+	if !knownConfigScope(configsvc.Scope(scope)) {
 		writeJSONError(w, http.StatusBadRequest, errorCodeConfigRequestInvalid, "invalid scope")
 		return
 	}
@@ -190,13 +215,10 @@ func (s *server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if configsvc.Scope(scope) == configsvc.ScopeOrg {
-		tenant, err := s.resolveTenant(r, scopeID)
-		if err != nil {
-			writeJSONError(w, http.StatusForbidden, errorCodeConfigKeyForbidden, "tenant access denied")
-			return
-		}
-		scopeID = tenant
+	scopeID, err := s.configScopeID(r, configsvc.Scope(scope), scopeID)
+	if err != nil {
+		writeJSONError(w, http.StatusForbidden, errorCodeConfigKeyForbidden, "tenant access denied")
+		return
 	}
 	doc, err := s.configSvc.Get(r.Context(), configsvc.Scope(scope), scopeID)
 	if err != nil {
