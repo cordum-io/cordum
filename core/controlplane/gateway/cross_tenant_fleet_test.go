@@ -24,6 +24,7 @@ func init() {
 		crossTenantCase{Route: "GET /api/v1/workers/{id}/jobs", Name: "worker-jobs", Run: crossTenantFleetWorkerJobs},
 		crossTenantCase{Route: "POST /api/v1/workers/{id}/revoke-session", Name: "worker-session", Run: crossTenantFleetWorkerSession},
 		crossTenantCase{Route: "POST /api/v1/workers/credentials", Name: "worker-credential", Run: crossTenantFleetWorkerCredential},
+		crossTenantCase{Route: "PUT /api/v1/pools/{name}", Name: "pool-create", Run: crossTenantFleetPoolCreate},
 	)
 }
 
@@ -164,4 +165,20 @@ func crossTenantFleetWorkerCredential(t *testing.T, sw *crossTenantSweep) {
 	if _, valid, err := sw.server.workerCredentialStore.Verify(seed.ctx, fleetWorkerID, seed.credentialToken); err != nil || valid {
 		t.Fatalf("owner credential rotation did not invalidate old token: valid=%v, err=%v", valid, err)
 	}
+}
+
+func crossTenantFleetPoolCreate(t *testing.T, sw *crossTenantSweep) {
+	seed := seedCrossTenantFleet(t, sw)
+	before, mark := fleetState(t, sw, seed), sw.publishMark()
+	path, body := "/api/v1/pools/"+fleetPool, `{"description":"replacement"}`
+	rr := sw.as(t, sw.tenantA, http.MethodPut, path, body)
+	assertFleetUnchanged(t, sw, seed, before, mark)
+	assertCrossTenantNoLeaks(t, rr, "A duplicate pool", "private-fleet-description-b")
+	if rr.Code != http.StatusForbidden && rr.Code != http.StatusNotFound && rr.Code != http.StatusConflict {
+		t.Errorf("A duplicate pool: status=%d, want refusal", rr.Code)
+	}
+	// Creation needs an unused name; the B control starts with the same name absent.
+	owner := newCrossTenantSweep(t)
+	seedWorkerCredentialAccessConfig(t, owner.server)
+	assertCrossTenantAbsent(t, owner.as(t, owner.tenantB, http.MethodPut, path, body), "B pool creation")
 }
