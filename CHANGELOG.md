@@ -38,6 +38,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   credential and re-runs the policy check before it consumes the approval. A deny that
   applies by then, or a credential that no longer authenticates as the same principal,
   blocks the tool call and leaves the approval unconsumed (task-142fa2f0).
+- Dashboard: the Edge session list and detail pages show the assurance state the server
+  reports for each session, with a distinct label per state, and "Not reported" when the
+  server sends no recognized value. The session list can be filtered by assurance state,
+  and the policy-mode chip now reads "policy <mode>" (task-9b412c07).
 
 ### Documentation
 
