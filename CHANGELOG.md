@@ -57,6 +57,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `-32096` `policy_snapshot_changed` when policy was published between the
   approval claim and the call's `mcp.tool.pre` stamp. Nothing runs and the
   approval is used up, so the client retries without `_approval_ref`.
+- Workflow runs: `POST /api/v1/workflows/{id}/runs` stores each `Idempotency-Key`
+  reservation per tenant and workflow, under `wf:run:idem:{hash}`. A key stored
+  as `wf:run:idempotency:{key}` before this release still returns its run when
+  the repeat comes from that run's tenant and workflow (task-0b797b4b,
+  task-792e0979).
 - MCP dedupe: a resumed call takes its dedupe slot over in one write, and a call
   that held the slot before can no longer publish to it or delete it. An
   identical call without `_approval_ref` used to be able to cache a second
@@ -65,6 +70,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - The mutating MCP tool descriptions and `docs/mcp/mutating-tools.md` describe
   the Edge approval flow used when `mcp.policy_gate_enabled=true`: approve the
   `approval_ref`, then retry with `_approval_ref`.
+- Memory ids: a `memory_id` of the form `run:<run id>` is accepted only when
+  that run exists in the caller's tenant, and one of the form `<tenant>/<id>`
+  only from that tenant. Starting a workflow run, submitting a job over HTTP or
+  gRPC, and reading or posting a run's chat check this; a request that fails
+  it gets `403` `MEMORY_POLICY_VIOLATION` (gRPC `PermissionDenied`)
+  (task-cdd75ab9).
 - The governed MCP demo worker retries a `429` on the approval poll, and its
   README lists the MCP, agent identity and endpoint prerequisites.
 - Schemas: a new schema id belongs to the tenant that registers it. A caller
