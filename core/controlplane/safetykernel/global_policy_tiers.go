@@ -25,12 +25,14 @@ func (g *GlobalPolicy) addRule(rule config.PolicyRule) {
 	}
 	rule.Tier = config.PolicyTierGlobal
 	rule.Selector = config.PolicySelector{}
-	switch {
-	case isEdgeActionRule(rule):
+	if isEdgeActionRule(rule) {
 		g.EdgeActionRules = append(g.EdgeActionRules, rule)
-	case isMCPToolRule(rule):
+		return
+	}
+	g.jobRules = append(g.jobRules, rule)
+	if isMCPToolRule(rule) {
 		g.MCPToolRules = append(g.MCPToolRules, rule)
-	default:
+	} else {
 		g.InputRules = append(g.InputRules, rule)
 	}
 }

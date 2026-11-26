@@ -80,6 +80,12 @@ Within each MCP field, deny takes precedence:
 2. Else if allow list is non-empty and value is not in allow list -> deny
 3. Else -> allow
 
+The caller sets the MCP labels of a job. They add the MCP checks above. They
+do not remove rules: a job with MCP labels is checked against every rule
+that applies to a job without them, plus the rules with `match.mcp` lists, in
+the order the policy lists them. Do not use a `match.mcp` allow rule as the
+only gate for a topic.
+
 MCP list matching is case-insensitive exact match. Topic matching supports glob patterns; MCP fields do not currently use glob pattern matching.
 
 Example:

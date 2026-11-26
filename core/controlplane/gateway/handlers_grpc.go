@@ -143,15 +143,12 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 	// Strip reserved labels from client input (same as HTTP path).
 	payloadReq.Labels = stripReservedLabels(payloadReq.Labels)
 
-	// Inject request source for policy rules.
+	// Inject request source for policy rules. Same rule as the HTTP path:
+	// "api" unless a principal with a worker link sends a pack_id (below).
 	if payloadReq.Labels == nil {
 		payloadReq.Labels = map[string]string{}
 	}
-	if payloadReq.PackId != "" {
-		payloadReq.Labels["_source"] = "pack"
-	} else {
-		payloadReq.Labels["_source"] = "api"
-	}
+	payloadReq.Labels["_source"] = "api"
 
 	secretsPresent := secrets.ContainsSecretRefs(payloadReq.Prompt)
 	if secretsPresent {
@@ -197,6 +194,10 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 				meta.Labels = map[string]string{}
 			}
 			meta.Labels["agent_id"] = agent.ID
+			if payloadReq.PackId != "" {
+				payloadReq.Labels["_source"] = "pack"
+				meta.Labels["_source"] = "pack"
+			}
 		}
 	}
 	if s.capProfile.IsProduction() {

@@ -52,7 +52,10 @@ func scopedPolicyForRequest(
 	if strings.TrimSpace(topic) == EdgeActionTopic {
 		rules = global.RulesForEdgeAction(workflowID, jobID)
 	} else if policyScopeMCPUsed(extractMCPRequest(labels)) {
-		rules = global.RulesForMCPTool(workflowID, jobID)
+		// Request labels come from the client. A job that declares an MCP call
+		// is checked against the MCP rules too, never against fewer rules
+		// than a job without the labels.
+		rules = global.RulesForJob(workflowID, jobID)
 	}
 	return &config.SafetyPolicy{
 		Version:         base.Version,
