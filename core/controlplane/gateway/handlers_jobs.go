@@ -1441,16 +1441,14 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	req.Labels = stripReservedLabels(req.Labels)
 
 	// Inject request source for policy rules that restrict by provenance.
-	// Direct API callers get _source=api; pack workers and workflow steps
-	// inject their own source via trusted labels.
+	// Every caller starts as _source=api. pack_id is a field the caller sets,
+	// so it alone does not make a job a pack job: the label becomes "pack"
+	// below, only for a credential with a worker link. Workflow steps get
+	// their source from the workflow engine.
 	if req.Labels == nil {
 		req.Labels = map[string]string{}
 	}
-	if req.PackId != "" {
-		req.Labels["_source"] = "pack"
-	} else {
-		req.Labels["_source"] = "api"
-	}
+	req.Labels["_source"] = "api"
 
 	// --- Secrets & memory validation (needed for policy check metadata) ---
 	secretsPresent := secrets.ContainsSecretRefs(req.Prompt) || secrets.ContainsSecretRefs(req.Context)
@@ -1540,6 +1538,10 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			meta.Labels = map[string]string{}
 		}
 		meta.Labels["agent_id"] = authDerivedAgentID
+		if req.PackId != "" {
+			req.Labels["_source"] = "pack"
+			meta.Labels["_source"] = "pack"
+		}
 	}
 
 	// Gate delegation audience override. When the caller supplies an
