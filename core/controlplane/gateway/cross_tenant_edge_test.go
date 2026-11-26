@@ -40,6 +40,9 @@ func init() {
 	registerCrossTenantFamily("PR1-02-EDGE-MCP",
 		crossTenantCase{"POST /api/v1/edge/binary-integrity/events", "binary-ingest", crossTenantBinaryIngest},
 		crossTenantCase{"GET /api/v1/edge/binary-integrity/events", "binary-list", crossTenantBinaryList})
+}
+
+func init() {
 	for _, tc := range []struct{ name, method, path string }{
 		{"shadow-create", "POST", "/shadow-agents"},
 		{"shadow-list", "GET", "/shadow-agents"},
@@ -54,6 +57,13 @@ func init() {
 		{"exception-list", "GET", "/shadow/exceptions"},
 	} {
 		registerCrossTenantFamily("PR1-02-EDGE-MCP", crossTenantShadowCase(tc.name, tc.method, "/api/v1/edge"+tc.path))
+	}
+	for _, tc := range []struct{ name, method, path string }{
+		{"upstreams", "GET", ""}, {"upstreams-list", "GET", "/list"},
+		{"upstream-get", "GET", "/{name}"}, {"upstream-update", "PUT", "/{name}"},
+		{"upstream-disable", "POST", "/{name}/disable"}, {"upstream-enable", "POST", "/{name}/enable"},
+	} {
+		registerCrossTenantFamily("PR1-02-EDGE-MCP", crossTenantUpstreamCase(tc.name, tc.method, "/api/v1/edge/mcp/upstreams"+tc.path))
 	}
 }
 
@@ -375,6 +385,46 @@ func crossTenantShadowCase(name, method, path string) crossTenantCase {
 			assertCrossTenantAbsent(t, rr, "A "+name, marker)
 		} else {
 			assertCrossTenantRefused(t, rr, "A "+name, marker)
+		}
+	}}
+}
+
+func crossTenantUpstream(t *testing.T, sw *crossTenantSweep) *edgecore.UpstreamServer {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	upstream, found, err := sw.server.mcpUpstreamRegistry.Get(ctx, sw.tenantB.tenantID, "private-b-upstream")
+	if err != nil || !found || upstream == nil || upstream.TenantID != sw.tenantB.tenantID {
+		t.Fatalf("B upstream unavailable: %v", err)
+	}
+	return upstream
+}
+
+func crossTenantUpstreamCase(name, method, path string) crossTenantCase {
+	return crossTenantCase{method + " " + path, name, func(t *testing.T, sw *crossTenantSweep) {
+		seed := edgecore.UpstreamServer{Name: "private-b-upstream", TenantID: sw.tenantB.tenantID, Transport: "stdio",
+			Command: []string{"sweep-mcp-stub"}, Risk: "medium", Enabled: name != "upstream-enable", Labels: map[string]string{"private": "private-edge-mcp-marker"}}
+		assertCrossTenantAbsent(t, sw.as(t, sw.tenantB, "POST", "/api/v1/edge/mcp/upstreams", mustJSON(seed)), "owner upstream seed")
+		before, mark := crossTenantUpstream(t, sw), sw.publishMark()
+		body := `{"transport":"stdio","command":["sweep-mcp-stub"],"risk":"high","enabled":true}`
+		target := strings.ReplaceAll(path, "{name}", seed.Name)
+		rr := sw.as(t, sw.tenantA, method, target, body)
+		after, published := crossTenantUpstream(t, sw), sw.publishedSince(mark)
+		owner := sw.as(t, sw.tenantB, method, target, body)
+		assertCrossTenantAbsent(t, owner, "owner "+name)
+		if !strings.Contains(owner.Body.String(), seed.Name) {
+			t.Error("owner upstream response missing seeded name")
+		}
+		if method != "GET" && reflect.DeepEqual(after, crossTenantUpstream(t, sw)) {
+			t.Error("owner upstream write had no observable effect")
+		}
+		if !reflect.DeepEqual(before, after) || len(published) != 0 {
+			t.Error("A upstream request changed B state or published a packet")
+		}
+		if !strings.Contains(path, "{name}") {
+			assertCrossTenantAbsent(t, rr, "A "+name, seed.Name, seed.Labels["private"])
+		} else {
+			assertCrossTenantRefused(t, rr, "A "+name, seed.Labels["private"])
 		}
 	}}
 }
