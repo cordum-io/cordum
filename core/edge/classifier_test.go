@@ -28,7 +28,7 @@ func TestClassifyEventDeterministicTable(t *testing.T) {
 			riskTags:   []string{"exec", "test"},
 			labels: map[string]string{
 				"agent.product":  "claude-code",
-				"command.class":  "safe",
+				"command.class":  "arbitrary_code",
 				"command.family": "test",
 				"edge.kind":      "hook.pre_tool_use",
 				"edge.layer":     "hook",
@@ -42,7 +42,7 @@ func TestClassifyEventDeterministicTable(t *testing.T) {
 			capability: "exec.shell",
 			riskTags:   []string{"exec", "test"},
 			labels: map[string]string{
-				"command.class":  "safe",
+				"command.class":  "arbitrary_code",
 				"command.family": "test",
 			},
 		},
@@ -53,7 +53,7 @@ func TestClassifyEventDeterministicTable(t *testing.T) {
 			capability: "exec.shell",
 			riskTags:   []string{"build", "exec"},
 			labels: map[string]string{
-				"command.class":  "safe",
+				"command.class":  "arbitrary_code",
 				"command.family": "build",
 			},
 		},
@@ -946,9 +946,10 @@ func TestClassifyShellAdversarialBypassCases(t *testing.T) {
 }
 
 // TestClassifyShellSafeAllowlist pins down the EDGE-008.6 narrow allowlist:
-// only the explicit build/test/read-only-git shapes from PRD §7.14 + §11.3 may
-// classify as `command.class=safe`. The allowlist is intentionally narrow:
-// install/network/git-write are NOT safe.
+// only the read-only git shapes from PRD §7.14 + §11.3 classify as
+// `command.class=safe`. Build and test shapes are arbitrary_code (see
+// TestClassifyShellBuildTestCommandsAreArbitraryCode); install/network/git-write
+// are not safe.
 func TestClassifyShellSafeAllowlist(t *testing.T) {
 	base := time.Date(2026, 5, 2, 10, 5, 0, 0, time.UTC)
 
@@ -957,20 +958,6 @@ func TestClassifyShellSafeAllowlist(t *testing.T) {
 		command string
 		family  string
 	}{
-		{"npm test bare", "npm test", "test"},
-		{"npm test with double-dash args", "npm test -- --silent", "test"},
-		{"npm run test", "npm run test", "test"},
-		{"npm run build", "npm run build", "build"},
-		{"pnpm test", "pnpm test", "test"},
-		{"yarn test", "yarn test", "test"},
-		{"go test repo", "go test ./...", "test"},
-		{"go test specific package", "go test ./core/edge", "test"},
-		{"go build repo", "go build ./...", "build"},
-		{"pytest bare", "pytest", "test"},
-		{"pytest with args", "pytest -k test_foo tests/", "test"},
-		{"vitest bare", "vitest", "test"},
-		{"cargo test", "cargo test", "test"},
-		{"cargo build", "cargo build", "build"},
 		{"git status", "git status", "git_readonly"},
 		{"git log oneline", "git log --oneline -10", "git_readonly"},
 		{"git diff staged", "git diff --staged", "git_readonly"},
@@ -996,6 +983,57 @@ func TestClassifyShellSafeAllowlist(t *testing.T) {
 			}
 			if containsString(got.RiskTags, "destructive") {
 				t.Fatalf("safe command %q carries destructive: %#v", tc.command, got.RiskTags)
+			}
+		})
+	}
+}
+
+// TestClassifyShellBuildTestCommandsAreArbitraryCode pins that the allowlisted
+// build and test shapes run repository-controlled code (package scripts,
+// Makefiles, test files), so they classify as command.class=arbitrary_code and
+// never as safe. command.family and the family risk tag stay, because pack
+// policies match on them.
+func TestClassifyShellBuildTestCommandsAreArbitraryCode(t *testing.T) {
+	base := time.Date(2026, 5, 2, 10, 7, 0, 0, time.UTC)
+
+	for _, tc := range []struct {
+		name    string
+		command string
+		family  string
+	}{
+		{"npm test bare", "npm test", "test"},
+		{"npm test with double-dash args", "npm test -- --silent", "test"},
+		{"npm run test", "npm run test", "test"},
+		{"npm run build", "npm run build", "build"},
+		{"pnpm test", "pnpm test", "test"},
+		{"yarn test", "yarn test", "test"},
+		{"go test repo", "go test ./...", "test"},
+		{"go test specific package", "go test ./core/edge", "test"},
+		{"go build repo", "go build ./...", "build"},
+		{"pytest bare", "pytest", "test"},
+		{"pytest with args", "pytest -k test_foo tests/", "test"},
+		{"vitest bare", "vitest", "test"},
+		{"cargo test", "cargo test", "test"},
+		{"cargo build", "cargo build", "build"},
+		{"make test", "make test", "test"},
+		{"make build with var", "make build CC=clang", "build"},
+		{"make build with vars", "make build CC=clang OPTIMIZE=-O3", "build"},
+		{"make test with var", "make test VERBOSE=1", "test"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			event := classifierHookEvent(base, "Bash", map[string]any{"command": tc.command})
+			got, err := ClassifyEvent(event)
+			if err != nil {
+				t.Fatalf("ClassifyEvent returned error: %v", err)
+			}
+			if got.Labels["command.class"] != "arbitrary_code" {
+				t.Fatalf("command %q got command.class=%q; want arbitrary_code; labels=%#v risk=%#v", tc.command, got.Labels["command.class"], got.Labels, got.RiskTags)
+			}
+			if got.Labels["command.family"] != tc.family {
+				t.Fatalf("command %q got command.family=%q; want %q", tc.command, got.Labels["command.family"], tc.family)
+			}
+			if !containsString(got.RiskTags, tc.family) || !containsString(got.RiskTags, "exec") {
+				t.Fatalf("command %q risk tags %#v; want exec and %q", tc.command, got.RiskTags, tc.family)
 			}
 		})
 	}
@@ -1050,8 +1088,9 @@ func TestClassifyShellNarrowAllowlistRejectsRiskyShapes(t *testing.T) {
 //     not be safe.
 //   - `make build`/`make test` with extra positional targets (e.g.
 //     `make build clean`) or alt-Makefile flags (`-f`, `-C`) must not be safe.
-//   - `make build CC=clang` (KEY=VAL variable assignment) MUST remain safe so
-//     ordinary build invocations are not falsely demoted to review_required.
+//   - `make build CC=clang` (KEY=VAL variable assignment) keeps the build
+//     family; it is arbitrary_code, covered by
+//     TestClassifyShellBuildTestCommandsAreArbitraryCode.
 //   - Known read-only flags on git diff/log/show MUST remain safe so the
 //     allowlist isn't so narrow it breaks normal usage.
 func TestClassifyShellQARejectionRegressions(t *testing.T) {
@@ -1111,12 +1150,6 @@ func TestClassifyShellQARejectionRegressions(t *testing.T) {
 		assertClassifierNotSafe(t, base, "make -f /tmp/evil.mk build")
 		assertClassifierNotSafe(t, base, "make build -f /tmp/evil.mk")
 		assertClassifierNotSafe(t, base, "make -C /tmp/evil build")
-	})
-
-	t.Run("make_with_var_assignment_safe", func(t *testing.T) {
-		assertClassifierSafe(t, base, "make build CC=clang", "build")
-		assertClassifierSafe(t, base, "make build CC=clang OPTIMIZE=-O3", "build")
-		assertClassifierSafe(t, base, "make test VERBOSE=1", "test")
 	})
 
 	t.Run("git_diff_known_readonly_flags_safe", func(t *testing.T) {
@@ -1416,7 +1449,7 @@ func TestClassifierAcceptsRenamedRedactedKeys_BashDestructive(t *testing.T) {
 	}
 }
 
-func TestClassifierAcceptsRenamedRedactedKeys_BashSafeBuild(t *testing.T) {
+func TestClassifierAcceptsRenamedRedactedKeys_BashBuild(t *testing.T) {
 	event := AgentActionEvent{
 		Layer:    LayerHook,
 		Kind:     EventKindHookPreToolUse,
@@ -1429,8 +1462,8 @@ func TestClassifierAcceptsRenamedRedactedKeys_BashSafeBuild(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClassifyEvent: %v", err)
 	}
-	if cls.Labels["command.class"] != "safe" {
-		t.Fatalf("Labels[command.class] = %q, want %q (full labels=%v)", cls.Labels["command.class"], "safe", cls.Labels)
+	if cls.Labels["command.class"] != "arbitrary_code" {
+		t.Fatalf("Labels[command.class] = %q, want %q (full labels=%v)", cls.Labels["command.class"], "arbitrary_code", cls.Labels)
 	}
 	if cls.Labels["command.family"] != "build" {
 		t.Fatalf("Labels[command.family] = %q, want %q", cls.Labels["command.family"], "build")

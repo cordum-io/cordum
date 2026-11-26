@@ -628,10 +628,8 @@ The production overlay deploys Prometheus Operator CRDs.
 
 | Metric | Source | Description |
 |--------|--------|-------------|
-| `cordum_jobs_dispatched_total` | Scheduler | Jobs dispatched by pool/type |
-| `cordum_jobs_duration_seconds` | Scheduler | Job latency histogram |
-| `cordum_safety_evaluations_total` | Gateway | Policy evaluations by decision |
-| `cordum_http_requests_total` | Gateway | HTTP requests by method/path/status |
+| `cordum_scheduler_jobs_dispatched_total` | Scheduler | Jobs dispatched by pool/type |
+| `cordum_api_gateway_http_requests_total` | Gateway | HTTP requests by method/path/status |
 
 ---
 
