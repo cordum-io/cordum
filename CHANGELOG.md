@@ -188,6 +188,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Redis: clients built by `core/infra/redisutil` (`NewClient`, and `ParseOptions`
+  passed to `redis.NewClient`) apply a call's context deadline to socket reads
+  and writes. A call with no earlier deadline is still bounded by the client's
+  socket timeouts (`REDIS_READ_TIMEOUT` and `REDIS_WRITE_TIMEOUT` for
+  `NewClient`) (task-031de737).
 - Docs: Edge overview, Claude Code, CLI and runbook outage statements now follow
   the failure and partition behavior contract's measured hook and Gateway probes.
   The P0 decision table is labeled design intent; agentd Gateway-outage handling
