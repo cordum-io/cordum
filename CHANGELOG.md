@@ -7,6 +7,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Installer: `tools/scripts/install.ps1` runs under Windows PowerShell 5.1, as its
+  `#Requires -Version 5.1` line says. Native stderr from a successful gpg call no
+  longer stops it, the version-floor write no longer needs .NET Core, and CI runs the
+  installer tests under Windows PowerShell 5.1 as well as pwsh (task-b60f0bf5).
+
 - Packs: `POST /api/v1/packs/install` no longer ends without a response when the
   `system/default` config document does not exist. Pack topic registration now reads
   a missing document as one with no pool mappings, so those topics get no pool
@@ -301,6 +306,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   request as a product of the layer limits. `TestRetryLayersContract` in `tests/contract` checks
   that the references resolve, the quoted defaults match the code and each cap equals its
   product (task-f55862da).
+- `tools/perfharness/cmd/perfworker`: a perf-harness worker in pool `perf`. `job.perf`
+  succeeds after `--service-time`, `job.perf.fail` fails every handler attempt, and
+  `--handler-retries` sets the CAP runtime handler retries. It counts every handler run
+  per `perf_request_id` and serves the counts as JSON on a loopback-only `GET /counts`
+  (`--counts-addr`, default `127.0.0.1:9092`). No result is measured or published
+  (PR2-10-WORKER, task-f0acac46).
+
 - `POST /api/v1/edge/calibration-reports` summarizes the policy decisions recorded in
   observe-mode Edge sessions for a time window, repositories and labels: deny and
   require-approval counts per rule, policy rules with no matching event, the most affected
