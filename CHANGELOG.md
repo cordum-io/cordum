@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- cordumctl: the `CORDUM_ADMIN_PASSWORD` that `cordumctl up --dev` generates meets the gateway's password policy, so the admin user is seeded, and a `.env` definition that Compose reads as empty, such as `CORDUM_API_KEY="" # note` or `export CORDUM_API_KEY=`, is filled in place (task-d23dda77).
+
 - Python SDK: remove template-unused imports during generation with the pinned Ruff
   cleanup hook before formatting, without changing API or version markers (task-90b8033a).
 
