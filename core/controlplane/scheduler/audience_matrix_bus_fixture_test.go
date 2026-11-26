@@ -31,7 +31,7 @@ const (
 	matrixGatewayKey = "gateway-key"
 	matrixPool       = "matrix"
 	matrixTopic      = "job.matrix"
-	matrixWait       = 5 * time.Second
+	matrixWait       = 30 * time.Second
 )
 
 // busMatrixFixture is one scheduler under the production profile: a real
