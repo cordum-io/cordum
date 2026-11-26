@@ -367,6 +367,11 @@ func repoRoot(t *testing.T) string {
 	}
 }
 
+// harnessRoots are the trees whose env defaults belong to a test harness, not
+// the product. TestDocsMatchProduct applies them; TestCheckHarnessDefaults
+// tests the rule with this same list.
+var harnessRoots = []string{"tools/perfharness"}
+
 // TestDocsMatchProduct is the CI check: the marked blocks of the real docs
 // and the whole contract docs against the product source and OpenAPI file.
 func TestDocsMatchProduct(t *testing.T) {
@@ -377,6 +382,7 @@ func TestDocsMatchProduct(t *testing.T) {
 		OpenAPI:      "docs/api/openapi/cordum-api.yaml",
 		CodeRoots:    []string{"cmd", "core", "sdk", "tools"},
 		TextSources:  []string{"docker-compose*.yml", "deploy", "tools/scripts"},
+		HarnessRoots: harnessRoots,
 		Baseline:     "tools/docscheck/known-mismatches.yaml",
 	})
 	if err != nil {
@@ -389,4 +395,54 @@ func TestDocsMatchProduct(t *testing.T) {
 	if r.Checked["env-name"] == 0 || r.Checked["endpoint"] == 0 {
 		t.Errorf("no marked env or endpoint checks ran; are the docscheck markers missing?")
 	}
+}
+
+// TestCheckHarnessDefaults: the fixture harness sets FIX_VAR to the documented
+// `b` and FIX_PLAIN to `z`, while core sets FIX_VAR to `a` and reads FIX_PLAIN
+// with os.Getenv only.
+func TestCheckHarnessDefaults(t *testing.T) {
+	product := Issue{File: fixtureDoc, Line: 6, Kind: "env-default", Key: "FIX_VAR", Detail: "FIX_VAR: documented default `b`, code default \"a\""}
+	harness := Issue{File: fixtureDoc, Line: 10, Kind: "env-default", Key: "FIX_PLAIN", Detail: "FIX_PLAIN: documented default `y`, code default \"z\""}
+	cases := []struct {
+		name  string
+		roots []string
+		want  []Issue
+	}{
+		// NEGATIVE TEST: the product mismatch is still reported while a
+		// harness default for the same variable exists.
+		{"harness rule", harnessRoots, []Issue{product}},
+		{"prefix without a directory boundary", []string{"tools/perf"}, []Issue{harness}},
+		{"no rule", nil, []Issue{harness}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := fixtureConfig()
+			cfg.CodeRoots, cfg.HarnessRoots = []string{"core", "tools"}, tc.roots
+			r, err := Check(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []Issue
+			for _, f := range r.Failures {
+				if f.Kind == "env-default" {
+					got = append(got, f)
+				}
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("env-default failures =
+%#v
+want
+%#v", got, tc.want)
+			}
+		})
+	}
+
+	t.Run("harness names stay indexed", func(t *testing.T) {
+		cfg := fixtureConfig()
+		cfg.CodeRoots, cfg.HarnessRoots = []string{"tools"}, harnessRoots
+		idx, err := indexProduct(cfg)
+		if err != nil || !idx.names["FIX_VAR"] || !idx.names["FIX_PLAIN"] || len(idx.defaults) != 0 {
+			t.Fatalf("err = %v, names = %v, defaults = %v; want FIX_VAR and FIX_PLAIN named, no defaults", err, idx.names, idx.defaults)
+		}
+	})
 }
