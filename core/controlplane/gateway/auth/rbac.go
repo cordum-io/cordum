@@ -158,6 +158,7 @@ func ValidateRoleName(name string) error {
 // RoleDefinition describes a named role with explicit permissions and inheritance.
 type RoleDefinition struct {
 	Name        string   `json:"name"`
+	Tenant      string   `json:"tenant,omitempty"`
 	Description string   `json:"description,omitempty"`
 	Permissions []string `json:"permissions"`
 	Inherits    []string `json:"inherits,omitempty"`
@@ -277,7 +278,36 @@ const (
 
 // RBACStore manages RBAC role definitions in Redis.
 type RBACStore struct {
-	client *redis.Client
+	client         *redis.Client
+	platformTenant string
+}
+
+// SetPlatformTenant sets the owner of roles stored without a tenant, before serving requests.
+func (s *RBACStore) SetPlatformTenant(tenant string) {
+	s.platformTenant = strings.TrimSpace(tenant)
+}
+
+func (s *RBACStore) roleTenant(tenant string) string {
+	if tenant = strings.TrimSpace(tenant); tenant != "" {
+		return tenant
+	}
+	if s != nil && s.platformTenant != "" {
+		return s.platformTenant
+	}
+	return "default"
+}
+
+// PrincipalTenant returns the authenticated tenant, falling back to the gateway tenant.
+func (s *RBACStore) PrincipalTenant(ctx context.Context) string {
+	if ac := FromContext(ctx); ac != nil {
+		return s.roleTenant(ac.Tenant)
+	}
+	return s.roleTenant("")
+}
+
+// RoleVisibleTo admits built-in roles and custom roles owned by tenant.
+func (s *RBACStore) RoleVisibleTo(role *RoleDefinition, tenant string) bool {
+	return role != nil && (role.BuiltIn || s.roleTenant(role.Tenant) == s.roleTenant(tenant))
 }
 
 // NewRBACStore creates a new Redis-backed RBAC store.
@@ -397,8 +427,16 @@ func (s *RBACStore) PutRole(ctx context.Context, role *RoleDefinition) error {
 		if err != nil {
 			return err
 		}
-		if existing, ok := roles[role.Name]; ok && role.CreatedAt == "" {
+		if existing, ok := roles[role.Name]; ok {
+			if !s.RoleVisibleTo(existing, role.Tenant) {
+				return ErrRoleNotFound
+			}
 			role.CreatedAt = existing.CreatedAt
+		}
+		for name, parent := range roles {
+			if !s.RoleVisibleTo(parent, role.Tenant) {
+				delete(roles, name)
+			}
 		}
 		roles[role.Name] = role
 		if err := validateInheritanceSnapshot(role.Name, role.Inherits, roles); err != nil {
@@ -418,7 +456,7 @@ func (s *RBACStore) PutRole(ctx context.Context, role *RoleDefinition) error {
 }
 
 // DeleteRole removes a role definition. Built-in roles cannot be deleted.
-func (s *RBACStore) DeleteRole(ctx context.Context, name string) error {
+func (s *RBACStore) DeleteRole(ctx context.Context, name, tenant string) error {
 	name = NormalizeRoleName(name)
 	if name == "" {
 		return fmt.Errorf("role name required")
@@ -436,7 +474,7 @@ func (s *RBACStore) DeleteRole(ctx context.Context, name string) error {
 			return err
 		}
 		existing, ok := roles[name]
-		if !ok {
+		if !ok || !s.RoleVisibleTo(existing, tenant) {
 			return ErrRoleNotFound
 		}
 		if existing.BuiltIn {
@@ -574,13 +612,13 @@ func (s *RBACStore) Close() error {
 // ResolvePermissions returns the full set of permissions for a role,
 // flattening the inheritance hierarchy. Returns an error if circular
 // inheritance is detected.
-func (s *RBACStore) ResolvePermissions(ctx context.Context, roleName string) ([]string, error) {
+func (s *RBACStore) ResolvePermissions(ctx context.Context, roleName, tenant string) ([]string, error) {
 	inProgress := make(map[string]struct{})
 	completed := make(map[string][]string)
-	return s.resolvePermissionsRecursive(ctx, roleName, inProgress, completed)
+	return s.resolvePermissionsRecursive(ctx, roleName, tenant, inProgress, completed)
 }
 
-func (s *RBACStore) resolvePermissionsRecursive(ctx context.Context, roleName string, inProgress map[string]struct{}, completed map[string][]string) ([]string, error) {
+func (s *RBACStore) resolvePermissionsRecursive(ctx context.Context, roleName, tenant string, inProgress map[string]struct{}, completed map[string][]string) ([]string, error) {
 	roleName = NormalizeRoleName(roleName)
 	if roleName == "" {
 		return nil, nil
@@ -598,6 +636,9 @@ func (s *RBACStore) resolvePermissionsRecursive(ctx context.Context, roleName st
 	if err != nil {
 		return nil, err
 	}
+	if !s.RoleVisibleTo(role, tenant) {
+		return nil, ErrRoleNotFound
+	}
 
 	permSet := make(map[string]bool, len(role.Permissions))
 	for _, p := range role.Permissions {
@@ -605,7 +646,7 @@ func (s *RBACStore) resolvePermissionsRecursive(ctx context.Context, roleName st
 	}
 
 	for _, parent := range role.Inherits {
-		inherited, err := s.resolvePermissionsRecursive(ctx, parent, inProgress, completed)
+		inherited, err := s.resolvePermissionsRecursive(ctx, parent, tenant, inProgress, completed)
 		if err != nil {
 			return nil, err
 		}
@@ -671,7 +712,7 @@ func (s *RBACStore) checkInheritanceChain(ctx context.Context, roleName string, 
 // HasPermission checks if a role has a specific permission, resolving through
 // the inheritance hierarchy. When the RBAC entitlement is disabled, it uses
 // the basic role mapping.
-func HasPermission(ctx context.Context, store *RBACStore, roleName, permission string, rbacEntitled bool) bool {
+func HasPermission(ctx context.Context, store *RBACStore, roleName, tenant, permission string, rbacEntitled bool) bool {
 	roleName = NormalizeRoleName(roleName)
 	permission = strings.TrimSpace(permission)
 	if roleName == "" || permission == "" {
@@ -682,7 +723,7 @@ func HasPermission(ctx context.Context, store *RBACStore, roleName, permission s
 		return hasPermissionBasic(roleName, permission)
 	}
 
-	perms, err := store.ResolvePermissions(ctx, roleName)
+	perms, err := store.ResolvePermissions(ctx, roleName, tenant)
 	if err != nil {
 		slog.Warn("rbac: failed to resolve permissions, falling back to basic",
 			"role", roleName, "error", err)

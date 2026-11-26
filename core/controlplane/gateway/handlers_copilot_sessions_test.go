@@ -291,6 +291,7 @@ func TestHandleGetCopilotSession_JobsReadOnlyRoleSeesNoDecisions(t *testing.T) {
 	// Custom role with ONLY jobs.read — no governance.read.
 	if err := s.rbacStore.PutRole(context.Background(), &auth.RoleDefinition{
 		Name:        "jobs-only",
+		Tenant:      "tenant-a",
 		Description: "regression role for task-da7eaef7 reopen #2",
 		Permissions: []string{auth.PermJobsRead},
 	}); err != nil {
@@ -380,6 +381,7 @@ func TestHandleGetCopilotSession_GovernanceReadRoleSeesDecisions(t *testing.T) {
 	})
 	if err := s.rbacStore.PutRole(context.Background(), &auth.RoleDefinition{
 		Name:        "jobs-and-governance",
+		Tenant:      "tenant-a",
 		Description: "regression role for task-da7eaef7 reopen #2 — positive case",
 		Permissions: []string{auth.PermJobsRead, auth.PermGovernanceRead},
 	}); err != nil {

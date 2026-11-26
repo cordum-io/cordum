@@ -54,7 +54,7 @@ func TestResolvePermissions_AdminHasAll(t *testing.T) {
 	store, _ := newTestRBACStore(t)
 	bootstrapRoles(t, store)
 
-	perms, err := store.ResolvePermissions(context.Background(), "admin")
+	perms, err := store.ResolvePermissions(context.Background(), "admin", "default")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestResolvePermissions_OperatorInheritsViewer(t *testing.T) {
 	store, _ := newTestRBACStore(t)
 	bootstrapRoles(t, store)
 
-	perms, err := store.ResolvePermissions(context.Background(), "operator")
+	perms, err := store.ResolvePermissions(context.Background(), "operator", "default")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestResolvePermissions_ViewerHasReadOnly(t *testing.T) {
 	store, _ := newTestRBACStore(t)
 	bootstrapRoles(t, store)
 
-	perms, err := store.ResolvePermissions(context.Background(), "viewer")
+	perms, err := store.ResolvePermissions(context.Background(), "viewer", "default")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestCustomRole_SpecificPermissions(t *testing.T) {
 		t.Fatalf("put role: %v", err)
 	}
 
-	perms, err := store.ResolvePermissions(context.Background(), "auditor")
+	perms, err := store.ResolvePermissions(context.Background(), "auditor", "default")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestInheritanceChain_Flattening(t *testing.T) {
 		t.Fatalf("put role: %v", err)
 	}
 
-	perms, err := store.ResolvePermissions(context.Background(), "senior_operator")
+	perms, err := store.ResolvePermissions(context.Background(), "senior_operator", "default")
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestResolvePermissions_DiamondInheritance(t *testing.T) {
 		}
 	}
 
-	if !HasPermission(ctx, store, "role_a", PermAuditRead, true) {
+	if !HasPermission(ctx, store, "role_a", "default", PermAuditRead, true) {
 		t.Fatalf("diamond inheritance did not resolve %q through B/C -> D", PermAuditRead)
 	}
 }
@@ -209,7 +209,7 @@ func TestCircularInheritance_Detection(t *testing.T) {
 	seedRBACRoleRaw(t, store, roleA)
 	seedRBACRoleRaw(t, store, roleB)
 
-	_, err := store.ResolvePermissions(context.Background(), "role_a")
+	_, err := store.ResolvePermissions(context.Background(), "role_a", "default")
 	if err == nil {
 		t.Fatal("expected error for circular inheritance, got nil")
 	}
@@ -272,25 +272,25 @@ func TestValidateInheritance_RejectsUnknownParent(t *testing.T) {
 
 func TestHasPermission_BasicFallback_Admin(t *testing.T) {
 	// Without RBAC entitled, admin should have all permissions via basic mapping
-	if !HasPermission(context.Background(), nil, "admin", PermJobsWrite, false) {
+	if !HasPermission(context.Background(), nil, "admin", "default", PermJobsWrite, false) {
 		t.Fatal("admin should have jobs.write in basic mode")
 	}
-	if !HasPermission(context.Background(), nil, "admin", PermConfigWrite, false) {
+	if !HasPermission(context.Background(), nil, "admin", "default", PermConfigWrite, false) {
 		t.Fatal("admin should have config.write in basic mode")
 	}
 }
 
 func TestHasPermission_BasicFallback_Viewer(t *testing.T) {
-	if !HasPermission(context.Background(), nil, "viewer", PermJobsRead, false) {
+	if !HasPermission(context.Background(), nil, "viewer", "default", PermJobsRead, false) {
 		t.Fatal("viewer should have jobs.read in basic mode")
 	}
-	if HasPermission(context.Background(), nil, "viewer", PermJobsWrite, false) {
+	if HasPermission(context.Background(), nil, "viewer", "default", PermJobsWrite, false) {
 		t.Fatal("viewer should NOT have jobs.write in basic mode")
 	}
 }
 
 func TestHasPermission_BasicFallback_UnknownRole(t *testing.T) {
-	if HasPermission(context.Background(), nil, "hacker", PermJobsRead, false) {
+	if HasPermission(context.Background(), nil, "hacker", "default", PermJobsRead, false) {
 		t.Fatal("unknown role should have no permissions in basic mode")
 	}
 }
@@ -300,15 +300,15 @@ func TestHasPermission_EntitledMode(t *testing.T) {
 	bootstrapRoles(t, store)
 
 	// With entitlement enabled, admin still has all via admin.*
-	if !HasPermission(context.Background(), store, "admin", PermJobsWrite, true) {
+	if !HasPermission(context.Background(), store, "admin", "default", PermJobsWrite, true) {
 		t.Fatal("admin should have jobs.write in entitled mode")
 	}
 
 	// Viewer can read but not write
-	if !HasPermission(context.Background(), store, "viewer", PermJobsRead, true) {
+	if !HasPermission(context.Background(), store, "viewer", "default", PermJobsRead, true) {
 		t.Fatal("viewer should have jobs.read in entitled mode")
 	}
-	if HasPermission(context.Background(), store, "viewer", PermJobsWrite, true) {
+	if HasPermission(context.Background(), store, "viewer", "default", PermJobsWrite, true) {
 		t.Fatal("viewer should NOT have jobs.write in entitled mode")
 	}
 }
@@ -375,7 +375,7 @@ func TestRoleCRUD(t *testing.T) {
 	}
 
 	// Delete the custom role
-	if err := store.DeleteRole(ctx, "devops"); err != nil {
+	if err := store.DeleteRole(ctx, "devops", "default"); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 
@@ -386,7 +386,7 @@ func TestRoleCRUD(t *testing.T) {
 	}
 
 	// Cannot delete built-in role
-	if err := store.DeleteRole(ctx, "admin"); err == nil {
+	if err := store.DeleteRole(ctx, "admin", "default"); err == nil {
 		t.Fatal("should not be able to delete built-in admin role")
 	}
 }
@@ -410,7 +410,7 @@ func TestPutRole_DeleteRole_OptimisticLocking(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		<-start
-		deleteErr = store.DeleteRole(ctx, "role_b")
+		deleteErr = store.DeleteRole(ctx, "role_b", "default")
 	}()
 	close(start)
 	wg.Wait()
