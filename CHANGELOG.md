@@ -151,6 +151,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   dashboard sessions belong to that tenant. With several tenants, the
   gateway's tenant is the platform tenant, so keep other tenants out of it.
   Reading policy is unchanged (task-677dd8af).
+- Worker pools: `DELETE /api/v1/pools/{name}`, with or without `force`, answers
+  `409 POOL_IN_USE` while an agent identity of any tenant lists the pool in its
+  `allowed_pools`. The `agent_ids` field names those agents, whatever their
+  tenant (task-04a0670c).
 - The dashboard test run no longer fails after every test passes when a console line, written by work that outlived its test file, is still being delivered as the Vitest worker shuts down (`EnvironmentTeardownError: Closing rpc while "onUserConsoleLog" was pending`). `dashboard/vitest.config.ts` ignores exactly that error, so every other unhandled error still fails the run. `KeyboardShortcutsHelp.test.tsx`, which produced it, now answers the AppShell's requests in-process and waits for them to settle (task-04eef2b3).
 
 #### core/mcp — the MCP invocation audit keeps a consumed human approval when scope preapproval also applies (2026-11-12, task-74f4c01e)
