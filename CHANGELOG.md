@@ -7,6 +7,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Packs: `POST /api/v1/packs/install` no longer ends without a response when the
+  `system/default` config document does not exist. Pack topic registration now reads
+  a missing document as one with no pool mappings, so those topics get no pool
+  (task-71f10dbe).
+
 - Edge approvals: an approval of a Bash command now also covers the files the command
   names, the git HEAD of its working directory and, for kubectl, the target context and
   namespace. cordum-hook adds a keyed digest of them to the approval's action identity
@@ -54,6 +59,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   reports for each session, with a distinct label per state, and "Not reported" when the
   server sends no recognized value. The session list can be filtered by assurance state,
   and the policy-mode chip now reads "policy <mode>" (task-9b412c07).
+- Pools: removing a pool's last topic mapping
+  (`DELETE /api/v1/pools/{name}/topics/{topic}`), and force-deleting a pool that was a
+  topic's only pool, now remove the topic from the stored `system/default` document, so
+  routing no longer sends the topic to that pool. Before, the topic key stayed stored
+  after the 204 (task-61be8263).
 
 ### Documentation
 
