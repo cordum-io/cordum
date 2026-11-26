@@ -102,6 +102,7 @@ type PolicyAuditEntry struct {
 	ResourceType   string            `json:"resource_type,omitempty"`
 	ResourceID     string            `json:"resource_id,omitempty"`
 	ResourceName   string            `json:"resource_name,omitempty"`
+	Tenant         string            `json:"tenant,omitempty"`
 	ActorID        string            `json:"actor_id,omitempty"`
 	Role           string            `json:"role,omitempty"`
 	AuthSource     auth.AuthSource   `json:"auth_source,omitempty"`

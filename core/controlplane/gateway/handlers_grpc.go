@@ -237,7 +237,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 	}, memoryID)
 
 	// Resolve agent context for audit events (same as HTTP path).
-	grpcAgentID, grpcAgentName, grpcAgentRiskTier := s.resolveAgentForAudit(ctx, payloadReq.Labels["agent_id"])
+	grpcAgentID, grpcAgentName, grpcAgentRiskTier := s.resolveAgentForAudit(ctx, orgID, payloadReq.Labels["agent_id"])
 	actorForAudit, identitySource, identityLabel, roleForAudit := grpcAuditActor(ctx)
 
 	if policyResult.Denied {
@@ -245,7 +245,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		if policyResult.Reason != "" {
 			reason = policyResult.Reason
 		}
-		s.appendSubmitSafetyDecisionAudit(ctx, "submit_denied", jobID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit-time policy denied: "+reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
+		s.appendSubmitSafetyDecisionAudit(ctx, "submit_denied", jobID, orgID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit-time policy denied: "+reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
 		return nil, status.Error(codes.PermissionDenied, reason)
 	}
 	if policyResult.Throttled {
@@ -253,7 +253,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		if policyResult.Reason != "" {
 			reason = policyResult.Reason
 		}
-		s.appendSubmitSafetyDecisionAudit(ctx, "submit_throttled", jobID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit-time policy throttled: "+reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
+		s.appendSubmitSafetyDecisionAudit(ctx, "submit_throttled", jobID, orgID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit-time policy throttled: "+reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
 		return nil, status.Error(codes.ResourceExhausted, reason)
 	}
 	if policyResult.ApprovalRequired {
@@ -372,7 +372,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 			}
 			s.syncApprovalQueueDepth(ctx)
 		}
-		s.appendSubmitSafetyDecisionAudit(ctx, "submit_approval_required", jobID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit-time policy requires approval: "+policyResult.Reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
+		s.appendSubmitSafetyDecisionAudit(ctx, "submit_approval_required", jobID, orgID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit-time policy requires approval: "+policyResult.Reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
 		return &pb.SubmitJobResponse{
 			JobId:   jobID,
 			TraceId: traceID,
@@ -518,7 +518,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		"traceId", traceID,
 		"topic", payloadReq.Topic,
 	)
-	s.appendSubmitSafetyDecisionAudit(ctx, "submit", jobID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit job "+jobID, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
+	s.appendSubmitSafetyDecisionAudit(ctx, "submit", jobID, orgID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit job "+jobID, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
 	return &pb.SubmitJobResponse{JobId: jobID, TraceId: traceID}, nil
 }
 
@@ -550,9 +550,8 @@ func (s *server) requireRoleGRPC(ctx context.Context, roles ...string) error {
 
 // bindGRPCSubmitAgentID returns the agent linked to principalID in orgID, or
 // "" when there is none. Like handleSubmitJobHTTP, it refuses a client
-// labels.agent_id that does not equal that agent: resolveAgentForAudit reads
-// the label without a tenant check, so an unchecked label could name any
-// tenant's agent in the policy check and the audit trail. Binding needs a
+// labels.agent_id that does not equal that agent. Policy and audit context
+// use the agent bound to that principal within the job tenant. Binding needs a
 // credential-backed principal (AuthenticatedPrincipal): SubmitJob attributes
 // the job to the request's principal_id when the auth context has none, and
 // to a caller-asserted x-principal-id, but a caller must not get another
@@ -603,8 +602,14 @@ func resolveGRPCTenant(ctx context.Context, requested, fallback string) (string,
 }
 
 func (s *server) GetJobStatus(ctx context.Context, req *pb.GetJobStatusRequest) (*pb.GetJobStatusResponse, error) {
-	if auth := auth.FromContext(ctx); auth != nil && auth.Tenant != "" && s.jobStore != nil {
-		if tenant, _ := s.jobStore.GetTenant(ctx, req.GetJobId()); tenant != "" && tenant != auth.Tenant && !auth.AllowCrossTenant {
+	if ac := auth.FromContext(ctx); ac != nil && !ac.AllowCrossTenant && s.jobStore != nil {
+		tenant, err := s.jobStore.GetTenant(ctx, req.GetJobId())
+		switch {
+		case err != nil && !errors.Is(err, redis.Nil):
+			return nil, status.Error(codes.Unavailable, "job store unavailable")
+		case strings.TrimSpace(tenant) == "":
+			return nil, status.Error(codes.NotFound, "job not found")
+		case ac.Tenant != "" && tenant != ac.Tenant:
 			return nil, status.Error(codes.PermissionDenied, "tenant access denied")
 		}
 	}

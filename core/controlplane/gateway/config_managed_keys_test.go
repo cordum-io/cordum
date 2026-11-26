@@ -201,9 +201,7 @@ func TestManagedConfigKeys_UnchangedEchoAndOtherDocumentsAllowed(t *testing.T) {
 			managedCfgAllow(t, s, managedCfgPayload(t, id, map[string]any{"another": true}))
 		}
 		managedCfgAllow(t, s, []byte(`{"dashboard_setting":true}`))
-		for _, scope := range []string{"org", "System"} {
-			managedCfgAllow(t, s, packMatrixJSON(t, map[string]any{"scope": scope, "scope_id": "default", "data": managedCfgEntry("policy")}))
-		}
+		managedCfgAllow(t, s, packMatrixJSON(t, map[string]any{"scope": "org", "scope_id": "default", "data": managedCfgEntry("policy")}))
 		managedCfgAllow(t, s, managedCfgPayload(t, " policy", managedCfgEntry("policy")))
 		assertPackFragmentSignatureVerifies(t, s, matrixPackID, "safety")
 	})

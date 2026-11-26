@@ -863,6 +863,23 @@ func (s *server) publishApprovalRepair(ctx context.Context, repaired *store.Appr
 	return nil
 }
 
+// approvalTenantResult returns the job tenant and a result when the caller
+// may not take the approval action, or nil when the tenant check permits it.
+func (s *server) approvalTenantResult(ctx context.Context, r *http.Request, action, jobID string) (string, *handlerResult) {
+	tenant, err := s.jobStore.GetTenant(ctx, jobID)
+	if err != nil && !errors.Is(err, redis.Nil) {
+		slog.Error("approval tenant lookup failed, denying access", "action", action, "job_id", jobID, "error", err)
+		return "", &handlerResult{http.StatusServiceUnavailable, "tenant lookup unavailable"}
+	}
+	if s.jobTenantAllowed(r, tenant) {
+		return tenant, nil
+	}
+	if strings.TrimSpace(tenant) == "" {
+		return tenant, &handlerResult{http.StatusNotFound, "job not found"}
+	}
+	return tenant, &handlerResult{http.StatusForbidden, "tenant access denied"}
+}
+
 func (s *server) handleRepairApproval(w http.ResponseWriter, r *http.Request) {
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermJobsApprove, []string{"admin"}, s.jobStore) {
 		return
@@ -881,13 +898,9 @@ func (s *server) handleRepairApproval(w http.ResponseWriter, r *http.Request) {
 
 	var result handlerResult
 	lockErr := s.withApprovalLock(r.Context(), jobID, func(ctx context.Context) error {
-		if tenant, tenantErr := s.jobStore.GetTenant(ctx, jobID); tenantErr != nil {
-			slog.Warn("repair: tenant lookup failed", "job_id", jobID, "error", tenantErr)
-		} else if tenant != "" {
-			if err := s.requireTenantAccess(r, tenant); err != nil {
-				result = handlerResult{http.StatusForbidden, "tenant access denied"}
-				return nil
-			}
+		if _, res := s.approvalTenantResult(ctx, r, "repair", jobID); res != nil {
+			result = *res
+			return nil
 		}
 
 		snapshot, plan, err := s.approvalRepairPlan(ctx, jobID)
@@ -1090,20 +1103,10 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 
-		// Fail closed on a tenant-lookup error to prevent cross-tenant approval,
-		// matching handleApprovalContext. Proceeding without the check (the old
-		// behavior) let a Redis blip skip tenant isolation on a mutating action.
-		tenant, tenantErr := s.jobStore.GetTenant(ctx, jobID)
-		if tenantErr != nil {
-			slog.Error("approve: tenant lookup failed, denying access", "job_id", jobID, "error", tenantErr)
-			result = handlerResult{http.StatusServiceUnavailable, "tenant lookup unavailable"}
+		tenant, res := s.approvalTenantResult(ctx, r, "approve", jobID)
+		if res != nil {
+			result = *res
 			return nil
-		}
-		if tenant != "" {
-			if err := s.requireTenantAccess(r, tenant); err != nil {
-				result = handlerResult{http.StatusForbidden, "tenant access denied"}
-				return nil
-			}
 		}
 		req, err := s.jobStore.GetJobRequest(ctx, jobID)
 		if errors.Is(err, redis.Nil) {
@@ -1446,7 +1449,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 		// Include the submitted job's agent context in the approval audit event.
 		approveAgentID, approveAgentName, approveAgentRiskTier := "", "", ""
 		if resolved.Request != nil && resolved.Request.Labels != nil {
-			approveAgentID, approveAgentName, approveAgentRiskTier = s.resolveAgentForAudit(ctx, resolved.Request.Labels["agent_id"])
+			approveAgentID, approveAgentName, approveAgentRiskTier = s.resolveAgentForAudit(ctx, tenant, resolved.Request.Labels["agent_id"])
 		}
 		approveActorID, approveIdentitySource, approveIdentityLabel := policybundles.PolicyActorIdentity(r)
 		s.appendApprovalDecisionAudit(ctx, "approve", jobID, resolved.Request.GetTopic(), approveActorID, policybundles.PolicyRole(r), approveIdentitySource, approveIdentityLabel, reason, note, approveAgentID, approveAgentName, approveAgentRiskTier)
@@ -1547,21 +1550,10 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 			result = handlerResult{http.StatusConflict, approvalConflictPayload(http.StatusConflict, conflictCode, conflictMessage)}
 			return nil
 		}
-		// Fail closed on a tenant-lookup error to prevent cross-tenant
-		// rejection, matching handleApproveJob. Proceeding without the check
-		// (the old behavior) let a Redis blip skip tenant isolation on a
-		// mutating action.
-		tenant, tenantErr := s.jobStore.GetTenant(ctx, jobID)
-		if tenantErr != nil {
-			slog.Error("reject: tenant lookup failed, denying access", "job_id", jobID, "error", tenantErr)
-			result = handlerResult{http.StatusServiceUnavailable, "tenant lookup unavailable"}
+		tenant, res := s.approvalTenantResult(ctx, r, "reject", jobID)
+		if res != nil {
+			result = *res
 			return nil
-		}
-		if tenant != "" {
-			if err := s.requireTenantAccess(r, tenant); err != nil {
-				result = handlerResult{http.StatusForbidden, "tenant access denied"}
-				return nil
-			}
 		}
 		req, reqErr := s.jobStore.GetJobRequest(ctx, jobID)
 		if errors.Is(reqErr, redis.Nil) {
@@ -1686,7 +1678,7 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 			"reason", reason)
 		rejectAgentID, rejectAgentName, rejectAgentRiskTier := "", "", ""
 		if resolved.Request != nil && resolved.Request.Labels != nil {
-			rejectAgentID, rejectAgentName, rejectAgentRiskTier = s.resolveAgentForAudit(ctx, resolved.Request.Labels["agent_id"])
+			rejectAgentID, rejectAgentName, rejectAgentRiskTier = s.resolveAgentForAudit(ctx, tenant, resolved.Request.Labels["agent_id"])
 		}
 		rejectActorID, rejectIdentitySource, rejectIdentityLabel := policybundles.PolicyActorIdentity(r)
 		s.appendApprovalDecisionAudit(ctx, "reject", jobID, rejectTopic, rejectActorID, policybundles.PolicyRole(r), rejectIdentitySource, rejectIdentityLabel, reason, note, rejectAgentID, rejectAgentName, rejectAgentRiskTier)

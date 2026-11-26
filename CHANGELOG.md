@@ -7,6 +7,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Context engine memory is stored per tenant. `BuildWindowRequest` has a new
+  `tenant_id` field. `BuildWindow` and `UpdateMemory` use stored memory only
+  for a request whose `tenant_id` is set, under the id
+  `<tenant>/<memory id>`. An id that already starts with `<tenant>/` is used
+  as is, and any other id containing `/` is refused. Without a usable
+  tenant, `BuildWindow` builds the window from the request payload alone,
+  and a chat or RAG `UpdateMemory` returns an error. Workflow-run chat
+  stores its history under the same id, qualified with the run's tenant.
+  Memory stored under an id without a tenant segment before this release is
+  not read (task-eeaba4b9).
+
+- Config: documents at team, workflow and step scope are stored per tenant,
+  under `cfg:{scope}:{tenant}/{id}` with the tenant path-escaped.
+  `GET /api/v1/config` and `PUT`/`POST /api/v1/config` at those scopes use
+  the caller's tenant; a caller with cross-tenant access selects one with
+  `X-Tenant-ID`. Effective config merges only the documents of the tenant it
+  is computed for. Documents stored at `cfg:{scope}:{id}` are not read; write
+  them again from their tenant (task-80a785cd).
+
+- Config: team, workflow and step documents record their tenant. A document
+  stored at `cfg:{scope}:{tenant}/{id}` without that tenant recorded is not
+  read and not merged into effective config, and `PUT`/`POST /api/v1/config`
+  answer `403` instead of replacing it. Delete such a key in Redis, then
+  write the document again from its tenant (task-42142ce4).
+
 - Edge managed settings: managed-settings verification fails closed on
   unsupported conditional or background hook modifiers, and command hooks
   must have the correct type and tool-event coverage (#492, task-99f50a3d).
@@ -77,6 +102,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `--allow-unauthenticated-http` is passed (#492, task-ee0dc819).
 
 ### Changed
+
+- Safety kernel: velocity rules count each tenant's requests in that tenant's own bucket, `cordum:velocity:{rule}:{tenant}:{key}` with the tenant base64url-encoded. A request without a tenant counts in the default tenant's bucket. Counts held under `cordum:velocity:{rule}:{key}` age out with their window.
 
 - Docs: the gRPC services and Safety Kernel pages give the output metadata check's timeout as
   its `500ms` default, which `CORDUM_OUTPUT_META_TIMEOUT_MS` overrides, instead of `100ms`
@@ -844,6 +871,47 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - typedoc, typedoc-plugin-coverage and typedoc-plugin-markdown are removed from the install with pnpm `-` overrides. typedoc 0.28 calls `Minimatch#matchOne`, which 11.x removed. orval 8.31.0 loads typedoc only for its `docs` output, which the dashboard does not configure. Until typedoc supports minimatch 11, enabling that output fails at import. orval stays at 8.31.0.
 
 ### Fixed
+
+- Audit: submit, approve and reject audit events and spans name the agent in a job's `agent_id` label only when that agent belongs to the job's tenant; otherwise they carry the label's id with no name or risk tier.
+
+- Approvals: when a job's tenant cannot be read, callers without cross-tenant
+  access get `404 job not found` from `POST /api/v1/approvals/{job_id}/approve`,
+  `/reject` and `/repair`, and a failed tenant lookup returns `503` from all
+  three.
+- Jobs: when a job's tenant cannot be read, for example after its metadata
+  expires (`JOB_META_TTL`, 7 days by default), callers without cross-tenant
+  access get `404 job not found` from `GET /api/v1/jobs/{id}/decisions`,
+  `POST /api/v1/jobs/{id}/cancel`, `DELETE /api/v1/dlq/{job_id}` and
+  `POST /api/v1/dlq/{job_id}/retry` for that job, and `NOT_FOUND` from gRPC
+  `GetJobStatus`. A failed tenant lookup returns `503` (gRPC `UNAVAILABLE`).
+  The output entries of `GET /api/v1/policy/audit?type=output` and
+  `GET /api/v1/policy/output/stats` include the job only for callers with
+  cross-tenant access, who can read its decisions and status and delete its
+  DLQ entry. The DLQ entry keeps its own expiry
+  (`CORDUM_DLQ_ENTRY_TTL_DAYS`, 30 days by default) (task-e845f244).
+- Workflow runs: `POST /api/v1/workflows/{id}/runs` stores each `Idempotency-Key`
+  reservation per tenant and workflow, under `wf:run:idem:{hash}`. A key stored
+  as `wf:run:idempotency:{key}` before this release still returns its run when
+  the repeat comes from that run's tenant and workflow (task-0b797b4b).
+- Config: `PUT` and `POST /api/v1/config` accept only the scopes `system`,
+  `org`, `team`, `workflow` and `step`, the same set `GET /api/v1/config`
+  accepts. Any other `scope` string gets 400 `CONFIG_REQUEST_INVALID`
+  ("invalid scope"), and the config store is neither read nor written. The
+  gateway reads its MCP argument-redaction rules from scope `gateway`; that
+  scope is not written through this endpoint (task-13eb1d1e).
+- Jobs: a submit whose idempotency key matches a legacy unscoped key
+  (`job:idempotency:{key}`) reuses that key's job only when the job's stored
+  tenant equals the caller's tenant. When the job's tenant cannot be read,
+  for example after its metadata expires (`JOB_META_TTL`, 7 days by default),
+  the submit is handled as a new job under the caller's tenant-scoped key
+  (task-e9209d0e).
+
+- Policy audit: each entry records a tenant: the job's tenant for job
+  entries, otherwise the tenant of a caller without cross-tenant access.
+  For callers without cross-tenant access, `GET /api/v1/policy/audit` lists
+  only entries recorded for their own tenant. Entries recorded before this
+  release carry no tenant and are listed only to callers with cross-tenant
+  access (task-1dbaae72).
 
 - K8s restore runbooks: NATS restores run from a nats-box pod and remove each
   stream first, and `redis-operations.md` has a Redis "Restore From Backup"

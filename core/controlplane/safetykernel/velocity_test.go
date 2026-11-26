@@ -8,6 +8,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/infra/config"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,12 +27,110 @@ func newTestVelocityChecker(t *testing.T) (*velocityChecker, *miniredis.Miniredi
 	return vc, mr
 }
 
+func TestTenantIsolationVelocityBuckets(t *testing.T) {
+	t.Run("exact-keys", func(t *testing.T) {
+		assert.Equal(t, "cordum:velocity:rule_1:value_1", velocityKey("rule:1", "", "value:1"))
+		assert.Equal(t, "cordum:velocity:rule_1:dGVuYW50LWE:value_1", velocityKey("rule:1", "tenant-a", "value:1"))
+	})
+	for _, tc := range []struct {
+		name, key string
+		public    bool
+		buckets   []velocityBucketCase
+	}{
+		{"raw-tenant-topic", "tenant:topic", false, []velocityBucketCase{
+			{"a_b", "c", "cordum:velocity:bucket:YV9i:a_b_c"},
+			{"a", "b_c", "cordum:velocity:bucket:YQ:a_b_c"},
+		}},
+		{"raw-empty-tenant", "topic", false, []velocityBucketCase{
+			{"tenant-a", "job.bucket", "cordum:velocity:bucket:dGVuYW50LWE:job.bucket"},
+			{"tenant-b", "job.bucket", "cordum:velocity:bucket:dGVuYW50LWI:job.bucket"},
+			{"", "job.bucket", "cordum:velocity:bucket:job.bucket"},
+		}},
+		{"public-tenant-topic", "tenant:topic", true, []velocityBucketCase{
+			{"a_job.", "job.c", "cordum:velocity:bucket:YV9qb2Iu:a_job._job.c"},
+			{"a", "job._job.c", "cordum:velocity:bucket:YQ:a_job._job.c"},
+		}},
+		{"public-default-tenant", "topic", true, []velocityBucketCase{
+			{"tenant-a", "job.bucket", "cordum:velocity:bucket:dGVuYW50LWE:job.bucket"},
+			{"", "job.bucket", "cordum:velocity:bucket:dGVuYW50LWRlZmF1bHQ:job.bucket"},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertVelocityBuckets(t, tc.key, tc.public, tc.buckets)
+		})
+	}
+}
+
+type velocityBucketCase struct {
+	tenant, topic, key string
+}
+
+func assertVelocityBuckets(t *testing.T, key string, public bool, buckets []velocityBucketCase) {
+	t.Helper()
+	policy := &config.SafetyPolicy{
+		DefaultTenant: "tenant-default", DefaultDecision: "allow",
+		Rules: []config.PolicyRule{{
+			ID: "bucket", Decision: "deny",
+			Velocity: &config.VelocityConfig{MaxRequests: 1, WindowSeconds: 60, Key: key},
+		}},
+	}
+	srv, mr := newTestServerWithVelocity(t, nil, "")
+	require.NoError(t, srv.setPolicy(context.Background(), policy, "snap-bucket"))
+	wantKeys := mr.Keys()
+	for i, bucket := range buckets {
+		for j, want := range []string{"allow", "deny"} {
+			job := fmt.Sprintf("job-%d-%d", i, j)
+			got := evaluateVelocityBucket(t, srv, policy, bucket, job, public, false)
+			require.Equal(t, want, got, "tenant %q request %d", bucket.tenant, j+1)
+		}
+		for _, other := range buckets[:i+1] {
+			members, err := mr.ZMembers(other.key)
+			require.NoError(t, err)
+			assert.Len(t, members, 2, "bucket %s", other.key)
+		}
+		before := mr.Dump()
+		got := evaluateVelocityBucket(t, srv, policy, bucket, "dry-run", public, true)
+		assert.Equal(t, "deny", got, "dry-run must read tenant %q's count", bucket.tenant)
+		assert.Equal(t, before, mr.Dump(), "dry-run must not record a request")
+		wantKeys = append(wantKeys, bucket.key)
+	}
+	assert.ElementsMatch(t, wantKeys, mr.Keys(), "only the tenant buckets may be written")
+}
+
+func evaluateVelocityBucket(t *testing.T, srv *server, policy *config.SafetyPolicy, bucket velocityBucketCase, job string, public, dryRun bool) string {
+	t.Helper()
+	if !public {
+		method := "evaluate"
+		if dryRun {
+			method = "simulate"
+		}
+		input := config.PolicyInput{Tenant: bucket.tenant, Topic: bucket.topic}
+		return srv.evaluateRulesWithVelocity(context.Background(), policy, input, job, method).Decision
+	}
+	req := &pb.PolicyCheckRequest{Tenant: bucket.tenant, Topic: bucket.topic, JobId: job}
+	evaluate := srv.Evaluate
+	if dryRun {
+		evaluate = srv.Simulate
+	}
+	resp, err := evaluate(context.Background(), req)
+	require.NoError(t, err)
+	switch resp.GetDecision() {
+	case pb.DecisionType_DECISION_TYPE_ALLOW:
+		return "allow"
+	case pb.DecisionType_DECISION_TYPE_DENY:
+		return "deny"
+	default:
+		t.Fatalf("unexpected decision %v: %s", resp.GetDecision(), resp.GetReason())
+		return ""
+	}
+}
+
 func TestVelocityCheckAndRecord_WithinLimit(t *testing.T) {
 	vc, _ := newTestVelocityChecker(t)
 	cfg := &config.VelocityConfig{MaxRequests: 3, WindowSeconds: 60, Key: "labels.session_id"}
 
 	for i := 1; i <= 3; i++ {
-		exceeded, count, err := vc.CheckAndRecord(context.Background(), "rule-1", "sess-abc", "job-"+string(rune('0'+i)), cfg)
+		exceeded, count, err := vc.CheckAndRecord(context.Background(), "rule-1", "", "sess-abc", "job-"+string(rune('0'+i)), cfg)
 		require.NoError(t, err)
 		assert.False(t, exceeded, "request %d should be within limit", i)
 		assert.Equal(t, int64(i), count)
@@ -43,13 +142,13 @@ func TestVelocityCheckAndRecord_ExceedsLimit(t *testing.T) {
 	cfg := &config.VelocityConfig{MaxRequests: 3, WindowSeconds: 60, Key: "labels.session_id"}
 
 	for i := 1; i <= 3; i++ {
-		exceeded, _, err := vc.CheckAndRecord(context.Background(), "rule-1", "sess-abc", "job-"+string(rune('0'+i)), cfg)
+		exceeded, _, err := vc.CheckAndRecord(context.Background(), "rule-1", "", "sess-abc", "job-"+string(rune('0'+i)), cfg)
 		require.NoError(t, err)
 		assert.False(t, exceeded)
 	}
 
 	// 4th request should be denied
-	exceeded, count, err := vc.CheckAndRecord(context.Background(), "rule-1", "sess-abc", "job-4", cfg)
+	exceeded, count, err := vc.CheckAndRecord(context.Background(), "rule-1", "", "sess-abc", "job-4", cfg)
 	require.NoError(t, err)
 	assert.True(t, exceeded)
 	assert.Equal(t, int64(4), count)
@@ -61,18 +160,18 @@ func TestVelocityCheckOnly_DoesNotRecord(t *testing.T) {
 
 	// Record 2 real requests
 	for i := 1; i <= 2; i++ {
-		_, _, err := vc.CheckAndRecord(context.Background(), "rule-1", "sess-abc", "job-"+string(rune('0'+i)), cfg)
+		_, _, err := vc.CheckAndRecord(context.Background(), "rule-1", "", "sess-abc", "job-"+string(rune('0'+i)), cfg)
 		require.NoError(t, err)
 	}
 
 	// CheckOnly should report count=2, not add to it
-	exceeded, count, err := vc.CheckOnly(context.Background(), "rule-1", "sess-abc", cfg)
+	exceeded, count, err := vc.CheckOnly(context.Background(), "rule-1", "", "sess-abc", cfg)
 	require.NoError(t, err)
 	assert.False(t, exceeded)
 	assert.Equal(t, int64(2), count)
 
 	// Still 2 after CheckOnly (not 3)
-	exceeded, count, err = vc.CheckOnly(context.Background(), "rule-1", "sess-abc", cfg)
+	exceeded, count, err = vc.CheckOnly(context.Background(), "rule-1", "", "sess-abc", cfg)
 	require.NoError(t, err)
 	assert.False(t, exceeded)
 	assert.Equal(t, int64(2), count)
@@ -84,13 +183,13 @@ func TestVelocity_SlidingWindow_OldEntriesExpire(t *testing.T) {
 	cfg := &config.VelocityConfig{MaxRequests: 2, WindowSeconds: 1, Key: "labels.session_id"}
 
 	// Add 2 requests
-	_, _, err := vc.CheckAndRecord(context.Background(), "rule-1", "sess-abc", "job-1", cfg)
+	_, _, err := vc.CheckAndRecord(context.Background(), "rule-1", "", "sess-abc", "job-1", cfg)
 	require.NoError(t, err)
-	_, _, err = vc.CheckAndRecord(context.Background(), "rule-1", "sess-abc", "job-2", cfg)
+	_, _, err = vc.CheckAndRecord(context.Background(), "rule-1", "", "sess-abc", "job-2", cfg)
 	require.NoError(t, err)
 
 	// 3rd should exceed
-	exceeded, _, err := vc.CheckAndRecord(context.Background(), "rule-1", "sess-abc", "job-3", cfg)
+	exceeded, _, err := vc.CheckAndRecord(context.Background(), "rule-1", "", "sess-abc", "job-3", cfg)
 	require.NoError(t, err)
 	assert.True(t, exceeded)
 
@@ -98,7 +197,7 @@ func TestVelocity_SlidingWindow_OldEntriesExpire(t *testing.T) {
 	time.Sleep(1100 * time.Millisecond)
 
 	// After window expires, new request should be within limit
-	exceeded, count, err := vc.CheckAndRecord(context.Background(), "rule-1", "sess-abc", "job-4", cfg)
+	exceeded, count, err := vc.CheckAndRecord(context.Background(), "rule-1", "", "sess-abc", "job-4", cfg)
 	require.NoError(t, err)
 	assert.False(t, exceeded)
 	assert.Equal(t, int64(1), count)
@@ -109,17 +208,17 @@ func TestVelocity_DifferentKeys_Independent(t *testing.T) {
 	cfg := &config.VelocityConfig{MaxRequests: 1, WindowSeconds: 60, Key: "labels.session_id"}
 
 	// Session A: 1 request
-	exceeded, _, err := vc.CheckAndRecord(context.Background(), "rule-1", "sess-a", "job-1", cfg)
+	exceeded, _, err := vc.CheckAndRecord(context.Background(), "rule-1", "", "sess-a", "job-1", cfg)
 	require.NoError(t, err)
 	assert.False(t, exceeded)
 
 	// Session B: independent counter, should also be within limit
-	exceeded, _, err = vc.CheckAndRecord(context.Background(), "rule-1", "sess-b", "job-2", cfg)
+	exceeded, _, err = vc.CheckAndRecord(context.Background(), "rule-1", "", "sess-b", "job-2", cfg)
 	require.NoError(t, err)
 	assert.False(t, exceeded)
 
 	// Session A: 2nd request exceeds limit of 1
-	exceeded, _, err = vc.CheckAndRecord(context.Background(), "rule-1", "sess-a", "job-3", cfg)
+	exceeded, _, err = vc.CheckAndRecord(context.Background(), "rule-1", "", "sess-a", "job-3", cfg)
 	require.NoError(t, err)
 	assert.True(t, exceeded)
 }
@@ -129,9 +228,9 @@ func TestVelocity_IdempotentJobID(t *testing.T) {
 	cfg := &config.VelocityConfig{MaxRequests: 2, WindowSeconds: 60, Key: "labels.session_id"}
 
 	// Same job ID recorded twice — sorted set deduplicates by member
-	_, _, err := vc.CheckAndRecord(context.Background(), "rule-1", "sess-abc", "job-same", cfg)
+	_, _, err := vc.CheckAndRecord(context.Background(), "rule-1", "", "sess-abc", "job-same", cfg)
 	require.NoError(t, err)
-	_, count, err := vc.CheckAndRecord(context.Background(), "rule-1", "sess-abc", "job-same", cfg)
+	_, count, err := vc.CheckAndRecord(context.Background(), "rule-1", "", "sess-abc", "job-same", cfg)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count, "same job_id should be counted only once")
 }
@@ -140,7 +239,7 @@ func TestVelocity_NilChecker_FailOpen(t *testing.T) {
 	var vc *velocityChecker
 	cfg := &config.VelocityConfig{MaxRequests: 1, WindowSeconds: 60, Key: "labels.session_id"}
 
-	exceeded, _, err := vc.CheckAndRecord(context.Background(), "rule-1", "sess-abc", "job-1", cfg)
+	exceeded, _, err := vc.CheckAndRecord(context.Background(), "rule-1", "", "sess-abc", "job-1", cfg)
 	assert.Error(t, err)
 	assert.False(t, exceeded, "nil checker should not report exceeded")
 }
@@ -152,7 +251,7 @@ func TestVelocity_ClosedRedis_FailOpen(t *testing.T) {
 	mr.Close() // simulate Redis unavailability
 
 	cfg := &config.VelocityConfig{MaxRequests: 1, WindowSeconds: 60, Key: "labels.session_id"}
-	exceeded, _, err := vc.CheckAndRecord(context.Background(), "rule-1", "sess-abc", "job-1", cfg)
+	exceeded, _, err := vc.CheckAndRecord(context.Background(), "rule-1", "", "sess-abc", "job-1", cfg)
 	assert.Error(t, err)
 	assert.False(t, exceeded, "Redis error should not report exceeded (fail-open)")
 }
@@ -204,7 +303,7 @@ func TestVelocity_InvalidConfig_MaxRequestsZero(t *testing.T) {
 	vc, _ := newTestVelocityChecker(t)
 	cfg := &config.VelocityConfig{MaxRequests: 0, WindowSeconds: 60, Key: "labels.session_id"}
 
-	exceeded, _, err := vc.CheckAndRecord(context.Background(), "rule-1", "sess-abc", "job-1", cfg)
+	exceeded, _, err := vc.CheckAndRecord(context.Background(), "rule-1", "", "sess-abc", "job-1", cfg)
 	assert.Error(t, err, "should fail on max_requests=0")
 	assert.False(t, exceeded, "should fail-open on invalid config")
 }
@@ -213,7 +312,7 @@ func TestVelocity_InvalidConfig_WindowSecondsZero(t *testing.T) {
 	vc, _ := newTestVelocityChecker(t)
 	cfg := &config.VelocityConfig{MaxRequests: 3, WindowSeconds: 0, Key: "labels.session_id"}
 
-	exceeded, _, err := vc.CheckAndRecord(context.Background(), "rule-1", "sess-abc", "job-1", cfg)
+	exceeded, _, err := vc.CheckAndRecord(context.Background(), "rule-1", "", "sess-abc", "job-1", cfg)
 	assert.Error(t, err, "should fail on window_seconds=0")
 	assert.False(t, exceeded, "should fail-open on invalid config")
 }
@@ -223,13 +322,13 @@ func TestVelocity_SpecialCharactersInKey(t *testing.T) {
 	cfg := &config.VelocityConfig{MaxRequests: 2, WindowSeconds: 60, Key: "labels.session_id"}
 
 	// Keys with colons, spaces, etc. should be sanitized and work correctly
-	exceeded, count, err := vc.CheckAndRecord(context.Background(), "rule-1", "user:123:session", "job-1", cfg)
+	exceeded, count, err := vc.CheckAndRecord(context.Background(), "rule-1", "", "user:123:session", "job-1", cfg)
 	require.NoError(t, err)
 	assert.False(t, exceeded)
 	assert.Equal(t, int64(1), count)
 
 	// Same sanitized key should increment
-	exceeded, count, err = vc.CheckAndRecord(context.Background(), "rule-1", "user:123:session", "job-2", cfg)
+	exceeded, count, err = vc.CheckAndRecord(context.Background(), "rule-1", "", "user:123:session", "job-2", cfg)
 	require.NoError(t, err)
 	assert.False(t, exceeded)
 	assert.Equal(t, int64(2), count)
@@ -243,7 +342,7 @@ func TestVelocity_ConcurrentRequests(t *testing.T) {
 	results := make(chan bool, 10)
 	for i := 0; i < 10; i++ {
 		go func(idx int) {
-			exceeded, _, err := vc.CheckAndRecord(context.Background(), "rule-1", "sess-concurrent",
+			exceeded, _, err := vc.CheckAndRecord(context.Background(), "rule-1", "", "sess-concurrent",
 				fmt.Sprintf("job-%d", idx), cfg)
 			if err != nil {
 				results <- false // error = fail-open = not exceeded
@@ -296,12 +395,12 @@ func TestVelocity_EmptyMember_DoesNotCollapse(t *testing.T) {
 	// When member is empty string, ZADD deduplicates to one entry.
 	// This test documents the existing behavior — callers must provide
 	// unique members for correct sliding window progression.
-	_, count1, err := vc.CheckAndRecord(context.Background(), "rule-1", "sess-abc", "", cfg)
+	_, count1, err := vc.CheckAndRecord(context.Background(), "rule-1", "", "sess-abc", "", cfg)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count1)
 
 	// Second call with same empty member overwrites — count stays 1.
-	_, count2, err := vc.CheckAndRecord(context.Background(), "rule-1", "sess-abc", "", cfg)
+	_, count2, err := vc.CheckAndRecord(context.Background(), "rule-1", "", "sess-abc", "", cfg)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count2, "empty member collapses all calls to single entry")
 }

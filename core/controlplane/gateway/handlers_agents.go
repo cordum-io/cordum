@@ -608,10 +608,10 @@ func (s *server) handleAgentStats(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// resolveAgentForAudit looks up agent identity from the agent store by ID.
-// Returns (agentID, agentName, agentRiskTier). For unlinked or missing agents,
-// returns ("unlinked", "unlinked", "").
-func (s *server) resolveAgentForAudit(ctx context.Context, agentID string) (string, string, string) {
+// resolveAgentForAudit returns identity fields only for an agent in tenant.
+// An absent label returns ("unlinked", "unlinked", ""); an unknown agent
+// returns (agentID, agentID, "").
+func (s *server) resolveAgentForAudit(ctx context.Context, tenant, agentID string) (string, string, string) {
 	agentID = strings.TrimSpace(agentID)
 	if agentID == "" {
 		return "unlinked", "unlinked", ""
@@ -619,10 +619,7 @@ func (s *server) resolveAgentForAudit(ctx context.Context, agentID string) (stri
 	if s.agentIdentityStore == nil {
 		return agentID, agentID, ""
 	}
-	// Audit enrichment is a system-internal lookup — tenant scoping is
-	// enforced at the calling handler boundary, not here. Pass empty
-	// tenantID to skip the store-level tenant check.
-	agent, err := s.agentIdentityStore.Get(ctx, "", agentID)
+	agent, err := s.agentIdentityStore.Get(ctx, tenant, agentID)
 	if err != nil || agent == nil {
 		return agentID, agentID, ""
 	}

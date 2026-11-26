@@ -26,6 +26,40 @@ func enableAgentIdentityEntitlement(t *testing.T, s *server) {
 	})
 }
 
+func TestResolveAgentForAuditReadsStoredIdentity(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+	agent, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+		TenantID: "default", Name: "audit-agent", Owner: "owner", RiskTier: "high",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, name, risk := s.resolveAgentForAudit(ctx, agent.TenantID, agent.ID)
+	if id != agent.ID || name != agent.Name || risk != agent.RiskTier {
+		t.Fatalf("audit identity = (%q, %q, %q), want (%q, %q, %q)",
+			id, name, risk, agent.ID, agent.Name, agent.RiskTier)
+	}
+}
+
+func TestResolveAgentForAuditUnknownTenant(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	agent, err := s.agentIdentityStore.Create(t.Context(), store.AgentIdentity{
+		TenantID: "tenant-b", Name: "audit-agent", Owner: "owner", RiskTier: "high",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tenant := range []string{"tenant-a", "", " "} {
+		t.Run("tenant="+tenant, func(t *testing.T) {
+			id, name, risk := s.resolveAgentForAudit(t.Context(), tenant, agent.ID)
+			if id != agent.ID || name != agent.ID || risk != "" {
+				t.Fatalf("audit identity = (%q, %q, %q), want (%q, %q, empty)", id, name, risk, agent.ID, agent.ID)
+			}
+		})
+	}
+}
+
 func TestCreateAgent(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	enableAgentIdentityEntitlement(t, s)
@@ -914,9 +948,7 @@ func TestAgentStatsHighVolume(t *testing.T) {
 }
 
 // TestHandleCreateAgent_PersistsTenantID verifies that handleCreateAgent
-// stamps the caller tenant onto the persisted AgentIdentity instead of
-// writing a global tenant_id="" entry that any tenant can read.
-// Regression for PR #276 audit finding (CRITICAL, handlers_agents.go:80-127).
+// stamps the caller tenant onto the persisted AgentIdentity.
 func TestHandleCreateAgent_PersistsTenantID(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	enableAgentIdentityEntitlement(t, s)
