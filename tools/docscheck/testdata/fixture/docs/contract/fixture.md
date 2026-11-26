@@ -17,7 +17,7 @@ Read one thing with `GET /api/v1/things/{id}`.
 
 The old `GET /api/v1/missing` call is gone.
 
-<!-- docscheck: command -->
+<!-- docscheck: command exit="0" -->
 ```bash
 cordumctl status
 ```

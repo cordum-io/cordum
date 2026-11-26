@@ -1533,6 +1533,8 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 	s.registerRoute(mux, "GET /api/v1/edge/sessions/{session_id}", s.instrumented("/api/v1/edge/sessions/{session_id}", s.handleGetEdgeSession))
 	s.registerRoute(mux, "POST /api/v1/edge/sessions/{session_id}/heartbeat", s.instrumented("/api/v1/edge/sessions/{session_id}/heartbeat", s.handleHeartbeatEdgeSession))
 	s.registerRoute(mux, "POST /api/v1/edge/sessions/{session_id}/end", s.instrumented("/api/v1/edge/sessions/{session_id}/end", s.handleEndEdgeSession))
+	s.registerRoute(mux, "POST /api/v1/edge/calibration-reports", s.instrumented("/api/v1/edge/calibration-reports", s.handleCreateEdgeCalibrationReport))
+	s.registerRoute(mux, "GET /api/v1/edge/calibration-reports/{id}", s.instrumented("/api/v1/edge/calibration-reports/{id}", s.handleGetEdgeCalibrationReport))
 	s.registerRoute(mux, "POST /api/v1/edge/executions", s.instrumented("/api/v1/edge/executions", s.handleCreateEdgeExecution))
 	s.registerRoute(mux, "GET /api/v1/edge/executions", s.instrumented("/api/v1/edge/executions", s.handleListEdgeExecutions))
 	s.registerRoute(mux, "GET /api/v1/edge/executions/{execution_id}", s.instrumented("/api/v1/edge/executions/{execution_id}", s.handleGetEdgeExecution))
@@ -1813,7 +1815,9 @@ func mcpGatewayHandlers(s *server) (health, config, upstream, connect http.Handl
 			if authCtx == nil {
 				return "", "", errors.New("auth context missing")
 			}
-			return tenant, authCtx.PrincipalID, nil
+			// Only a principal a credential vouches for owns the evidence; one
+			// asserted with X-Principal-Id is not recorded (task-a4604f76).
+			return tenant, authCtx.AuthenticatedPrincipal(), nil
 		},
 	})
 	if err != nil {

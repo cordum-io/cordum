@@ -105,11 +105,11 @@ func TestEdgeEvaluateActionHashIsRiskTagOrderInvariant(t *testing.T) {
 	scrambled.RiskTags = []string{"destructive", "exec", "network"}
 	scrambled.Labels = edgecore.Labels{"alpha": "first", "zeta": "last"}
 
-	first, err := edgeEvaluateActionHash(base, "policy-v1")
+	first, err := edgeEvaluateActionHash(base, "policy-v1", "")
 	if err != nil {
 		t.Fatalf("edgeEvaluateActionHash first: %v", err)
 	}
-	second, err := edgeEvaluateActionHash(scrambled, "policy-v1")
+	second, err := edgeEvaluateActionHash(scrambled, "policy-v1", "")
 	if err != nil {
 		t.Fatalf("edgeEvaluateActionHash scrambled: %v", err)
 	}
@@ -1861,6 +1861,73 @@ func TestEdgeSessionPolicyOverrideAttachment(t *testing.T) {
 	}
 	if got := requests[0].GetLabels()[edgecore.LabelPolicyAttachmentID]; got != want {
 		t.Fatalf("policy request attachment label = %q, want %q in %#v", got, want, requests[0].GetLabels())
+	}
+}
+
+// TestGatewayEdgeEvaluateDropsClientSystemLabels pins that neither
+// evaluate-body labels nor session labels can carry "_"-prefixed system
+// labels to the Safety Kernel. The kernel reads _delegation.* as
+// gateway-verified delegation metadata. GHSA-j33m-mr27-pmw3.
+func TestGatewayEdgeEvaluateDropsClientSystemLabels(t *testing.T) {
+	safety := &edgeEvaluateStubSafetyClient{}
+	_, handler := newEdgeEvaluateTestServer(t, safety)
+
+	rr := edgeRoutePOST(t, handler, "/api/v1/edge/sessions", `{
+		"agent_product":"claude-code",
+		"agent_version":"1.2.3",
+		"mode":"local-dev",
+		"policy_snapshot":"snap-edge-evaluate",
+		"policy_mode":"observe",
+		"labels":{"_delegation.depth":"1","_delegation.issuer":"trusted-root","team":"platform"}
+	}`)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create session status = %d, want 201 body=%s", rr.Code, rr.Body.String())
+	}
+	var session edgeSessionCreateResponseJSON
+	decodeEdgeRouteJSON(t, rr, &session)
+
+	body, err := json.Marshal(map[string]any{
+		"tenant_id":      edgeRouteTenant,
+		"principal_id":   "principal-edge-a",
+		"session_id":     session.SessionID,
+		"execution_id":   session.ExecutionID,
+		"agent_product":  "claude-code",
+		"layer":          "hook",
+		"kind":           "hook.pre_tool_use",
+		"tool_name":      "Bash",
+		"input_redacted": map[string]any{"command": "npm test"},
+		"labels": map[string]string{
+			"_delegation.depth":        "1",
+			"_delegation.issuer_chain": "trusted-root",
+			"_delegation.scope":        "admin",
+			"_action.descriptor_json":  `{"tool":"forged"}`,
+			"custom.team":              "platform",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal evaluate body: %v", err)
+	}
+	rr = edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", string(body))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("evaluate status = %d, want 200 body=%s", rr.Code, rr.Body.String())
+	}
+
+	requests := safety.capturedRequests()
+	if len(requests) != 1 {
+		t.Fatalf("captured safety requests = %d, want 1", len(requests))
+	}
+	for name, labels := range map[string]map[string]string{
+		"labels":      requests[0].GetLabels(),
+		"meta.labels": requests[0].GetMeta().GetLabels(),
+	} {
+		for key, value := range labels {
+			if strings.HasPrefix(key, "_") {
+				t.Errorf("client system label reached Safety Kernel %s: %s=%q", name, key, value)
+			}
+		}
+		if labels["custom.team"] != "platform" || labels["team"] != "platform" {
+			t.Errorf("ordinary request/session labels dropped from %s: %#v", name, labels)
+		}
 	}
 }
 

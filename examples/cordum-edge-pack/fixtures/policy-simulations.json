@@ -29,7 +29,7 @@
         "risk_tags": ["exec", "test"],
         "labels": {
           "agent.product": "claude-code",
-          "command.class": "safe",
+          "command.class": "arbitrary_code",
           "command.family": "test",
           "edge.action_name": "bash.exec",
           "edge.event_id": "evt-edge-sim-bash-npm-test",
@@ -122,7 +122,7 @@
         "risk_tags": ["build", "exec"],
         "labels": {
           "agent.product": "claude-code",
-          "command.class": "safe",
+          "command.class": "arbitrary_code",
           "command.family": "build",
           "edge.action_name": "bash.exec",
           "edge.event_id": "evt-edge-sim-bash-npm-run-build",

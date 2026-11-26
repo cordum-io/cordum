@@ -485,7 +485,9 @@ func (s *server) packTopicRegistrations(ctx context.Context, manifest *packs.Pac
 		return nil, errors.New("pack manifest required")
 	}
 	doc, err := s.configSvc.Get(ctx, configsvc.ScopeSystem, "default")
-	if err != nil && !errors.Is(err, redis.Nil) {
+	if errors.Is(err, redis.Nil) {
+		doc = &configsvc.Document{}
+	} else if err != nil {
 		return nil, fmt.Errorf("load pool mappings: %w", err)
 	}
 	topics, _, err := extractPoolsFromConfig(doc)

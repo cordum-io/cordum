@@ -1,0 +1,145 @@
+syntax = "proto3";
+
+package cordum.v1;
+option go_package = "github.com/cordum/cordum/core/protocol/pb/v1";
+
+// Execution grant schema v1 types, following docs/adr/011-execution-grant-format.md.
+// Canonical bytes, decoding, validation, signing and verification are not
+// implemented here. Schema profile (ADR "Canonical bytes" item 1): no imports,
+// maps, float/double, groups or proto3 optional; oneof members are numbered above
+// every ordinary field of their message; enum value 0 is <PREFIX>_UNSPECIFIED.
+
+// SignedExecutionGrant is the envelope (ADR-011 "Canonical bytes" item 7): grant
+// holds the ExecutionGrant bytes, signature the detached Ed25519 signature.
+message SignedExecutionGrant {
+  bytes grant = 1;
+  string key_id = 2;
+  string algorithm = 3;
+  bytes signature = 4;
+}
+
+// ExecutionGrant is the signed payload. Field order follows the ADR-011
+// "Grant fields" table; group labels (M, G1..G9) are the ADR's.
+message ExecutionGrant {
+  // M: payload metadata.
+  uint32 schema_version = 1;
+  string issuer_id = 2;
+  string issuer_key_id = 3;
+  // G1: tenant, human principal, agent, session and delegation (root to leaf).
+  string tenant_id = 4;
+  string principal_id = 5;
+  string agent_id = 6;
+  string session_id = 7;
+  repeated DelegationLink delegation_chain = 8;
+  // G2-G4: the approved action, its target, inputs and runtime.
+  Action action = 9;
+  // G5: effective policy digest (32 bytes) and authority epoch.
+  bytes policy_digest = 10;
+  uint64 authority_epoch = 11;
+  // G6: approval and action commitment.
+  Approval approval = 12;
+  // G7: required enforcement profile.
+  EnforcementProfile enforcement_profile = 13;
+  // G8: grant id (16 bytes), execution identity, validity window, uses.
+  bytes grant_id = 14;
+  string execution_id = 15;
+  int64 issued_at_unix = 16;
+  int64 not_before_unix = 17;
+  int64 expires_at_unix = 18;
+  uint32 max_uses = 19;
+  // G9: intended executor or broker.
+  Executor executor = 20;
+
+  message DelegationLink {
+    string agent_id = 1;
+    string token_jti = 2;
+    string parent_jti = 3;
+  }
+
+  message Action {
+    string operation = 1;
+    Target target = 2;
+    repeated Precondition preconditions = 3;
+    repeated InputDigest inputs = 4;
+    RuntimeIdentity runtime = 5;
+
+    // Above every ordinary field: protobuf-go marshals oneof members last.
+    oneof parameters {
+      KubernetesManifestApply kubernetes_manifest_apply = 6;
+    }
+  }
+
+  message KubernetesManifestApply {
+    string manifest_input = 1;
+    repeated KubernetesObjectRef objects = 2;
+  }
+
+  message KubernetesObjectRef {
+    string api_group = 1;
+    string api_version = 2;
+    string kind = 3;
+    string namespace = 4;
+    string name = 5;
+  }
+
+  message Target {
+    string account = 1;
+    string environment = 2;
+    string resource = 3;
+  }
+
+  message Precondition {
+    string resource = 1;
+    PreconditionKind kind = 2;
+    string expected_version = 3;
+  }
+
+  enum PreconditionKind {
+    PRECONDITION_KIND_UNSPECIFIED = 0;
+    PRECONDITION_KIND_MUST_EXIST = 1;
+    PRECONDITION_KIND_MUST_NOT_EXIST = 2;
+    PRECONDITION_KIND_VERSION_EQUALS = 3;
+  }
+
+  message InputDigest {
+    string name = 1;
+    string media_type = 2;
+    bytes sha256 = 3;
+    uint64 size_bytes = 4;
+  }
+
+  message RuntimeIdentity {
+    string tool_id = 1;
+    string tool_version = 2;
+    bytes image_sha256 = 3;
+  }
+
+  message Approval {
+    ApprovalState state = 1;
+    string approval_ref = 2;
+    repeated string approver_ids = 3;
+    bytes action_commitment = 4;
+  }
+
+  enum ApprovalState {
+    APPROVAL_STATE_UNSPECIFIED = 0;
+    APPROVAL_STATE_NOT_REQUIRED = 1;
+    APPROVAL_STATE_APPROVED = 2;
+  }
+
+  message EnforcementProfile {
+    string profile_id = 1;
+    repeated string required_capabilities = 2;
+  }
+
+  message Executor {
+    string executor_id = 1;
+    ExecutorKind executor_kind = 2;
+  }
+
+  enum ExecutorKind {
+    EXECUTOR_KIND_UNSPECIFIED = 0;
+    EXECUTOR_KIND_BROKER = 1;
+    EXECUTOR_KIND_RUNNER = 2;
+  }
+}
