@@ -25,6 +25,25 @@ var ErrPoolNotFound = errors.New("pool not found")
 var ErrTopicNotFound = errors.New("topic not found")
 var ErrTopicPoolMappingNotFound = errors.New("topic pool mapping not found")
 
+// errPoolPlatformAccess is the logged reason for a pool route's 403.
+var errPoolPlatformAccess = errors.New("pool routes need access to all tenants")
+
+// requirePoolPlatformAccess admits a caller to the pool routes only when the
+// gateway has no auth provider or the caller's access spans all tenants.
+// Pools and their topic routes serve every tenant, so no tenant owns a pool
+// and the caller's tenant is never consulted. Otherwise it writes a 403 and
+// returns false.
+func (s *server) requirePoolPlatformAccess(w http.ResponseWriter, r *http.Request) bool {
+	if s.auth == nil {
+		return true
+	}
+	if ac := auth.FromRequest(r); ac != nil && ac.AllowCrossTenant {
+		return true
+	}
+	writeForbidden(w, r, errPoolPlatformAccess)
+	return false
+}
+
 type poolNotFoundError struct {
 	pool string
 }
@@ -155,6 +174,9 @@ func (s *server) handleCreatePool(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermissionOrRole(w, r, auth.PermPoolsWrite, "admin") {
 		return
 	}
+	if !s.requirePoolPlatformAccess(w, r) {
+		return
+	}
 	name := strings.TrimSpace(r.PathValue("name"))
 	if err := pools.ValidatePoolName(name); err != nil {
 		writeJSONError(w, http.StatusBadRequest, errorCodePoolInvalidConfig, err.Error())
@@ -230,6 +252,9 @@ func (s *server) handleUpdatePool(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermissionOrRole(w, r, auth.PermPoolsWrite, "admin") {
 		return
 	}
+	if !s.requirePoolPlatformAccess(w, r) {
+		return
+	}
 	name := strings.TrimSpace(r.PathValue("name"))
 	if err := pools.ValidatePoolName(name); err != nil {
 		writeJSONError(w, http.StatusBadRequest, errorCodePoolInvalidConfig, err.Error())
@@ -299,6 +324,9 @@ func (s *server) handleUpdatePool(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleDeletePool(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermissionOrRole(w, r, auth.PermPoolsWrite, "admin") {
+		return
+	}
+	if !s.requirePoolPlatformAccess(w, r) {
 		return
 	}
 	name := strings.TrimSpace(r.PathValue("name"))
@@ -407,6 +435,9 @@ func (s *server) handleDrainPool(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermissionOrRole(w, r, auth.PermPoolsWrite, "admin") {
 		return
 	}
+	if !s.requirePoolPlatformAccess(w, r) {
+		return
+	}
 	name := strings.TrimSpace(r.PathValue("name"))
 	if err := pools.ValidatePoolName(name); err != nil {
 		writeJSONError(w, http.StatusBadRequest, errorCodePoolInvalidConfig, err.Error())
@@ -485,6 +516,9 @@ func (s *server) handleAddTopicToPool(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermissionOrRole(w, r, auth.PermPoolsWrite, "admin") {
 		return
 	}
+	if !s.requirePoolPlatformAccess(w, r) {
+		return
+	}
 	name := strings.TrimSpace(r.PathValue("name"))
 	topic := strings.TrimSpace(r.PathValue("topic"))
 	if err := pools.ValidatePoolName(name); err != nil {
@@ -538,6 +572,9 @@ func (s *server) handleAddTopicToPool(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleRemoveTopicFromPool(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermissionOrRole(w, r, auth.PermPoolsWrite, "admin") {
+		return
+	}
+	if !s.requirePoolPlatformAccess(w, r) {
 		return
 	}
 	name := strings.TrimSpace(r.PathValue("name"))
