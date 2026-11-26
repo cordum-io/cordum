@@ -288,7 +288,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   require-approval counts per rule, policy rules with no matching event, the most affected
   tools and command classes, and approval requests per UTC day. The report is stored under
   a content-derived id, and `GET /api/v1/edge/calibration-reports/{id}` returns it
-  (M5-01B, task-c574681e).
+  (M5-01B, task-c574681e). The report also counts what candidate shadow policy bundles
+  would decide (deny and require-approval per bundle and rule) over the tenant's whole
+  window, not filtered by repository or label, and the assurance state of the observed
+  sessions at report time (M5-01C, task-bdf2f376).
 
 - Execution grant v1 schema (M2A-02A) and `core/execgrant` canonical bytes, strict
   decoder and golden vectors; no service issues, signs or verifies grants yet (task-85bb037a).
