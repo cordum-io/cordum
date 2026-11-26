@@ -1,6 +1,7 @@
 package perfharness
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -11,6 +12,66 @@ import (
 	"sync"
 	"time"
 )
+
+// Run executes a trusted workload file and returns schema-validated results, never credentials.
+func Run(ctx context.Context, path, profile string) ([]byte, error) {
+	w, r, err := prepareResults(ctx, path, profile)
+	if err != nil {
+		return nil, err
+	}
+	e, err := newExecutor(w)
+	if err != nil {
+		return nil, err
+	}
+	defer e.client.CloseIdleConnections()
+	queueURL := os.Getenv(w.QueueDepth.URLEnv)
+	if queueURL == "" {
+		return nil, fmt.Errorf("queue URL environment variable must be set")
+	}
+	r.Environment.Versions.Target = e.version(ctx)
+	if err := measure(ctx, w, r, e, queueURL); err != nil {
+		return nil, err
+	}
+	data, err := WriteResults(*r)
+	quoted, _ := json.Marshal(e.key) // A string is always JSON encodable.
+	if bytes.Contains(data, []byte(e.key)) || bytes.Contains(data, quoted[1:len(quoted)-1]) {
+		return nil, fmt.Errorf("credential appears in results; refusing output")
+	}
+	return data, err
+}
+
+func measure(ctx context.Context, w *Workload, r *Results, e *executor, queueURL string) error {
+	p := w.Profiles[r.Run.Profile]
+	var limit time.Duration
+	for _, step := range p.Steps {
+		duration, _ := time.ParseDuration(step.Duration)
+		limit += duration + 2*time.Second
+	}
+	ctx, deadline := context.WithTimeout(ctx, limit)
+	defer deadline()
+	queueCtx, cancel := context.WithCancel(ctx)
+	start := time.Now()
+	r.Run.StartedAt = start.UTC().Format(time.RFC3339Nano)
+	samples := make(chan []QueueSample, 1)
+	go func() { samples <- collectQueue(queueCtx, e.client, queueURL, w.QueueDepth, start) }()
+	var runErr error
+	for i, step := range p.Steps {
+		result, err := runStep(ctx, step, i, e.execute)
+		if err != nil {
+			runErr = err
+			break
+		}
+		r.Steps = append(r.Steps, result)
+	}
+	cancel()
+	r.QueueDepth.Samples = <-samples
+	if runErr != nil {
+		return runErr
+	}
+	r.Run.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	r.Saturation = findSaturation(r.Steps, w.Saturation)
+	return nil
+}
 
 func prepareResults(ctx context.Context, path, profile string) (*Workload, *Results, error) {
 	w, err := LoadWorkload(path)
@@ -37,7 +98,7 @@ func prepareResults(ctx context.Context, path, profile string) (*Workload, *Resu
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := checkRunBudget(p, w.QueueDepth.IntervalMS, len(encoded)); err != nil {
+	if err := checkRunBudget(p, w.QueueDepth.IntervalMS, len(encoded)+512); err != nil {
 		return nil, nil, err
 	}
 	return w, r, nil
@@ -78,11 +139,13 @@ func findSaturation(steps []StepResult, thresholds Thresholds) SaturationResult 
 // HTTP teardown is bounded by the client's two-second timeout, even at a step boundary.
 func checkRunBudget(profile Profile, interval Milliseconds, overhead int) error {
 	bytes := float64(overhead + len(profile.Steps)*1024 + 160)
+	var total time.Duration
 	for _, step := range profile.Steps {
 		duration, err := time.ParseDuration(step.Duration)
-		if err != nil || duration <= 0 || interval <= 0 || step.Concurrency < 1 || step.Concurrency > 4096 {
+		if err != nil || duration <= 0 || interval <= 0 || int64(interval) > math.MaxInt64/int64(time.Millisecond) || step.Concurrency < 1 || step.Concurrency > 4096 || duration > time.Duration(math.MaxInt64)-total-2*time.Second {
 			return fmt.Errorf("invalid duration, interval or concurrency (maximum 4096)")
 		}
+		total += duration + 2*time.Second
 		bytes += math.Ceil((duration.Seconds()+2)*1000/float64(interval)) * 160
 	}
 	if bytes > maxContractBytes-maxRecordedConfigBytes {

@@ -2,7 +2,6 @@ package perfharness
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -37,7 +36,7 @@ func TestQueueSamples(t *testing.T) {
 					t.Error("queue received API key")
 				}
 				w.WriteHeader(tc.status)
-				fmt.Fprint(w, tc.body)
+				writeFixture(t, w, tc.body)
 			}))
 			defer server.Close()
 			q := QueueSource{Kind: tc.kind, Metric: "queue", Stream: "jobs", IntervalMS: 10}

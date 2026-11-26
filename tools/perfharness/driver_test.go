@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -15,6 +17,44 @@ import (
 	"testing"
 	"time"
 )
+
+func writeFixture(t *testing.T, w http.ResponseWriter, body string) {
+	t.Helper()
+	if _, err := io.WriteString(w, body); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestCLIValidate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "results.json")
+	data, err := WriteResults(syntheticResults(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		args    []string
+		success bool
+	}{
+		{"valid", []string{"validate", path}, true},
+		{"missing", []string{"validate", path + "missing"}, false},
+		{"arguments", []string{"run"}, false},
+		{"unknown", []string{"oops"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			args := append([]string{"run", "./cmd/perfharness"}, tc.args...)
+			output, err := exec.CommandContext(ctx, "go", args...).CombinedOutput()
+			if (err == nil) != tc.success || !tc.success && len(output) == 0 {
+				t.Fatalf("err=%v output=%s", err, output)
+			}
+		})
+	}
+}
 
 func TestRequestAdapters(t *testing.T) {
 	const key = "distinctive-key-must-never-be-recorded"
@@ -25,7 +65,7 @@ func TestRequestAdapters(t *testing.T) {
 		}
 		switch r.URL.Path {
 		case "/api/v1/status":
-			fmt.Fprint(w, `{"build":{"version":"v-test"}}`)
+			writeFixture(t, w, `{"build":{"version":"v-test"}}`)
 		case "/api/v1/jobs":
 			var body struct {
 				Prompt string `json:"prompt"`
@@ -36,12 +76,12 @@ func TestRequestAdapters(t *testing.T) {
 			if strings.Contains(body.Prompt, "{{") || !strings.HasSuffix(body.Prompt, "-1") {
 				t.Errorf("prompt %s", body.Prompt)
 			}
-			fmt.Fprint(w, `{"job_id":"job-1"}`)
+			writeFixture(t, w, `{"job_id":"job-1"}`)
 		case "/api/v1/jobs/job-1":
 			if polls.Add(1) == 1 {
-				fmt.Fprint(w, `{"state":"PENDING"}`)
+				writeFixture(t, w, `{"state":"PENDING"}`)
 			} else {
-				fmt.Fprint(w, `{"state":"APPROVAL_REQUIRED"}`)
+				writeFixture(t, w, `{"state":"APPROVAL_REQUIRED"}`)
 			}
 		case "/api/v1/approvals/job-1/approve":
 			if polls.Load() < 2 {
@@ -94,7 +134,7 @@ func TestApprovalBoundAndUnknownVersion(t *testing.T) {
 		if strings.Contains(r.URL.Path, "approve") {
 			approvals.Add(1)
 		}
-		fmt.Fprint(w, `{"state":"PENDING"}`)
+		writeFixture(t, w, `{"state":"PENDING"}`)
 	}))
 	defer server.Close()
 	w, err := loadFixture(t, workloadFixture)
@@ -129,6 +169,45 @@ func TestWeightedSequences(t *testing.T) {
 		if got := e.pick(uint64(n)).Name; got != want {
 			t.Fatalf("%d: %s != %s", n, got, want)
 		}
+	}
+}
+
+func TestRunWritesMeasuredResults(t *testing.T) {
+	const key = "sentinel-secret-never-in-results"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/status":
+			writeFixture(t, w, `{"build":{"version":"test"}}`)
+		case "/api/v1/jobs":
+			writeFixture(t, w, `{"job_id":"job-1"}`)
+		case "/api/v1/jobs/job-1":
+			writeFixture(t, w, `{"state":"APPROVAL_REQUIRED"}`)
+		case "/api/v1/approvals/job-1/approve":
+			w.WriteHeader(204)
+		default:
+			writeFixture(t, w, `{"account_details":[{"stream_detail":[{"name":"CORDUM_JOBS","state":{"messages":7}}]}]}`)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("PERF_URL", server.URL)
+	t.Setenv("PERF_QUEUE_URL", server.URL+"/jsz")
+	t.Setenv("PERF_KEY", key)
+	t.Setenv("PERF_TENANT", "tenant")
+	t.Setenv("CORDUM_TLS_CA", "")
+	path := filepath.Join(t.TempDir(), "fixture.yaml")
+	if err := os.WriteFile(path, []byte(strings.ReplaceAll(workloadFixture, "duration: 1s", "duration: 100ms")), 0600); err != nil {
+		t.Fatal(err)
+	}
+	data, err := Run(context.Background(), path, "smoke")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := ParseResults(data)
+	if err != nil || bytes.Contains(data, []byte(key)) {
+		t.Fatal("invalid or secret-bearing results")
+	}
+	if len(r.Steps) != 1 || r.Steps[0].Requests == 0 || len(r.QueueDepth.Samples) == 0 || r.QueueDepth.Samples[0].Value == nil || *r.QueueDepth.Samples[0].Value != 7 {
+		t.Fatalf("incomplete results: %+v", r)
 	}
 }
 
@@ -202,6 +281,21 @@ func TestDriverBudgetBoundary(t *testing.T) {
 	}
 	if err := checkRunBudget(p, 100, 3139745); err == nil {
 		t.Fatal("over-budget run admitted")
+	}
+}
+
+func TestDriverBudgetRejectsOverflow(t *testing.T) {
+	for _, tc := range []struct {
+		duration    string
+		interval    Milliseconds
+		concurrency Concurrency
+	}{
+		{"2562047h", 9223372036854, 1}, {"1s", 9223372036855, 1}, {"1s", 100, 4097},
+	} {
+		p := Profile{Steps: []ProfileStep{{Duration: tc.duration, Concurrency: tc.concurrency}, {Duration: tc.duration, Concurrency: tc.concurrency}}}
+		if err := checkRunBudget(p, tc.interval, 0); err == nil {
+			t.Fatalf("unsafe budget admitted: %+v", tc)
+		}
 	}
 }
 
