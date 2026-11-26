@@ -38,12 +38,7 @@ func Canonical(req *pb.JobRequest) (*pb.JobRequest, error) {
 	}
 	if clone.Labels != nil {
 		for key := range clone.Labels {
-			lower := strings.ToLower(key)
-			// policy.attachment_id is injected during policy attachment (after the
-			// submit-time hash is pinned), so it must be stripped here or the
-			// reconcile-time RequestHash drifts from the pinned JobHash and a
-			// still-pending approval is wrongly invalidated as stale_request.
-			if strings.HasPrefix(lower, "approval_") || key == bus.LabelBusMsgID || key == policylabels.PolicyAttachmentID {
+			if mutableLabel(key) {
 				delete(clone.Labels, key)
 			}
 		}
@@ -66,6 +61,33 @@ func Canonical(req *pb.JobRequest) (*pb.JobRequest, error) {
 		return nil, fmt.Errorf("canonical job request unmarshal: %w", err)
 	}
 	return out, nil
+}
+
+// mutableLabel reports whether Cordum writes the label after the submit-time
+// hash is pinned: the approval_* labels the approve flow adds, the bus dedupe
+// override, and policy.attachment_id (injected during policy attachment; left
+// in, the reconcile-time RequestHash drifts from the pinned JobHash and a
+// still-pending approval is wrongly invalidated as stale_request).
+func mutableLabel(key string) bool {
+	return strings.HasPrefix(strings.ToLower(key), "approval_") ||
+		key == bus.LabelBusMsgID || key == policylabels.PolicyAttachmentID
+}
+
+// ServerOwnedLabel reports whether only Cordum services may set a job label:
+// every label Canonical leaves out of the hash, gate_type (the workflow
+// approval-gate marker the approve handler trusts) and the workflow context
+// (policylabels.WorkflowContextLabel). The scheduler, approval code and Safety
+// Kernel act on these, so entry points that accept labels from clients or
+// workflow authors drop them.
+func ServerOwnedLabel(key string) bool {
+	return mutableLabel(key) || key == "gate_type" || policylabels.WorkflowContextLabel(key)
+}
+
+// ReservedLabel reports whether a label is reserved for Cordum services: the
+// "_"-prefixed system labels (_source, _content.*, ...) and every
+// ServerOwnedLabel. Neither client input nor workflow route labels set them.
+func ReservedLabel(key string) bool {
+	return strings.HasPrefix(key, "_") || ServerOwnedLabel(key)
 }
 
 // Hash computes the deterministic canonical hash of a JobRequest as a
