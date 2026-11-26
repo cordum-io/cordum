@@ -299,6 +299,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Retry-layer contract: `docs/contract/retry-layers.md` lists each retry layer on the job and
+  workflow-step paths (client, bus, scheduler, worker handler, workflow step, manual DLQ retry)
+  with its trigger, whether it runs the job handler again, its limit and default, the setting
+  that changes it and code references, and states each path's cap on handler runs per original
+  request as a product of the layer limits. `TestRetryLayersContract` in `tests/contract` checks
+  that the references resolve, the quoted defaults match the code and each cap equals its
+  product (task-f55862da).
 - `tools/perfharness/cmd/perfworker`: a perf-harness worker in pool `perf`. `job.perf`
   succeeds after `--service-time`, `job.perf.fail` fails every handler attempt, and
   `--handler-retries` sets the CAP runtime handler retries. It counts every handler run
