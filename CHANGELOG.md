@@ -53,6 +53,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   only to callers whose access spans all tenants (`allow_cross_tenant`)
   (task-6eda46e2).
 
+- `DELETE /api/v1/topics/{name}` removes the caller's registration. The topic's
+  pool mapping is removed only by a caller with platform authority (no auth
+  provider, an auth context that spans all tenants, or the gateway's own
+  tenant, `TENANT_ID` or `default` when unset) once no tenant registers the
+  topic; otherwise the mapping stays for the pool routes to manage
+  (task-e2277e8a).
+
 - Scheduler: in compat mode, a session-authenticated sender's `JobCancel`
   or `JobResult` applies only to jobs in its own tenant, as in production.
   Service identities and unauthenticated compat traffic are unchanged
