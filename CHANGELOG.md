@@ -103,6 +103,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Login: failed-login counters are kept per tenant. The per-IP and per-username counters key on the login's tenant (base64url-encoded), so failures recorded for a username count only toward that username's limits in that tenant. Counters recorded before this release are not read and expire within the lockout period.
+
 - Velocity rule stats: for callers without cross-tenant access, `GET /api/v1/policy/velocity-rules/stats` counts only buckets recorded under the caller's own tenant. Buckets without a tenant segment count only for callers with cross-tenant access.
 - Safety kernel: velocity rules count each tenant's requests in that tenant's own bucket, `cordum:velocity:{rule}:{tenant}:{key}` with the tenant base64url-encoded. A request without a tenant counts in the default tenant's bucket. Counts held under `cordum:velocity:{rule}:{key}` age out with their window.
 
