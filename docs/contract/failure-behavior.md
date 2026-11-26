@@ -113,10 +113,24 @@ status code alone does not prove that a downstream action did not run.
 The gateway-from-edge/approval [a] statement and its two tests describe the inline approval wait
 as changed by #492 row F-24b.
 
-Edge observe is the default for both the hook and newly created sessions. It is an evidence-recording,
-non-enforcing mode during outages and otherwise, not a guarantee that evidence survives an outage.
-The Edge enforcement statements above describe enforce or enterprise-strict; observe probes are
-explicitly labeled. Actual agent-runtime compliance with a hook decision is not measured here.
+Edge observe is the default for both the hook and newly created sessions. While the Gateway and
+kernel are reachable, observe applies the kernel's deny, require_approval and throttle decisions
+as enforce does: agentd maps them with no policy-mode branch
+(`core/edge/agentd/approval_waiter.go:85-98` at fix base `8080647f`). The mapper tests
+`TestAgentdDecisionFromEvaluateMapsAllowQuietlyAndRiskyDenyWithConciseCopy`,
+`TestAgentdDecisionFromEvaluateRequiresApprovalDefaultsToImmediateRetryDeny` and
+`TestAgentdDecisionFromEvaluateMapsThrottleToDeny` cover those decisions;
+`TestGatewayEdgeEvaluateObserveModeAppliesKernelDenyAndDegradesOnOutage/reachable_deny`
+covers an observe session's hook-facing deny and persisted DENY event, with no ALLOW recorded.
+When the Gateway or kernel is unavailable, observe allows with degraded evidence
+(`core/edge/agentd/fail_modes.go:152-162` and
+`core/controlplane/gateway/handlers_edge_evaluate.go:671-676` at that fix base), as covered by
+`TestApplyFailModeMatrixCoversObserveEnforceEnterpriseStrict`,
+`TestGatewayEdgeEvaluateSafetyUnavailableByPolicyMode` and
+`TestGatewayEdgeEvaluateObserveModeAppliesKernelDenyAndDegradesOnOutage/kernel_unavailable`.
+This is not a guarantee that evidence survives an outage. The Edge enforcement statements above
+describe enforce or enterprise-strict; observe probes are explicitly labeled.
+Actual agent-runtime compliance with a hook decision is not measured here.
 
 The [MCP server guide](../mcp-server.md#policy-gate--approval-hold-edge-102--edge-103)
 documents the optional action-gate pipeline. It does not establish kernel-outage behavior;

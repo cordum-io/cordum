@@ -300,7 +300,7 @@ func classifyHookEvent(event AgentActionEvent, out *ActionClassification) {
 }
 
 // classifyBashCommand classifies a shell command by shape (destructive /
-// network / install / safe allowlist / unknown) and THEN overlays secret-path
+// network / install / allowlist / unknown) and THEN overlays secret-path
 // access detection on top.
 //
 // EDGE-073 — cross-tool secret-read closure. classifyBashCommandShape buckets a
@@ -363,13 +363,19 @@ func classifyBashCommandShape(command string, out *ActionClassification) {
 		return
 	}
 	// EDGE-008.6: explicit allowlist replaces the previous HasPrefix/Contains
-	// safe-detection. safeShellShape rejects any shell metacharacter (composition,
-	// substitution, redirection, fork-bomb syntax) before checking argv0+args
-	// against the narrow set from PRD §7.14 + §11.3. This is the only path that
-	// produces command.class=safe.
-	if family, ok := safeShellShape(folded); ok {
+	// detection. allowlistedShellShape rejects any shell metacharacter
+	// (composition, substitution, redirection, fork-bomb syntax) before checking
+	// argv0+args against the narrow set from PRD §7.14 + §11.3. Only the
+	// read-only git family is command.class=safe. Build and test commands run
+	// repository-controlled code (Makefiles, package scripts, test files), so
+	// they are command.class=arbitrary_code: allowing one does not confine what
+	// it runs.
+	if family, ok := allowlistedShellShape(folded); ok {
 		out.RiskTags = append(out.RiskTags, family)
-		out.Labels["command.class"] = "safe"
+		out.Labels["command.class"] = "arbitrary_code"
+		if family == "git_readonly" {
+			out.Labels["command.class"] = "safe"
+		}
 		out.Labels["command.family"] = family
 		return
 	}
@@ -1065,14 +1071,13 @@ func isInstallCommand(command string) bool {
 
 // shellMetaCharacters is the set of characters that compose, substitute, or
 // redirect a shell command. Their presence in a command disqualifies it from
-// the safe allowlist regardless of how the command begins. This is what makes
+// the shell allowlist regardless of how the command begins. This is what makes
 // `npm test && rm -rf /`, `npm test | mkfs.ext4 /dev/sda`, `git status \`rm -rf\“,
-// and similar bypass cases impossible to silently allow as safe.
+// and similar composed commands fall to command.class=unknown.
 const shellMetaCharacters = ";&|<>`$(){}\n\r"
 
-// safeShellShape implements the EDGE-008.6 explicit allowlist for benign shell
-// commands. It returns the command family ("test", "build", "git_readonly")
-// only when:
+// allowlistedShellShape implements the EDGE-008.6 explicit shell allowlist. It
+// returns the command family ("test", "build", "git_readonly") only when:
 //
 //  1. The command contains no shell metacharacters (no composition,
 //     substitution, redirection, fork-bomb syntax), and
@@ -1081,12 +1086,15 @@ const shellMetaCharacters = ";&|<>`$(){}\n\r"
 //
 // Anything else returns ("", false) and the caller must classify the command
 // as `command.class=unknown` + `review_required` so policy can fail closed.
+// A family is not a safety verdict: the caller labels only git_readonly as
+// command.class=safe, and the test and build families as arbitrary_code,
+// because they run whatever the repository's scripts, Makefiles and tests say.
 //
 // The allowlist is intentionally narrow:
 //   - npm/pnpm/yarn: only `<cmd> test [...args]`, `<cmd> run test [...args]`,
-//     `<cmd> run build [...args]`. Install/audit/publish are NOT safe.
-//   - go: only `go test [...]`, `go build [...]`. `go install`/`go get` are NOT safe.
-//   - cargo: only `cargo test [...]`, `cargo build [...]`. `cargo publish` NOT safe.
+//     `<cmd> run build [...args]`. Install/audit/publish are not listed.
+//   - go: only `go test [...]`, `go build [...]`. `go install`/`go get` are not listed.
+//   - cargo: only `cargo test [...]`, `cargo build [...]`. `cargo publish` is not listed.
 //   - make: only `make build [...]` or `make test [...]` with optional `KEY=VAL`
 //     variable assignments. Additional positional targets (e.g. `make build clean`)
 //     and flags (`-f`, `-C`, etc.) disqualify the shape because Make targets are
@@ -1100,7 +1108,7 @@ const shellMetaCharacters = ";&|<>`$(){}\n\r"
 //     Per-subcommand args are constrained to an explicit read-only flag allowlist;
 //     unknown flags or write-capable flags (`--output`, `-o`, `--ext-diff`,
 //     `--exec`, `-c`) are rejected to keep the allowlist strictly read-only.
-func safeShellShape(command string) (string, bool) {
+func allowlistedShellShape(command string) (string, bool) {
 	folded := strings.TrimSpace(command)
 	if folded == "" {
 		return "", false
@@ -1215,7 +1223,7 @@ func safeGitReadonlyArgs(subcommand string, args []string) bool {
 		}
 		if !strings.HasPrefix(arg, "-") {
 			// Positional pathspecs and revision refs are accepted; any shell
-			// metacharacter is already blocked at the top of safeShellShape.
+			// metacharacter is already blocked at the top of allowlistedShellShape.
 			continue
 		}
 		// Short numeric context like -U5 or -C50 (rename detection threshold)
