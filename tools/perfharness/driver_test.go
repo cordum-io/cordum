@@ -412,6 +412,8 @@ func TestStepBoundaryDropsCutOffRequests(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
 				case tc.state == "":
+					// The server notices the client's cancel only after the body reaches EOF.
+					_, _ = io.Copy(io.Discard, r.Body)
 					<-r.Context().Done()
 				case r.URL.Path == "/api/v1/jobs":
 					writeFixture(t, w, `{"job_id":"job-1"}`)
