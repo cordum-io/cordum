@@ -25,7 +25,10 @@ const (
 // retryQuotedDefault matches a Go default quoted in a Limit cell: `name = value`.
 var retryQuotedDefault = regexp.MustCompile("`([A-Za-z_][A-Za-z0-9_]*) = ([^`]+)`")
 
-func TestRetryLayersContract(t *testing.T) {
+// loadRetryLayers returns the repo root, the pinned CAP module's directory
+// and the contract document.
+func loadRetryLayers(t *testing.T) (root, capRoot, doc string) {
+	t.Helper()
 	root, err := repoRoot(".")
 	if err != nil {
 		t.Fatal(err)
@@ -36,12 +39,19 @@ func TestRetryLayersContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("locate the pinned CAP module: %v", err)
 	}
-	capRoot := strings.TrimSpace(string(out))
+	capRoot = strings.TrimSpace(string(out))
+	if capRoot == "" {
+		t.Fatal("the pinned CAP module is not in the module cache; run go mod download")
+	}
 	raw, err := os.ReadFile(filepath.Join(root, "docs", "contract", "retry-layers.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc := string(raw)
+	return root, capRoot, string(raw)
+}
+
+func TestRetryLayersContract(t *testing.T) {
+	root, capRoot, doc := loadRetryLayers(t)
 	if problems := checkRetryLayers(root, capRoot, doc); len(problems) > 0 {
 		t.Fatalf("retry-layers.md disagrees with the code:\n%s", strings.Join(problems, "\n"))
 	}
@@ -68,11 +78,16 @@ func TestRetryLayersContract(t *testing.T) {
 			[]string{"scheduler: Code cites maxSchedulingRetries, but Limit does not quote it"}},
 		{"wrong product", strings.Replace(doc, jobCap, strings.TrimSuffix(jobCap, " 50 |")+" 51 |", 1),
 			[]string{"cap job: 51, product 50"}},
+		{"cap misses a layer", strings.Replace(doc, jobCap, strings.Replace(jobCap, " × bus 1", "", 1), 1),
+			[]string{`cap job: factors name ["client" "scheduler" "worker handler" "manual DLQ retry"], ` +
+				`layers on the path are ["client" "bus" "scheduler" "worker handler" "manual DLQ retry"]`}},
 		{"empty tables", layersHead + "\n" + capsHead,
 			[]string{"no rows under " + retryLayersHeader, "no rows under " + retryCapHeader,
 				"no cap row for job", "no cap row for workflow step"}},
 		{"no code ref", layersHead + noCodeRow + "\n\n" + capsHead + "| job | client 1 | 1 |\n| workflow step | client 1 | 1 |\n",
-			[]string{"malformed row: " + noCodeRow, "no rows under " + retryLayersHeader}},
+			[]string{"malformed row: " + noCodeRow, "no rows under " + retryLayersHeader,
+				`cap job: factors name ["client"], layers on the path are []`,
+				`cap workflow step: factors name ["client"], layers on the path are []`}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -89,13 +104,17 @@ func checkRetryLayers(root, capRoot, doc string) []string {
 	layers, problems := retryTableRows(doc, retryLayersHeader)
 	caps, capProblems := retryTableRows(doc, retryCapHeader)
 	problems = append(problems, capProblems...)
+	onPath := map[string][]string{}
 	for _, row := range layers {
+		for _, path := range strings.Split(row[1], ", ") {
+			onPath[path] = append(onPath[path], row[0])
+		}
 		problems = append(problems, checkRetryLayer(root, capRoot, row)...)
 	}
 	seen := map[string]bool{}
 	for _, row := range caps {
 		seen[row[0]] = true
-		problems = append(problems, checkRetryCap(row)...)
+		problems = append(problems, checkRetryCap(row, onPath[row[0]])...)
 	}
 	for _, path := range []string{"job", "workflow step"} {
 		if !seen[path] {
@@ -208,10 +227,11 @@ func goDeclValue(files []string, name string) (string, bool) {
 	return "", false
 }
 
-// checkRetryCap requires a cap row's Cap to equal the product of its factors,
-// each written `<layer> <n>` and joined by " × ".
-func checkRetryCap(row []string) []string {
-	product := 1
+// checkRetryCap requires a cap row's factors, each written `<layer> <n>` and
+// joined by " × ", to name exactly the layers on its path, and its Cap to
+// equal their product.
+func checkRetryCap(row, layers []string) []string {
+	product, names := 1, []string{}
 	for _, factor := range strings.Split(row[1], " × ") {
 		i := strings.LastIndex(factor, " ")
 		n, err := strconv.Atoi(factor[i+1:])
@@ -219,9 +239,14 @@ func checkRetryCap(row []string) []string {
 			return []string{fmt.Sprintf("cap %s: bad factor %q", row[0], factor)}
 		}
 		product *= n
+		names = append(names, factor[:i])
+	}
+	var problems []string
+	if !slices.Equal(slices.Sorted(slices.Values(names)), slices.Sorted(slices.Values(layers))) {
+		problems = append(problems, fmt.Sprintf("cap %s: factors name %q, layers on the path are %q", row[0], names, layers))
 	}
 	if row[2] != strconv.Itoa(product) {
-		return []string{fmt.Sprintf("cap %s: %s, product %d", row[0], row[2], product)}
+		problems = append(problems, fmt.Sprintf("cap %s: %s, product %d", row[0], row[2], product))
 	}
-	return nil
+	return problems
 }
