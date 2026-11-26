@@ -30,6 +30,7 @@ import {
   useEdgeSessionEvents,
   useEdgeExecutions,
 } from "@/hooks/useEdgeSessions";
+import { AssuranceStateBadge } from "@/components/edge/AssuranceStateBadge";
 import { EdgeArtifactsPanel } from "@/components/edge/EdgeArtifactsPanel";
 import { EdgeEventInspector } from "@/components/edge/EdgeEventInspector";
 import { MCPLane } from "@/components/timeline/lanes/MCPLane";
@@ -164,7 +165,8 @@ export default function EdgeSessionDetailPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <StatusBadge variant={statusVariant(session.status)}>{session.status}</StatusBadge>
-          <StatusBadge variant="info">{session.policyMode}</StatusBadge>
+          <AssuranceStateBadge state={session.assuranceState} />
+          <StatusBadge variant="info">policy {session.policyMode}</StatusBadge>
           <Link
             to="/approvals?lane=edge"
             className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-1 px-3 py-1.5 text-sm font-medium text-foreground hover:bg-surface-2 transition-colors"

@@ -4,8 +4,8 @@
 #   - A v* tag push publishes the release: git tag v0.9.3 && git push --tags
 #   - A push to a release-dry-run/** branch runs the same image and record
 #     jobs against a registry local to each job (localhost:5000). It skips the
-#     registry logins, Docker Hub, cosign, the SARIF upload, issue creation,
-#     the published-image smoke and the Helm chart push.
+#     registry logins, Docker Hub, image signing, the SARIF upload, issue
+#     creation, the published-image smoke and the Helm chart push.
 #
 # Each image job builds its multi-arch image once and pushes it by digest,
 # without tags. The smoke check and the Trivy OS scan run against that pushed
@@ -469,10 +469,13 @@ jobs:
       - *publish-tags
       - *verify-tags
 
+  # release.yml signs SHA256SUMS keylessly, and a called workflow cannot raise
+  # its caller's grant, so both callers grant id-token: write.
   binaries:
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: read
+      id-token: write
     uses: ./.github/workflows/release.yml
     secrets: inherit
 
@@ -480,6 +483,7 @@ jobs:
     if: startsWith(github.ref, 'refs/heads/release-dry-run/')
     permissions:
       contents: read
+      id-token: write
     uses: ./.github/workflows/release.yml
 
   # One record for the run: image and binary entries, assembled and validated.
@@ -584,8 +588,8 @@ jobs:
         if: github.repository == 'cordum-io/cordum'
         run: |
           set -euo pipefail
-          if [ ! -f release/SHA256SUMS.asc ]; then
-            echo "::error::canonical release tag ${GITHUB_REF#refs/tags/} requires a signed SHA256SUMS.asc; sign-manifest job did not produce one (GPG_RELEASE_KEY_PRIVATE missing or signing failed). Refusing to publish an unsigned release."
+          if [ ! -f release/SHA256SUMS.sigstore.json ]; then
+            echo "::error::canonical release tag ${GITHUB_REF#refs/tags/} requires the keyless SHA256SUMS.sigstore.json bundle; the sign-manifest job did not produce one. Refusing to publish an unsigned release."
             exit 1
           fi
           if [ ! -f release/SHA256SUMS ]; then
@@ -608,12 +612,12 @@ jobs:
             assets+=("$f")
           done
           (( ${#files[@]} > 0 )) || { echo "::error::no binaries staged"; exit 1; }
-          for f in release/SHA256SUMS release/SHA256SUMS.asc; do
+          for f in release/SHA256SUMS release/SHA256SUMS.sigstore.json release/SHA256SUMS.asc; do
             [ ! -f "$f" ] || assets+=("$f")
           done
           "$RELEASE_QUAL" publish --record "$RUNNER_TEMP/qualification-record.json" "${files[@]}" -- gh release create "$tag" \
             --title "$tag" \
-            --notes "Cordum desktop binaries for $tag. Verify via SHA256SUMS + SHA256SUMS.asc — see docs/security/binary-signing.md." \
+            --notes "Cordum desktop binaries for $tag. Verify via SHA256SUMS + SHA256SUMS.sigstore.json (keyless Sigstore bundle) — see docs/security/binary-signing.md." \
             "${assets[@]}"
 
   smoke-published-images:
