@@ -51,6 +51,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   own tenant (`TENANT_ID`, or `default` when unset); other tenants must re-create
   their roles with distinct names (task-767c5395).
 
+- `GET /api/v1/status` counts the caller's own tenant's jobs and workers.
+  Deployment-wide figures and infrastructure details go to callers with platform
+  authority: no auth provider, an auth context that spans all tenants, or the
+  gateway's own tenant (task-51149f99).
+
+- Deployment settings: OIDC group-role mapping, admin lock inspection, license
+  reload and telemetry routes require platform authority: no auth provider, an
+  auth context spanning all tenants, or the gateway's own tenant (`TENANT_ID`,
+  `default` when unset). SCIM settings and token rotation require an admin of
+  the SCIM provisioning tenant or an admin context spanning all tenants.
+  Single-tenant dashboard and API administration remain available to that
+  tenant's admins (task-b6a0f9ac).
+
 - Gateway: `POST /api/v1/users` creates the user in the caller's own tenant;
   naming another tenant requires platform authority (no auth provider, an
   auth context that spans all tenants, or membership of the gateway's own
