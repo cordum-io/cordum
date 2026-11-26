@@ -126,29 +126,46 @@ func TestDelegationAudienceOverrideHTTPManaged(t *testing.T) {
 }
 
 func TestDelegationAudienceOverrideHTTPStaticOperator(t *testing.T) {
-	f, _, _ := newDelegationAudienceScopeFixture(t, "jobs:write")
-	provider := newBasicAuthForTest(t, map[string]string{
-		"CORDUM_ENV":      "production",
-		"CORDUM_API_KEYS": `[{"key":"` + edgeScopeStaticKey + `","tenant":"default","role":"operator","principal_id":"static-operator"}]`,
-	})
-	f.s.auth = provider
-	handler, err := newHTTPHandler(f.s)
-	if err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct {
+		name, role, audience string
+		allowed              bool
+	}{
+		{"operator_other_agent", "operator", "agent-c", false},
+		{"operator_own_agent", "operator", "agent-b", true},
+		{"admin_other_agent", "admin", "agent-c", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, _, _ := newDelegationAudienceScopeFixture(t, "jobs:write")
+			provider := newBasicAuthForTest(t, map[string]string{
+				"CORDUM_ENV":      "production",
+				"CORDUM_API_KEYS": `[{"key":"` + edgeScopeStaticKey + `","tenant":"default","role":"` + tc.role + `","principal_id":"static-caller"}]`,
+			})
+			f.s.auth = provider
+			handler, err := newHTTPHandler(f.s)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := f.s.agentIdentityStore.LinkWorker(context.Background(), "agent-b", "static-caller"); err != nil {
+				t.Fatal(err)
+			}
+			req, token := delegationAudienceScopeRequest(t, f.s, tc.audience)
+			req.Header.Set("X-API-Key", edgeScopeStaticKey)
+			caller, err := provider.AuthenticateHTTP(req)
+			if err != nil || caller == nil || caller.AuthSource != auth.AuthSourceAPIKey || caller.Role != tc.role {
+				t.Fatalf("static key must authenticate as %s: %v", tc.role, err)
+			}
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			assertDelegationAudienceResult(t, f, rec, token, tc.audience, tc.allowed)
+			if !tc.allowed {
+				for _, pattern := range []string{"job:state:*", "job:meta:*", "delegation:*"} {
+					if count := f.records(t, pattern); count != 0 {
+						t.Errorf("stored %s records=%d, want 0", pattern, count)
+					}
+				}
+			}
+		})
 	}
-	f.handler = handler
-	if err := f.s.agentIdentityStore.LinkWorker(context.Background(), "agent-b", "static-operator"); err != nil {
-		t.Fatal(err)
-	}
-	req, token := delegationAudienceScopeRequest(t, f.s, "agent-c")
-	req.Header.Set("X-API-Key", edgeScopeStaticKey)
-	caller, err := provider.AuthenticateHTTP(req)
-	if err != nil || caller == nil || caller.AuthSource != auth.AuthSourceAPIKey || caller.Role != "admin" {
-		t.Fatalf("static operator must authenticate as admin: %v", err)
-	}
-	rec := httptest.NewRecorder()
-	f.handler.ServeHTTP(rec, req)
-	assertDelegationAudienceResult(t, f, rec, token, "agent-c", true)
 }
 
 func TestDelegationAudienceOverrideHTTPSessionOperator(t *testing.T) {
