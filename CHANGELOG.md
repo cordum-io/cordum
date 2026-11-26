@@ -15,6 +15,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   once refused, which had kept workflow steps and DLQ retries from starting at
   a cap of 1 (task-8bab7c41).
 
+- Gateway: a job submit, over HTTP or gRPC, now stores its policy audit entry
+  before the job is dispatched. While that entry cannot be stored, the submit
+  fails with 503 (gRPC `Unavailable`), the job is set FAILED, and it is not
+  dispatched (task-371805f0).
+
+- Approvals: store the audit entry before applying an approval; if it cannot be
+  stored, return 500 without applying the approval. An approval repair whose audit
+  entry cannot be stored returns 500 and states that the repair was applied.
+
 - Policy: policy bundle, output-rule, velocity-rule, publish, rollback and global
   policy writes now store the change and its policy audit entry together. A request
   whose audit entry cannot be stored fails and changes nothing, a write that races

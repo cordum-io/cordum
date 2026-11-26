@@ -61,6 +61,11 @@ redis-cli() {
   for arg in "$@"; do
     [ "$previous" != -h ] || host=$arg
     if [ "$previous" = --rdb ]; then
+      rdb_node=${host#cordum-redis-}; rdb_node=${rdb_node%%.*}
+      if [ "${FAIL_RDB_NODE:-}" = "$rdb_node" ]; then
+        printf 'partial\n' > "$arg"
+        return 1
+      fi
       printf 'snapshot\n' > "$arg"
       [ "${FAILOVER_ON_BACKUP:-}" != 1 ] || sed -i 's/ 1 connected/ 2 connected/' "$MOCK_ROOT/node0"
       return 0
@@ -69,7 +74,9 @@ redis-cli() {
   done
   node=${host#cordum-redis-}; node=${node%%.*}
   case "$*" in
-    *"CLUSTER NODES"*) cat "$MOCK_ROOT/node$node" ;;
+    *"CLUSTER NODES"*)
+      [ "${DOWN_NODE:-}" != "$node" ] || return 1
+      cat "$MOCK_ROOT/node$node" ;;
     *"INFO replication"*) if [ "$node" -lt 3 ]; then echo role:master; else echo role:slave; fi ;;
     *FLUSHALL*) touch "$MOCK_ROOT/flushed" ;;
     *PING*) echo PONG ;;
@@ -108,6 +115,17 @@ date() { echo 20261116T120000Z; }
         result = self.run_shell(self.backup_script(), FAILOVER_ON_BACKUP="1")
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertFalse(list(self.backup.glob("*.sha256")))
+
+    def test_failed_primary_snapshot_cannot_complete_backup(self):
+        result = self.run_shell(self.backup_script(), FAIL_RDB_NODE="1")
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(list(self.backup.glob("*.sha256")))
+
+    def test_undiscoverable_node_cannot_start_backup(self):
+        result = self.run_shell(self.backup_script(), DOWN_NODE="4")
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(list(self.backup.glob("*.sha256")))
+        self.assertFalse(list(self.backup.glob("*.rdb")))
 
     def create_backup(self):
         result = self.run_shell(self.backup_script())
