@@ -26,13 +26,14 @@ func enableLLMIngest(t *testing.T) {
 	t.Setenv(envLLMIngestEnabled, "true")
 }
 
-func setupLLMIngestRBAC(t *testing.T, s *server) {
+func setupLLMIngestRBAC(t *testing.T, s *server, tenant string) {
 	t.Helper()
 	setTestEntitlements(t, s, licensing.PlanEnterprise, func(entitlements *licensing.Entitlements) {
 		entitlements.RBAC = true
 	})
 	if err := s.rbacStore.PutRole(context.Background(), &auth.RoleDefinition{
 		Name:        "user",
+		Tenant:      tenant,
 		Description: "test same-tenant job writer without llm ingest permission",
 		Permissions: []string{auth.PermJobsWrite},
 	}); err != nil {
@@ -40,6 +41,7 @@ func setupLLMIngestRBAC(t *testing.T, s *server) {
 	}
 	if err := s.rbacStore.PutRole(context.Background(), &auth.RoleDefinition{
 		Name:        testLLMProxyRole,
+		Tenant:      tenant,
 		Description: "test trusted llm proxy",
 		Permissions: []string{auth.PermJobsWrite, auth.PermLLMIngest},
 	}); err != nil {
@@ -163,7 +165,7 @@ func decodeLLMIngestResponse(t *testing.T, rr *httptest.ResponseRecorder) llmIng
 func TestLLMIngestDisabledReturns503(t *testing.T) {
 	// Feature flag unset (default).
 	s, _ := newEdgeRouteTestServer(t)
-	setupLLMIngestRBAC(t, s)
+	setupLLMIngestRBAC(t, s, edgeRouteTenant)
 	rr := postLLMIngestWithAuth(t, s, llmIngestAuthContext(testLLMProxyRole, "llm-proxy-1"),
 		llmIngestBody("llm-proxy-1", "sess-x", "exec-x", "evt-x", "hello"))
 	assertEdgeErrorShape(t, rr, http.StatusServiceUnavailable, edgeErrCodeServiceUnavailable)
@@ -172,7 +174,7 @@ func TestLLMIngestDisabledReturns503(t *testing.T) {
 func TestLLMIngest_RejectsRegularUser(t *testing.T) {
 	enableLLMIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupLLMIngestRBAC(t, s)
+	setupLLMIngestRBAC(t, s, edgeRouteTenant)
 	_, execution := createLLMIngestParents(t, s, "regular", edgecore.AdapterLLMProxy)
 	rr := postLLMIngestWithAuth(t, s, llmIngestAuthContext("user", "principal-user"),
 		llmIngestBody("principal-user", "sess-llm-regular", execution.ExecutionID, "evt-1", "hello"))
@@ -182,7 +184,7 @@ func TestLLMIngest_RejectsRegularUser(t *testing.T) {
 func TestLLMIngest_AcceptsCleanPrompt(t *testing.T) {
 	enableLLMIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupLLMIngestRBAC(t, s)
+	setupLLMIngestRBAC(t, s, edgeRouteTenant)
 	session, execution := createLLMIngestParents(t, s, "clean", edgecore.AdapterLLMProxy)
 	rr := postLLMIngestWithAuth(t, s, llmIngestAuthContext(testLLMProxyRole, "llm-proxy-1"),
 		llmIngestBody("llm-proxy-1", session.SessionID, execution.ExecutionID, "evt-clean", "summarize the repo"))
@@ -201,7 +203,7 @@ func TestLLMIngest_AcceptsCleanPrompt(t *testing.T) {
 func TestLLMIngest_RedactsSecretInPrompt(t *testing.T) {
 	enableLLMIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupLLMIngestRBAC(t, s)
+	setupLLMIngestRBAC(t, s, edgeRouteTenant)
 	session, execution := createLLMIngestParents(t, s, "secret", edgecore.AdapterLLMProxy)
 	rr := postLLMIngestWithAuth(t, s, llmIngestAuthContext(testLLMProxyRole, "llm-proxy-1"),
 		llmIngestBody("llm-proxy-1", session.SessionID, execution.ExecutionID, "evt-secret",
@@ -240,7 +242,7 @@ func TestLLMIngest_RedactsSecretInPrompt(t *testing.T) {
 func TestLLMIngest_RedactsPIIViaKernelScanners(t *testing.T) {
 	enableLLMIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupLLMIngestRBAC(t, s)
+	setupLLMIngestRBAC(t, s, edgeRouteTenant)
 	session, execution := createLLMIngestParents(t, s, "pii", edgecore.AdapterLLMProxy)
 	rr := postLLMIngestWithAuth(t, s, llmIngestAuthContext(testLLMProxyRole, "llm-proxy-1"),
 		llmIngestBody("llm-proxy-1", session.SessionID, execution.ExecutionID, "evt-pii",
@@ -273,7 +275,7 @@ func TestLLMIngest_RedactsPIIViaKernelScanners(t *testing.T) {
 func TestLLMIngest_RejectsTenantMismatch(t *testing.T) {
 	enableLLMIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupLLMIngestRBAC(t, s)
+	setupLLMIngestRBAC(t, s, edgeRouteTenant)
 	session, execution := createLLMIngestParents(t, s, "tmismatch", edgecore.AdapterLLMProxy)
 	// Body event claims a different tenant than the X-Tenant-ID header.
 	body := strings.Replace(
@@ -286,7 +288,7 @@ func TestLLMIngest_RejectsTenantMismatch(t *testing.T) {
 func TestLLMIngest_RejectsMismatchedSourceID(t *testing.T) {
 	enableLLMIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupLLMIngestRBAC(t, s)
+	setupLLMIngestRBAC(t, s, edgeRouteTenant)
 	session, execution := createLLMIngestParents(t, s, "srcmismatch", edgecore.AdapterLLMProxy)
 	rr := postLLMIngestWithAuth(t, s, llmIngestAuthContext(testLLMProxyRole, "llm-proxy-1"),
 		llmIngestBody("llm-proxy-2", session.SessionID, execution.ExecutionID, "evt-sm", "hi"))
@@ -298,7 +300,7 @@ func TestLLMIngest_RejectsMismatchedSourceID(t *testing.T) {
 func TestLLMIngest_RejectsNonLLMProxyExecution(t *testing.T) {
 	enableLLMIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupLLMIngestRBAC(t, s)
+	setupLLMIngestRBAC(t, s, edgeRouteTenant)
 	// Execution created under the hook adapter — the proxy must not be able to
 	// annotate it with LLM events.
 	session, execution := createLLMIngestParents(t, s, "hookexec", edgecore.AdapterClaudeCodeHook)
@@ -316,7 +318,7 @@ func TestLLMIngest_RejectsNonLLMProxyExecution(t *testing.T) {
 func TestLLMIngest_RejectsCrossProxyExecution(t *testing.T) {
 	enableLLMIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupLLMIngestRBAC(t, s)
+	setupLLMIngestRBAC(t, s, edgeRouteTenant)
 	// Execution owned by "llm-proxy-1".
 	session, execution := createLLMIngestParentsForProxy(t, s, "ownerA", edgecore.AdapterLLMProxy, "llm-proxy-1")
 	// A DIFFERENT authenticated proxy ("llm-proxy-2") tries to append to it.
@@ -334,7 +336,7 @@ func TestLLMIngest_RejectsCrossProxyExecution(t *testing.T) {
 func TestLLMIngest_RejectsExecutionWithNoOwner(t *testing.T) {
 	enableLLMIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupLLMIngestRBAC(t, s)
+	setupLLMIngestRBAC(t, s, edgeRouteTenant)
 	session, execution := createLLMIngestParentsForProxy(t, s, "noowner", edgecore.AdapterLLMProxy, "")
 	rr := postLLMIngestWithAuth(t, s, llmIngestAuthContext(testLLMProxyRole, "llm-proxy-1"),
 		llmIngestBody("llm-proxy-1", session.SessionID, execution.ExecutionID, "evt-noowner", "hi"))
@@ -344,7 +346,7 @@ func TestLLMIngest_RejectsExecutionWithNoOwner(t *testing.T) {
 func TestLLMIngest_RejectsMissingParents(t *testing.T) {
 	enableLLMIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupLLMIngestRBAC(t, s)
+	setupLLMIngestRBAC(t, s, edgeRouteTenant)
 	rr := postLLMIngestWithAuth(t, s, llmIngestAuthContext(testLLMProxyRole, "llm-proxy-1"),
 		llmIngestBody("llm-proxy-1", "sess-missing", "exec-missing", "evt-missing", "hi"))
 	if rr.Code == http.StatusCreated {
@@ -358,7 +360,7 @@ func TestLLMIngest_RejectsMissingParents(t *testing.T) {
 func TestLLMIngest_ReplayDedup(t *testing.T) {
 	enableLLMIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupLLMIngestRBAC(t, s)
+	setupLLMIngestRBAC(t, s, edgeRouteTenant)
 	session, execution := createLLMIngestParents(t, s, "replay", edgecore.AdapterLLMProxy)
 	nonce := "nonce-llm-replay-0001"
 	body := llmIngestBodyWithNonce("llm-proxy-1", session.SessionID, execution.ExecutionID, "evt-replay", "hi", nonce)
@@ -389,7 +391,7 @@ func TestLLMIngest_ReplayDedup(t *testing.T) {
 func TestLLMIngest_ReplayReusedNonceDifferentBatch(t *testing.T) {
 	enableLLMIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupLLMIngestRBAC(t, s)
+	setupLLMIngestRBAC(t, s, edgeRouteTenant)
 	session, execution := createLLMIngestParents(t, s, "replaydiff", edgecore.AdapterLLMProxy)
 	nonce := "nonce-llm-replaydiff-0001"
 

@@ -23,6 +23,16 @@ import (
 
 // Config handlers
 
+var errSystemConfigAuthority = errors.New("system config needs platform authority")
+
+func (s *server) requireSystemConfigAuthority(w http.ResponseWriter, r *http.Request) bool {
+	if s.hasPlatformAuthority(r) {
+		return true
+	}
+	writeForbidden(w, r, errSystemConfigAuthority)
+	return false
+}
+
 func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermConfigWrite, []string{"admin"}, s.configSvc) {
 		return
@@ -64,8 +74,12 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	scope := configsvc.Scope(scopeStr)
-	if scope == configsvc.ScopeSystem && strings.TrimSpace(scopeID) == packs.PolicyConfigID && !s.requireSystemPolicyAuthority(w, r) {
-		return
+	switch scope {
+	case configsvc.ScopeOrg, configsvc.ScopeTeam, configsvc.ScopeWorkflow, configsvc.ScopeStep:
+	default:
+		if !s.requireSystemConfigAuthority(w, r) {
+			return
+		}
 	}
 	if scope == configsvc.ScopeOrg {
 		tenant, err := s.resolveTenant(r, scopeID)
@@ -138,6 +152,9 @@ func (s *server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		if !s.requirePermissionOrRole(w, r, auth.PermConfigRead, "admin") {
 			return
 		}
+		if !s.requireSystemConfigAuthority(w, r) {
+			return
+		}
 	} else {
 		if !s.requirePermissionOrRole(w, r, auth.PermConfigRead, "admin", "operator") {
 			return
@@ -184,6 +201,9 @@ func (s *server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleGetEffectiveConfig(w http.ResponseWriter, r *http.Request) {
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermConfigRead, []string{"admin", "operator"}, s.configSvc) {
+		return
+	}
+	if !s.requireSystemConfigAuthority(w, r) {
 		return
 	}
 	orgID, err := s.resolveTenant(r, r.URL.Query().Get("org_id"))

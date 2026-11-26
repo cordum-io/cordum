@@ -34,26 +34,58 @@ var crossTenantGlobalRoutes = map[string]string{
 	"GET /api/v1/scim/v2/ServiceProviderConfig": "static SCIM discovery document describing the service provider; takes no tenant record id",
 	"GET /api/v1/scim/v2/Schemas":               "static SCIM discovery document listing resource schemas; takes no tenant record id",
 	"GET /api/v1/scim/v2/ResourceTypes":         "static SCIM discovery document listing resource types; takes no tenant record id",
+	// PR1-02-POLICY
+	"GET /api/v1/policy/snapshots":              "reads system-scope policy snapshots only; cannot change the system scope",
+	"GET /api/v1/policy/rules":                  "reads system-scope policy rules only; cannot change the system scope",
+	"GET /api/v1/policy/output/rules":           "reads system-scope output policy rules only; cannot change the system scope",
+	"GET /api/v1/policy/velocity-rules":         "reads system-scope velocity rules only; cannot change the system scope",
+	"GET /api/v1/policy/velocity-rules/stats":   "reads system-scope velocity rule counts only; cannot change the system scope",
+	"GET /api/v1/policy/global":                 "reads system-scope policy sections only; cannot change the system scope",
+	"GET /api/v1/policy/bundles":                "reads system-scope policy bundles only; cannot change the system scope",
+	"GET /api/v1/policy/bundles/snapshots":      "reads system-scope bundle snapshots only; cannot change the system scope",
+	"GET /api/v1/policy/bundles/snapshots/{id}": "reads one system-scope bundle snapshot only; cannot change the system scope",
 }
 
 var crossTenantExistingCoverage = map[string][]string{
 	"ANY /api/v1/stream": {"TestEdgeEventStreamTenantFilteringAndBusPacketRegression"},
+	// PR1-02-POLICY
+	"GET /api/v1/policy/shadows/{id}/results/summary":     {"TestShadowResults_CrossTenantLeakageSealed"},
+	"GET /api/v1/policy/shadows/{id}/results/timeseries":  {"TestShadowResults_CrossTenantLeakageSealed"},
+	"GET /api/v1/policy/shadows/{id}/results/comparisons": {"TestHandleShadowResultsComparisons_TenantIsolation"},
+	"GET /api/v1/policy/shadows/{id}":                     {"TestPolicyShadow_CrossTenantIsolation"},
+	"POST /api/v1/policy/analytics":                       {"TestPolicyAnalytics_TenantIsolation"},
+	// PR1-02-EDGE-MCP
+	"GET /api/v1/edge/sessions":                         {"TestEdgeCrossTenantListSessionsReturnsOnlyOwnTenant"},
+	"GET /api/v1/edge/sessions/{session_id}":            {"TestEdgeCrossTenantGetSessionRejectsByIDGuess", "TestGatewayEdgeErrorMappingAndTenantIsolation"},
+	"GET /api/v1/edge/executions":                       {"TestEdgeCrossTenantListExecutionsBySessionIsScoped", "TestGatewayEdgeExecutionsListRejectsMissingIndexAndOmitsCrossTenant"},
+	"GET /api/v1/edge/executions/{execution_id}":        {"TestEdgeCrossTenantGetExecutionRejectsByIDGuess"},
+	"GET /api/v1/edge/approvals":                        {"TestGatewayEdgeApprovalListDetailRejectAndTenantIsolation", "TestGatewayEdgeApprovalListPrincipalBinding"},
+	"GET /api/v1/edge/approvals/{approval_ref}":         {"TestGatewayEdgeApprovalListDetailRejectAndTenantIsolation", "TestGatewayEdgeApprovalGetPrincipalBinding"},
+	"POST /api/v1/edge/mcp/upstreams":                   {"TestHandlerCreateRejectsCrossTenantBody"},
+	"GET /api/v1/edge/sessions/{session_id}/events":     {"TestGatewayEdgeEventRoutesDenyCrossTenantWithoutLeakingIDs", "TestEdgeCrossTenantListSessionEventsRejectsForeignSession"},
+	"GET /api/v1/edge/executions/{execution_id}/events": {"TestGatewayEdgeEventRoutesDenyCrossTenantWithoutLeakingIDs", "TestEdgeCrossTenantListExecutionEventsRejectsForeignExecution"},
+	// PR1-02-FLEET
+	"GET /api/v1/workers/credentials":                {"TestWorkerCredentials_ScopedToTenant"},
+	"DELETE /api/v1/workers/credentials/{worker_id}": {"TestWorkerCredentials_ScopedToTenant"},
+	"GET /api/v1/agents":                             {"TestHandleListAgentsTenantScoped"},
+	"GET /api/v1/agents/{id}":                        {"TestHandleAgentByID_RejectsCrossTenant"},
+	"PUT /api/v1/agents/{id}":                        {"TestHandleAgentByID_RejectsCrossTenant"},
+	"DELETE /api/v1/agents/{id}":                     {"TestHandleAgentByID_RejectsCrossTenant"},
+	"GET /api/v1/agents/{id}/stats":                  {"TestHandleAgentByID_RejectsCrossTenant"},
+	"GET /api/v1/agents/{id}/tools":                  {"TestHandleAgentToolVisibility_CrossTenantReturns404"},
 }
 
 var crossTenantOpenFindings = map[string]string{}
 
 var crossTenantPending = map[string][]string{
-	"PR1-02-WF": {"/api/v1/workflows", "/api/v1/workflow-runs", "/api/v1/artifacts", "/api/v1/memory", "/api/v1/traces", "/api/v1/locks", "/api/v1/schemas", "/api/v1/topics"},
 	// Slice separator: keep unchanged when removing a pending block.
-	"PR1-02-FLEET": {"/api/v1/workers", "/api/v1/pools", "/api/v1/agents", "/api/v1/delegations"},
 	// Slice separator: keep unchanged when removing a pending block.
-	"PR1-02-POLICY": {"/api/v1/policy"},
 	// Slice separator: keep unchanged when removing a pending block.
 	"PR1-02-IDENTITY": {"/api/v1/auth", "/api/v1/users", "/api/v1/scim"},
 	// Slice separator: keep unchanged when removing a pending block.
 	"PR1-02-PLATFORM": {"/api/v1/packs", "/api/v1/marketplace", "/api/v1/config", "/api/v1/evals", "/api/v1/governance", "/api/v1/license", "/api/v1/telemetry", "/api/v1/status", "/api/v1/admin", "/api/v1/copilot", "/health", "/api/v1/health"},
 	// Slice separator: keep unchanged when removing a pending block.
-	"PR1-02-EDGE-MCP": {"/api/v1/edge", "/api/v1/mcp", "/mcp", "/api/v1/audit"},
+	"PR1-02-EDGE-MCP": {"/api/v1/mcp", "/mcp", "/api/v1/audit"},
 }
 
 var crossTenantRowKey = regexp.MustCompile(`^(?:M[0-9][A-Z]?|PR[0-9])-[A-Z0-9]+(?:-[A-Z0-9]+)*$`)
