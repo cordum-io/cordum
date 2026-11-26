@@ -552,7 +552,7 @@ func TestHandleSetConfigStartsMCPRuntimeWhenEnabled(t *testing.T) {
 	req.Header.Set("X-API-Key", "test-key")
 	req.Header.Set("X-Tenant-ID", "default")
 	rr := httptest.NewRecorder()
-	s.handleSetConfig(rr, req)
+	apiKeyMiddleware(s.auth, http.HandlerFunc(s.handleSetConfig)).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNoContent {
 		t.Fatalf("set config failed: %d %s", rr.Code, rr.Body.String())
 	}
@@ -618,7 +618,7 @@ func TestHandleSetConfigStopsMCPRuntimeWhenDisabled(t *testing.T) {
 	req.Header.Set("X-API-Key", "test-key")
 	req.Header.Set("X-Tenant-ID", "default")
 	rr := httptest.NewRecorder()
-	s.handleSetConfig(rr, req)
+	apiKeyMiddleware(s.auth, http.HandlerFunc(s.handleSetConfig)).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNoContent {
 		t.Fatalf("set config failed: %d %s", rr.Code, rr.Body.String())
 	}

@@ -27,7 +27,7 @@ func TestAppendSubmitSafetyDecisionAudit_AttachesKeyIdentity(t *testing.T) {
 	sink := &recordingAuditSender{}
 	s.auditExporter = sink
 
-	s.appendSubmitSafetyDecisionAudit(context.Background(), "submit", "job-1", "topic.demo",
+	s.appendSubmitSafetyDecisionAudit(context.Background(), "submit", "job-1", "default", "topic.demo",
 		"mk_x", "operator", "api_key:mk_x", "ci", "submit job job-1",
 		submitPolicyDecision{}, nil, "", "", "")
 

@@ -14,6 +14,10 @@ func (s *server) handleGetTelemetryStatus(w http.ResponseWriter, r *http.Request
 	if !s.requirePermissionOrRole(w, r, auth.PermTelemetryRead, "admin") {
 		return
 	}
+	if !s.hasPlatformAuthority(r) {
+		writeForbidden(w, r, errDeploymentSettingsAuthority)
+		return
+	}
 	if s.telemetry == nil {
 		writeJSON(w, map[string]any{"mode": "off"})
 		return
@@ -30,6 +34,10 @@ func (s *server) handleGetTelemetryInspect(w http.ResponseWriter, r *http.Reques
 	if !s.requirePermissionOrRole(w, r, auth.PermTelemetryExport, "admin") {
 		return
 	}
+	if !s.hasPlatformAuthority(r) {
+		writeForbidden(w, r, errDeploymentSettingsAuthority)
+		return
+	}
 	if s.telemetry == nil {
 		writeJSON(w, nil)
 		return
@@ -44,6 +52,10 @@ func (s *server) handleGetTelemetryInspect(w http.ResponseWriter, r *http.Reques
 
 func (s *server) handleGetTelemetryExport(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermissionOrRole(w, r, auth.PermTelemetryExport, "admin") {
+		return
+	}
+	if !s.hasPlatformAuthority(r) {
+		writeForbidden(w, r, errDeploymentSettingsAuthority)
 		return
 	}
 	if s.telemetry == nil {
@@ -69,6 +81,10 @@ func (s *server) handleGetTelemetryUsage(w http.ResponseWriter, r *http.Request)
 	if !s.requirePermissionOrRole(w, r, auth.PermTelemetryRead, "admin") {
 		return
 	}
+	if !s.hasPlatformAuthority(r) {
+		writeForbidden(w, r, errDeploymentSettingsAuthority)
+		return
+	}
 	if s.telemetry == nil {
 		writeJSON(w, map[string]any{})
 		return
@@ -83,6 +99,10 @@ func (s *server) handleGetTelemetryUsage(w http.ResponseWriter, r *http.Request)
 
 func (s *server) handleSetTelemetryConsent(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermissionOrRole(w, r, auth.PermTelemetryWrite, "admin") {
+		return
+	}
+	if !s.hasPlatformAuthority(r) {
+		writeForbidden(w, r, errDeploymentSettingsAuthority)
 		return
 	}
 	if s.telemetry == nil {

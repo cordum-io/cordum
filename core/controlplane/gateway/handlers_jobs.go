@@ -213,10 +213,18 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if !s.requireLicensePermission(w, r, licensing.BreakGlassPermissionSystemStatus) {
 		return
 	}
+	platform := s.hasPlatformAuthority(r)
+	isAdmin := s.requireRole(r, "admin") == nil
+	tenantID, err := s.resolveTenant(r, "")
+	if err != nil && platform {
+		tenantID = tenantFromRequest(r)
+	}
+	tenantID = strings.TrimSpace(tenantID)
+	key := statusCacheKey{platform: platform, admin: isAdmin, tenant: tenantID}
 
 	// Check cache first — avoids repeated Redis PING + snapshot reads on
 	// every dashboard poll (dashboard polls /api/v1/status every 5-10s).
-	if cached := s.statusCacheObj.Get(); cached != nil {
+	if cached := s.statusCacheObj.Get(key); cached != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Cache", "HIT")
 		writeJSON(w, cached)
@@ -229,13 +237,7 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		uptimeSeconds = int64(now.Sub(s.started).Seconds())
 	}
 
-	// Prefer Redis snapshot count (consistent across replicas).
-	workersCount := 0
-	if snapWorkers, snapErr := s.workersFromRedisSnapshot(); snapErr == nil && snapWorkers != nil {
-		workersCount = len(snapWorkers)
-	} else {
-		workersCount = len(s.activeWorkersSnapshot(now))
-	}
+	workersCount := s.statusWorkerCount(r, now, platform)
 
 	natsStatus, natsConnected := s.natsHealthStatus()
 	natsURL := ""
@@ -255,13 +257,11 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	cancel()
 	redisPoolStats := redisPoolStatsResponse(s.redisClient())
 
-	isAdmin := s.requireRole(r, "admin") == nil
-
 	natsInfo := map[string]any{
 		"connected": natsConnected,
 		"status":    natsStatus,
 	}
-	if isAdmin {
+	if platform && isAdmin {
 		natsInfo["url"] = natsURL
 	}
 
@@ -269,22 +269,14 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"ok":     redisOK,
 		"status": redisStatus,
 	}
-	if isAdmin && redisErr != "" {
+	if platform && isAdmin && redisErr != "" {
 		redisInfo["error"] = redisErr
 	}
 
-	tenantID := tenantFromRequest(r)
-	if resolvedTenant, err := s.resolveTenant(r, ""); err == nil {
-		tenantID = resolvedTenant
-	}
-
 	resp := map[string]any{
-		"time":              now.Format(time.RFC3339),
-		"uptime_seconds":    uptimeSeconds,
-		"goroutine_count":   runtime.NumGoroutine(),
-		"active_ws_clients": s.activeWSClientCount(),
-		"nats_status":       natsStatus,
-		"redis_pool_stats":  redisPoolStats,
+		"time":           now.Format(time.RFC3339),
+		"uptime_seconds": uptimeSeconds,
+		"nats_status":    natsStatus,
 		"build": map[string]any{
 			"version": buildinfo.Version,
 			"commit":  buildinfo.Commit,
@@ -295,14 +287,19 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"workers": map[string]any{
 			"count": workersCount,
 		},
-		"pipeline": s.statusPipeline(r.Context(), tenantID),
+		"pipeline": s.statusPipeline(r.Context(), tenantID, platform),
+	}
+	if platform {
+		resp["goroutine_count"] = runtime.NumGoroutine()
+		resp["active_ws_clients"] = s.activeWSClientCount()
+		resp["redis_pool_stats"] = redisPoolStats
 	}
 	if info := s.currentLicenseInfo(); info != nil {
 		resp["license"] = info
 	}
 
 	// Infrastructure details are admin-only to prevent information disclosure.
-	if isAdmin {
+	if platform && isAdmin {
 		resp["instance_id"] = s.instanceID
 		resp["rate_limiter"] = map[string]any{
 			"mode": rateLimiterMode(s.apiRL),
@@ -346,11 +343,42 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Cache the response for subsequent requests
-	s.statusCacheObj.Set(resp)
+	s.statusCacheObj.Set(key, resp)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Cache", "MISS")
 	writeJSON(w, resp)
+}
+
+func (s *server) statusWorkerCount(r *http.Request, now time.Time, platform bool) int {
+	var ids map[string]bool
+	if !platform {
+		tenant := ""
+		if ac := auth.FromRequest(r); ac != nil {
+			tenant = strings.TrimSpace(ac.Tenant)
+		}
+		var err error
+		ids, err = s.workerCredentialIDs(r.Context(), tenant)
+		if err != nil {
+			slog.Warn("status worker credentials unavailable", "error", err)
+			return 0
+		}
+	}
+	count := 0
+	if workers, err := s.workersFromRedisSnapshot(); err == nil && workers != nil {
+		for _, worker := range workers {
+			if platform || ids[worker.WorkerID] {
+				count++
+			}
+		}
+	} else {
+		for _, worker := range s.activeWorkersSnapshot(now) {
+			if platform || ids[worker.WorkerId] {
+				count++
+			}
+		}
+	}
+	return count
 }
 
 func redisPoolStatsResponse(client redis.UniversalClient) map[string]any {
@@ -375,7 +403,7 @@ func redisPoolStatsResponse(client redis.UniversalClient) map[string]any {
 	return resp
 }
 
-func (s *server) statusPipeline(ctx context.Context, tenantID string) map[string]any {
+func (s *server) statusPipeline(ctx context.Context, tenantID string, platform bool) map[string]any {
 	pipeline := map[string]any{
 		"pending":    int64(0),
 		"dispatched": int64(0),
@@ -384,7 +412,7 @@ func (s *server) statusPipeline(ctx context.Context, tenantID string) map[string
 		"failed":     int64(0),
 		"denied":     int64(0),
 	}
-	if s == nil || s.jobStore == nil {
+	if s == nil || s.jobStore == nil || (!platform && tenantID == "") {
 		return pipeline
 	}
 
@@ -1644,7 +1672,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusServiceUnavailable, "failed to persist denied job state")
 			return
 		}
-		s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_denied", jobID, req.Topic, submitActorID, policybundles.PolicyRole(r), submitIdentitySource, submitIdentityLabel, "submit-time policy denied: "+reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
+		s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_denied", jobID, orgID, req.Topic, submitActorID, policybundles.PolicyRole(r), submitIdentitySource, submitIdentityLabel, "submit-time policy denied: "+reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
 		writeJSON(w, map[string]any{
@@ -1660,7 +1688,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		if policyResult.Reason != "" {
 			reason = policyResult.Reason
 		}
-		s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_throttled", jobID, req.Topic, submitActorID, policybundles.PolicyRole(r), submitIdentitySource, submitIdentityLabel, "submit-time policy throttled: "+reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
+		s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_throttled", jobID, orgID, req.Topic, submitActorID, policybundles.PolicyRole(r), submitIdentitySource, submitIdentityLabel, "submit-time policy throttled: "+reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
 		w.Header().Set("Retry-After", "30")
 		writeErrorJSON(w, http.StatusTooManyRequests, reason)
 		return
@@ -1821,7 +1849,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			s.syncApprovalQueueDepth(r.Context())
 		}
-		s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_approval_required", jobID, req.Topic, submitActorID, policybundles.PolicyRole(r), submitIdentitySource, submitIdentityLabel, "submit-time policy requires approval: "+policyResult.Reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
+		s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_approval_required", jobID, orgID, req.Topic, submitActorID, policybundles.PolicyRole(r), submitIdentitySource, submitIdentityLabel, "submit-time policy requires approval: "+policyResult.Reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
 
 		w.Header().Set("X-Trace-Id", traceID)
 		w.Header().Set("Content-Type", "application/json")
@@ -2016,7 +2044,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		"topic", req.Topic,
 	)
 
-	s.appendSubmitSafetyDecisionAudit(r.Context(), "submit", jobID, req.Topic, submitActorID, policybundles.PolicyRole(r), submitIdentitySource, submitIdentityLabel, "submit job "+jobID, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
+	s.appendSubmitSafetyDecisionAudit(r.Context(), "submit", jobID, orgID, req.Topic, submitActorID, policybundles.PolicyRole(r), submitIdentitySource, submitIdentityLabel, "submit job "+jobID, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
 	w.Header().Set("X-Trace-Id", traceID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]string{

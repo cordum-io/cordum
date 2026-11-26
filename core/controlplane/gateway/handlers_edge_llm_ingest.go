@@ -217,7 +217,7 @@ func (s *server) llmIngestPermissionAllowed(r *http.Request, role string) bool {
 		return false
 	}
 	if s != nil && s.rbacStore != nil && auth.RBACEntitled(s.currentEntitlements()) {
-		perms, err := s.rbacStore.ResolvePermissions(r.Context(), role)
+		perms, err := s.rbacStore.ResolvePermissions(r.Context(), role, s.rbacStore.PrincipalTenant(r.Context()))
 		if err != nil {
 			return false
 		}

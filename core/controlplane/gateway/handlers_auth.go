@@ -277,8 +277,14 @@ type updateOIDCGroupRoleMappingRequest struct {
 	OIDCGroupRoleMapping map[string]string `json:"oidc_group_role_mapping"`
 }
 
+var errDeploymentSettingsAuthority = errors.New("deployment settings need platform authority")
+
 func (s *server) handleUpdateOIDCGroupRoleMapping(w http.ResponseWriter, r *http.Request) {
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermConfigWrite, []string{"admin"}, s.configSvc) {
+		return
+	}
+	if !s.hasPlatformAuthority(r) {
+		writeForbidden(w, r, errDeploymentSettingsAuthority)
 		return
 	}
 	updater, ok := s.auth.(auth.OIDCGroupRoleMappingUpdater)
@@ -894,6 +900,10 @@ func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	tenant := strings.TrimSpace(req.Tenant)
 	if tenant == "" {
 		tenant = authCtx.Tenant
+	}
+	if tenant != authCtx.Tenant && !s.hasPlatformAuthority(r) {
+		writeForbidden(w, r, errors.New("creating users in another tenant requires platform authority"))
+		return
 	}
 
 	role := strings.TrimSpace(req.Role)
