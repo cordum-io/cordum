@@ -376,24 +376,14 @@ func (s *server) handlePutPolicyOutputRule(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if doc == nil {
-		doc = &configsvc.Document{
-			Scope:   configsvc.Scope(packs.PolicyConfigScope),
-			ScopeID: packs.PolicyConfigID,
-			Data:    map[string]any{},
-		}
-	}
-	if doc.Data == nil {
-		doc.Data = map[string]any{}
-	}
-	doc.Data[packs.PolicyConfigKey] = bundles
-	if err := s.configSvc.Set(r.Context(), doc); err != nil {
-		writeInternalError(w, r, "policy operation", err)
+	message := fmt.Sprintf("set output rule %s enabled=%t in policy bundle %s%s", ruleID, *body.Enabled, updatedBundleID, auditNote)
+	if err := s.commitPolicyBundles(r.Context(), policyRevision(doc), bundles, policybundles.PolicyAuditEntry{
+		Action: "edit", ResourceType: "output_rule", ResourceID: ruleID, ResourceName: updatedBundleID,
+		ActorID: policybundles.PolicyActorID(r), Role: policybundles.PolicyRole(r), Message: message,
+	}); err != nil {
+		writePolicyCommitError(w, r, "policy operation", err)
 		return
 	}
-
-	message := fmt.Sprintf("set output rule %s enabled=%t in policy bundle %s%s", ruleID, *body.Enabled, updatedBundleID, auditNote)
-	s.appendAuditEntryNamed(r.Context(), "edit", "output_rule", ruleID, updatedBundleID, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), message)
 
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]any{
@@ -570,12 +560,13 @@ func (s *server) handlePutPolicyBundle(w http.ResponseWriter, r *http.Request) {
 		delete(bundle, policyBundleSignatureKey)
 	}
 	bundles[bundleID] = bundle
-	doc.Data[packs.PolicyConfigKey] = bundles
-	if err := s.configSvc.Set(r.Context(), doc); err != nil {
-		writeInternalError(w, r, "policy operation", err)
+	if err := s.commitPolicyBundles(r.Context(), doc.Revision, bundles, policybundles.PolicyAuditEntry{
+		Action: "edit", ResourceType: "policy", ResourceID: bundleID, ResourceName: bundleID,
+		ActorID: policybundles.PolicyActorID(r), Role: policybundles.PolicyRole(r), Message: "edit policy bundle " + bundleID,
+	}); err != nil {
+		writePolicyCommitError(w, r, "policy operation", err)
 		return
 	}
-	s.appendAuditEntryNamed(r.Context(), "edit", "policy", bundleID, bundleID, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "edit policy bundle "+bundleID)
 	w.Header().Set("Content-Type", "application/json")
 	response := map[string]any{
 		"id":         bundleID,
@@ -625,14 +616,15 @@ func (s *server) handleDeletePolicyBundle(w http.ResponseWriter, r *http.Request
 	}
 
 	delete(bundles, bundleID)
-	doc.Data[packs.PolicyConfigKey] = bundles
-	if err := s.configSvc.Set(r.Context(), doc); err != nil {
-		writeInternalError(w, r, "policy operation", err)
+	if err := s.commitPolicyBundles(r.Context(), doc.Revision, bundles, policybundles.PolicyAuditEntry{
+		Action: "delete", ResourceType: "policy", ResourceID: bundleID, ResourceName: bundleID,
+		ActorID: policybundles.PolicyActorID(r), Role: policybundles.PolicyRole(r), Message: "delete policy bundle " + bundleID,
+	}); err != nil {
+		writePolicyCommitError(w, r, "policy operation", err)
 		return
 	}
 
 	slog.Info("policy bundle deleted", "bundle_id", bundleID, "actor", policybundles.PolicyActorID(r))
-	s.appendAuditEntryNamed(r.Context(), "delete", "policy", bundleID, bundleID, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "delete policy bundle "+bundleID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -1404,6 +1396,45 @@ func (s *server) commitPolicyWithAudit(ctx context.Context, apply func(doc *conf
 		s.auditExporter.Send(policybundles.AuditEntryToSIEM(entry, s.tenant))
 	}
 	return nil
+}
+
+// errPolicyChanged reports that system/policy changed after a handler read it.
+var errPolicyChanged = errors.New("policy changed after it was read")
+
+// policyRevision is the revision of doc, or 0 when there is no document.
+func policyRevision(doc *configsvc.Document) int64 {
+	if doc == nil {
+		return 0
+	}
+	return doc.Revision
+}
+
+// commitPolicyBundles stores bundles as the system/policy bundle map together
+// with entry through commitPolicyWithAudit. Like configsvc.Set, it refuses to
+// write over a change made after the handler read system/policy at
+// readRevision (0 when it found no document): that returns errPolicyChanged
+// and stores nothing.
+func (s *server) commitPolicyBundles(ctx context.Context, readRevision int64, bundles map[string]any, entry policybundles.PolicyAuditEntry) error {
+	return s.commitPolicyWithAudit(ctx, func(doc *configsvc.Document) error {
+		if doc.Revision != readRevision {
+			return errPolicyChanged
+		}
+		if doc.Data == nil {
+			doc.Data = map[string]any{}
+		}
+		doc.Data[packs.PolicyConfigKey] = bundles
+		return nil
+	}, entry)
+}
+
+// writePolicyCommitError answers a failed commitPolicyBundles: 409 when the
+// policy changed during the write, 500 for anything else.
+func writePolicyCommitError(w http.ResponseWriter, r *http.Request, op string, err error) {
+	if errors.Is(err, errPolicyChanged) {
+		writeJSONError(w, http.StatusConflict, errorCodePolicyVersionConflict, "policy changed during the write; retry")
+		return
+	}
+	writeInternalError(w, r, op, err)
 }
 
 func (s *server) appendAuditEntryNamed(ctx context.Context, action, resourceType, resourceID, resourceName, actorID, role, message string) {
