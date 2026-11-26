@@ -68,9 +68,7 @@ jobs:
         env:
           CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
         run: |
-          umask 077
-          printf 'CORDUM_API_KEY=%s\n' "${CORDUM_API_KEY}" > .env
-          go run ./tools/docscheck/cmd/docscheck-commands -doc docs/quickstart.md -copy .env -copy certs/ca/ca.crt 2>&1 | tee docscheck-commands.log
+          go run ./tools/docscheck/cmd/docscheck-commands -doc docs/quickstart.md -dotenv CORDUM_API_KEY -copy certs/ca/ca.crt 2>&1 | tee docscheck-commands.log
 
       - name: Capture docker compose logs
         if: always()
