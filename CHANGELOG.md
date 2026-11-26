@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - MCP: JSON-RPC errors no longer expose execution ids. Errors caused by
   Cordum's own stores carry a fixed message, such as `internal error`, and
   the detail is in the gateway log (#492, task-e489e0c5).
+- cordumctl: the `CORDUM_ADMIN_PASSWORD` that `cordumctl up --dev` generates meets the gateway's password policy, so the admin user is seeded, and a `.env` definition that Compose reads as empty, such as `CORDUM_API_KEY="" # note` or `export CORDUM_API_KEY=`, is filled in place (task-d23dda77).
 
 - Gateway: a job submit, over HTTP or gRPC, now stores its policy audit entry
   before the job is dispatched. While that entry cannot be stored, the submit
