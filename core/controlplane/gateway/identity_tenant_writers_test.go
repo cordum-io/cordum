@@ -73,9 +73,10 @@ func testIdentityUserCreate(t *testing.T) {
 			if gateway == "" {
 				gateway = "default"
 			}
-			if tc.caller == "spanning" {
+			switch tc.caller {
+			case "spanning":
 				who = systemPolicySpanning
-			} else if tc.caller == "platform" {
+			case "platform":
 				who = systemPolicyPlatform
 				who.tenantID = gateway
 			}
