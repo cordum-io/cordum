@@ -131,6 +131,14 @@ func (s *server) handleMCPVerifySignature(w http.ResponseWriter, r *http.Request
 	if !s.requirePermissionOrRole(w, r, auth.PermMCPVerify, "admin") {
 		return
 	}
+	tenant, err := s.resolveTenant(r, "")
+	if err != nil {
+		if !s.hasPlatformAuthority(r) {
+			writeForbidden(w, r, err)
+			return
+		}
+		tenant = s.tenant
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, mcpVerifySignatureMaxBodyBytes)
 	var body mcpVerifySignatureRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -168,20 +176,21 @@ func (s *server) handleMCPVerifySignature(w http.ResponseWriter, r *http.Request
 	// every failed verify lands a mcp.signature_invalid SIEMEvent in
 	// the tenant audit chain. Sub_reason is the stable machine-readable
 	// sentinel; reason carries the wrapped error detail.
-	s.emitMCPSignatureInvalid(resp, verifyErr)
+	s.emitMCPSignatureInvalid(tenant, resp, verifyErr)
 	writeJSONObject(w, http.StatusOK, resp)
 }
 
 // emitMCPSignatureInvalid fires the SIEM event on a verify failure.
 // Nil-safe if s.auditExporter is not yet wired (dev mode) — operators
 // see the endpoint-level 200 response with sub_reason regardless.
-func (s *server) emitMCPSignatureInvalid(resp mcpVerifySignatureResponse, verifyErr error) {
+func (s *server) emitMCPSignatureInvalid(tenant string, resp mcpVerifySignatureResponse, verifyErr error) {
 	if s == nil || s.auditExporter == nil {
 		return
 	}
 	extra := map[string]string{
-		"sub_reason": resp.SubReason,
-		"key_id":     resp.KeyID,
+		"sub_reason":     resp.SubReason,
+		"key_id":         resp.KeyID,
+		"claimed_tenant": resp.Tenant,
 	}
 	if verifyErr != nil {
 		extra["detail"] = verifyErr.Error()
@@ -190,7 +199,7 @@ func (s *server) emitMCPSignatureInvalid(resp mcpVerifySignatureResponse, verify
 		Timestamp: time.Now().UTC(),
 		EventType: audit.EventMCPSignatureInvalid,
 		Severity:  audit.SeverityMedium,
-		TenantID:  resp.Tenant,
+		TenantID:  tenant,
 		AgentID:   resp.AgentID,
 		Action:    "verify_failed",
 		Reason:    resp.SubReason,

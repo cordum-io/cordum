@@ -45,6 +45,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - typedoc, typedoc-plugin-coverage and typedoc-plugin-markdown are removed from the install with pnpm `-` overrides. typedoc 0.28 calls `Minimatch#matchOne`, which 11.x removed. orval 8.31.0 loads typedoc only for its `docs` output, which the dashboard does not configure. Until typedoc supports minimatch 11, enabling that output fails at import. orval stays at 8.31.0.
 
 ### Fixed
+- MCP: a failed `POST /api/v1/mcp/verify-signature` check is audited as
+  `mcp.signature_invalid` in the calling tenant's audit chain, or in the
+  platform tenant's chain for a platform caller whose tenant does not
+  resolve. The event's extra `claimed_tenant` carries the tenant named in the
+  request's signature headers. A caller whose tenant does not resolve and who
+  has no platform authority gets `403` (task-a7d5596c).
+
 - Gateway config: writing an `/api/v1/config` document in any scope other than
   `org`, `team`, `workflow` or `step` (the flat body writes `system/default`),
   reading a `system` scope document, and `GET /api/v1/config/effective` require
