@@ -78,6 +78,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Documentation
 
+- Edge observe contract: clarify that reachable governance applies deny, approval and
+  throttle decisions, while a Gateway or kernel outage allows with degraded evidence.
+  Add observe decision tests and close the matrix's agentd throttle test gap; runtime
+  behavior is unchanged (task-c4d75415).
+
 - Data handling: `docs/configuration-reference.md` no longer says telemetry never collects PII or that the install ping's `install_id` holds none; it names the payload fields and says the data inventory (`docs/contract/data-inventory.yaml`, DI-C13 to DI-C15) classes stored telemetry and exported reports as possibly holding personal data. `docs/mcp/mutating-tools.md` drops the nonexistent `CORDUM_MCP_APPROVAL_TTL` and the 30-minute expiry: a pending MCP approval expires 5 minutes after the gate requests it, and its records outlive it (DI-C46, DI-C02) (task-56db1261).
 - Policy and pack signing: `docs/deployment/policy-signing.md`, `docs/packs/signing.md`, `docs/production.md`, `docs/safety-kernel.md`, `docs/edge-policy.md` and `docs/troubleshooting.md` now say that in the production profile an unset `CORDUM_POLICY_STRICT` means `enforce` for the safety kernel and for the gateway's policy-store writes, that the gateway refuses unsigned packs unless `CORDUM_GATEWAY_PACK_STRICT=false`, that a bundle save without a signing key is refused with `503` `POLICY_SIGNING_REQUIRED`, and that `signature_enforcement` in `GET /api/v1/status` reports both modes. `SAFETY_POLICY_PUBLIC_KEY` is the legacy Ed25519 key, not ECDSA (task-6824851c).
 - Delegation tokens: `docs/auth/delegation.md` states the parent-token tenant and expiry rules, the chain-link expiry check at verification, which permissions verification re-checks scope against, and the `delegation_issuer_chain` field of the Policy Decision Log record and the stored safety decision (task-ee196c6d).
@@ -1423,6 +1428,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### CI and documentation
 
+- `go test ./...` checks marked env names, defaults and endpoints in the docs, and Platform Smoke runs the quickstart's marked commands against its stack and counts the rest with reasons.
 - Five review corrections (task-127a7dba). The VS Code Copilot MCP quickstart asks for a static API key with a configured principal, because the generated `mcp.json` carries the credential only in `X-API-Key`. The data-inventory contract test binds a JetStream stream name to the innermost function parameter that declares it, so a parameter that shadows a file-level const no longer reads as that const's value. The A2A governed demo fails whenever the worker log names the denied job. The configuration reference states that `POLICY_CHECK_FAIL_MODE=open` makes the scheduler refuse to start under CAP-PRODUCTION. The release Alpine upgrade guard reads each word before `apk upgrade --no-cache` after removing quotes and backslashes, so `"exit" 0`, `\exit 0` and `e"xi"t 0` fail closed.
 - The workflow credential scanner no longer reports `SOURCE_OVERSIZE` for a locally built native binary that a workflow runs, such as the `bin/cordumctl` that three demo workflows run for `generate-certs`, so a clean checkout and a built one scan the same. A file over the 256 KiB source bound counts as a program on an exec edge only when it starts with an ELF, PE or Mach-O header and has a NUL byte in its first line. An oversized script, and a `source` or `bash` edge to any oversized file, still report `SOURCE_OVERSIZE` (task-13b4b48c).
 - Added `docs/contract/threat-model.md`, the platform threat model for the M0 security contract: assets, adversaries, trust boundaries, a trusted-component inventory covering every `cmd/` service, reference-monitor properties with their current status, five explicit non-promises and the deployment boundary. Documentation only; no behavior changes.
