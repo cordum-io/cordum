@@ -59,6 +59,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   reports for each session, with a distinct label per state, and "Not reported" when the
   server sends no recognized value. The session list can be filtered by assurance state,
   and the policy-mode chip now reads "policy <mode>" (task-9b412c07).
+- Pools: removing a pool's last topic mapping
+  (`DELETE /api/v1/pools/{name}/topics/{topic}`), and force-deleting a pool that was a
+  topic's only pool, now remove the topic from the stored `system/default` document, so
+  routing no longer sends the topic to that pool. Before, the topic key stayed stored
+  after the 204 (task-61be8263).
 
 ### Documentation
 
