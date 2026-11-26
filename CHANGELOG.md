@@ -46,6 +46,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Scheduler: in compat mode, a session-authenticated sender's `JobCancel`
+  or `JobResult` applies only to jobs in its own tenant, as in production.
+  Service identities and unauthenticated compat traffic are unchanged
+  (task-24d20bca).
+
 - Worker reads: a worker belongs to the tenant of its worker credential. For a
   caller without cross-tenant access, `GET /api/v1/workers` lists only that
   tenant's workers, `GET /api/v1/workers/{id}` and
