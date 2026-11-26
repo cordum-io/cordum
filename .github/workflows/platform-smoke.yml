@@ -63,10 +63,19 @@ jobs:
           CORDUM_TLS_CA: ${{ github.workspace }}/certs/ca/ca.crt
           REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
 
+      - name: Check quickstart commands
+        shell: bash
+        env:
+          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+        run: |
+          umask 077
+          printf 'CORDUM_API_KEY=%s\n' "${CORDUM_API_KEY}" > .env
+          go run ./tools/docscheck/cmd/docscheck-commands -doc docs/quickstart.md -copy .env -copy certs/ca/ca.crt 2>&1 | tee docscheck-commands.log
+
       - name: Capture docker compose logs
         if: always()
         run: |
-          touch platform-smoke.log platform-smoke-health.json
+          touch platform-smoke.log platform-smoke-health.json docscheck-commands.log
           docker compose logs > docker-compose-platform-smoke.log 2>&1 || true
 
       - name: Redact platform smoke artifacts
@@ -77,7 +86,7 @@ jobs:
           REDIS_PASSWORD: ${{ env.REDIS_PASSWORD || 'credential-unavailable-for-redaction' }}
         run: |
           source tools/scripts/github_actions_mask_env.sh
-          gha_redact_paths CORDUM_API_KEY REDIS_PASSWORD -- platform-smoke.log platform-smoke-health.json docker-compose-platform-smoke.log
+          gha_redact_paths CORDUM_API_KEY REDIS_PASSWORD -- platform-smoke.log platform-smoke-health.json docker-compose-platform-smoke.log docscheck-commands.log
 
       - name: Upload platform smoke artifacts
         if: always() && steps.redact_platform_smoke_artifacts.outcome == 'success'
@@ -88,6 +97,7 @@ jobs:
             platform-smoke.log
             platform-smoke-health.json
             docker-compose-platform-smoke.log
+            docscheck-commands.log
 
       - name: Tear down services
         if: always()

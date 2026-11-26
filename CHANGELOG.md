@@ -12,6 +12,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   fails with 503 (gRPC `Unavailable`), the job is set FAILED, and it is not
   dispatched (task-371805f0).
 
+- Approvals: store the audit entry before applying an approval; if it cannot be
+  stored, return 500 without applying the approval. An approval repair whose audit
+  entry cannot be stored returns 500 and states that the repair was applied.
+
+- Policy: policy bundle, output-rule, velocity-rule, publish, rollback and global
+  policy writes now store the change and its policy audit entry together. A request
+  whose audit entry cannot be stored fails and changes nothing, a write that races
+  another policy change answers 409, and snapshot capture fails when its audit entry
+  cannot be stored (task-be32bb1b).
+
 - Installer: `tools/scripts/install.ps1` runs under Windows PowerShell 5.1, as its
   `#Requires -Version 5.1` line says. Native stderr from a successful gpg call no
   longer stops it, the version-floor write no longer needs .NET Core, and CI runs the
@@ -193,6 +203,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Redis: clients built by `core/infra/redisutil` (`NewClient`, and `ParseOptions`
+  passed to `redis.NewClient`) apply a call's context deadline to socket reads
+  and writes. A call with no earlier deadline is still bounded by the client's
+  socket timeouts (`REDIS_READ_TIMEOUT` and `REDIS_WRITE_TIMEOUT` for
+  `NewClient`) (task-031de737).
 - Docs: Edge overview, Claude Code, CLI and runbook outage statements now follow
   the failure and partition behavior contract's measured hook and Gateway probes.
   The P0 decision table is labeled design intent; agentd Gateway-outage handling
@@ -1427,6 +1442,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### CI and documentation
 
+- `go test ./...` checks marked env names, defaults and endpoints in the docs, and Platform Smoke runs the quickstart's marked commands against its stack and counts the rest with reasons.
 - Five review corrections (task-127a7dba). The VS Code Copilot MCP quickstart asks for a static API key with a configured principal, because the generated `mcp.json` carries the credential only in `X-API-Key`. The data-inventory contract test binds a JetStream stream name to the innermost function parameter that declares it, so a parameter that shadows a file-level const no longer reads as that const's value. The A2A governed demo fails whenever the worker log names the denied job. The configuration reference states that `POLICY_CHECK_FAIL_MODE=open` makes the scheduler refuse to start under CAP-PRODUCTION. The release Alpine upgrade guard reads each word before `apk upgrade --no-cache` after removing quotes and backslashes, so `"exit" 0`, `\exit 0` and `e"xi"t 0` fail closed.
 - The workflow credential scanner no longer reports `SOURCE_OVERSIZE` for a locally built native binary that a workflow runs, such as the `bin/cordumctl` that three demo workflows run for `generate-certs`, so a clean checkout and a built one scan the same. A file over the 256 KiB source bound counts as a program on an exec edge only when it starts with an ELF, PE or Mach-O header and has a NUL byte in its first line. An oversized script, and a `source` or `bash` edge to any oversized file, still report `SOURCE_OVERSIZE` (task-13b4b48c).
 - Added `docs/contract/threat-model.md`, the platform threat model for the M0 security contract: assets, adversaries, trust boundaries, a trusted-component inventory covering every `cmd/` service, reference-monitor properties with their current status, five explicit non-promises and the deployment boundary. Documentation only; no behavior changes.
