@@ -46,6 +46,10 @@ func TestDeleteSchemaAllowedForAdmin(t *testing.T) {
 	if err := s.schemaRegistry.Register(context.Background(), "test-schema", []byte(`{"type":"object"}`)); err != nil {
 		t.Fatalf("register schema: %v", err)
 	}
+	// The tenant-bound admin below may delete only a schema its tenant owns.
+	if _, err := s.schemaRegistry.ClaimOwner(context.Background(), "test-schema", "default"); err != nil {
+		t.Fatalf("claim schema: %v", err)
+	}
 
 	// Set auth provider with admin key.
 	provider := newBasicAuthForTest(t, map[string]string{

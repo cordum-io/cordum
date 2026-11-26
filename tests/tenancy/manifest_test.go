@@ -109,9 +109,11 @@ var storeKeyManifest = []storeKeyEntry{
 	{"eval:run:{tenant}:idx:t", "core/infra/store", "tenant-in-key", "TestEvalRunTenantIsolation"},
 	{"eval:run:{tenant}:idx:ds:{dataset}", "core/infra/store", "tenant-in-key", "TestTenantIsolationEvalRunReadOnly"},
 	{"cap:replay:{hash}", "core/infra/replay", "tenant-in-key", "TestTenantIsolationReplayStoreKey"},
-	// Non-tenant schemas are already excluded by data-inventory.yaml:
-	// schema:{id} is the shared JSON Schema registry with no tenant ownership;
-	// schema:url:{url} is its shared URL-reference registry, not tenant data.
+	// The schema registry is DI-C56 in data-inventory.yaml. cordum:schema:owners
+	// holds the owner tenant of each tenant-owned schema id; the pack-installed
+	// schema:url:{url} aliases are classified there as not tenant data.
+	{"schema:{id}", "core/infra/schema", "global-id", "TestSchemaRegistryTenantBound"},
+	{"cordum:schema:owners", "core/infra/schema", "tenant-in-value", "TestSchemaRegistryTenantBound"},
 	{"schema:index", "core/infra/schema", "global-id", "pending:PR1-03F"},
 	{"sys:workers:snapshot", "core/infra/registry", "global-id", "pending:PR1-03F"},
 	{"mem:{memory}:events", "core/contextwindow/engine", "tenant-in-key, enforced at store.TenantMemoryID", "TestTenantIsolationContextEngineBuildWindow"},
