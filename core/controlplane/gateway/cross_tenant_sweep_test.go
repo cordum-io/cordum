@@ -33,7 +33,6 @@ var crossTenantGlobalRoutes = map[string]string{
 	"GET /api/v1/policy/bundles":                "reads system-scope policy bundles only; cannot change the system scope",
 	"GET /api/v1/policy/bundles/snapshots":      "reads system-scope bundle snapshots only; cannot change the system scope",
 	"GET /api/v1/policy/bundles/snapshots/{id}": "reads one system-scope bundle snapshot only; cannot change the system scope",
-	"GET /api/v1/policy/audit":                  "reads system-scope policy audit entries only; cannot change the system scope",
 }
 
 var crossTenantExistingCoverage = map[string][]string{
