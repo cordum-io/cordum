@@ -127,3 +127,35 @@ func TestSubmitJobHTTP_StoredSubmitEntryReachesAuditAPIAndSIEM(t *testing.T) {
 	}
 	require.Equal(t, []audit.SIEMEvent{policybundles.AuditEntryToSIEM(entry, s.tenant)}, sent)
 }
+
+// The submit refusal and hold entries must complete: the request keeps its
+// status when the entry is not stored, and appendPolicyAudit logs ERROR.
+func TestSubmitJobHTTP_RefusalAndHoldKeepStatusWhenAuditFails(t *testing.T) {
+	cases := []struct {
+		name, action string
+		resp         *pb.PolicyCheckResponse
+		wantCode     int
+		wantState    model.JobState
+	}{
+		{"deny", "submit_denied", &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_DENY, Reason: "denied"}, http.StatusForbidden, model.JobStateDenied},
+		{"throttle", "submit_throttled", &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_THROTTLE, Reason: "throttled"}, http.StatusTooManyRequests, ""},
+		{"approval", "submit_approval_required", &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN, Reason: "held", ApprovalRequired: true}, http.StatusOK, model.JobStateApproval},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _, safety := submitAuditGateway(t, true)
+			safety.setResponse(tc.resp)
+			logs := storeWriterLogs(t)
+
+			rec := submitAuditHTTP(t, s, "submit-audit-"+tc.name)
+
+			require.Equal(t, tc.wantCode, rec.Code, rec.Body.String())
+			if tc.wantState != "" {
+				_, state := submitAuditJobState(t, s, "submit-audit-"+tc.name)
+				require.Equal(t, tc.wantState, state)
+			}
+			require.Len(t, auditPersistErrors(logs, tc.action), 1)
+			require.Empty(t, auditPersistActions(t, s))
+		})
+	}
+}

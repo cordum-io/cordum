@@ -245,7 +245,8 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		if policyResult.Reason != "" {
 			reason = policyResult.Reason
 		}
-		s.appendSubmitSafetyDecisionAudit(ctx, "submit_denied", jobID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit-time policy denied: "+reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
+		// Must complete: the refusal stands whatever happens to its entry, and appendPolicyAudit logs ERROR.
+		_ = s.appendSubmitSafetyDecisionAudit(ctx, "submit_denied", jobID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit-time policy denied: "+reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
 		return nil, status.Error(codes.PermissionDenied, reason)
 	}
 	if policyResult.Throttled {
@@ -253,7 +254,8 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		if policyResult.Reason != "" {
 			reason = policyResult.Reason
 		}
-		s.appendSubmitSafetyDecisionAudit(ctx, "submit_throttled", jobID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit-time policy throttled: "+reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
+		// Must complete: the refusal stands whatever happens to its entry, and appendPolicyAudit logs ERROR.
+		_ = s.appendSubmitSafetyDecisionAudit(ctx, "submit_throttled", jobID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit-time policy throttled: "+reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
 		return nil, status.Error(codes.ResourceExhausted, reason)
 	}
 	if policyResult.ApprovalRequired {
@@ -372,7 +374,8 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 			}
 			s.syncApprovalQueueDepth(ctx)
 		}
-		s.appendSubmitSafetyDecisionAudit(ctx, "submit_approval_required", jobID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit-time policy requires approval: "+policyResult.Reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
+		// Must complete: the hold stands whatever happens to its entry, and appendPolicyAudit logs ERROR.
+		_ = s.appendSubmitSafetyDecisionAudit(ctx, "submit_approval_required", jobID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit-time policy requires approval: "+policyResult.Reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
 		return &pb.SubmitJobResponse{
 			JobId:   jobID,
 			TraceId: traceID,

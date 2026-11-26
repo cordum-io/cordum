@@ -1665,7 +1665,8 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusServiceUnavailable, "failed to persist denied job state")
 			return
 		}
-		s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_denied", jobID, req.Topic, submitActorID, policybundles.PolicyRole(r), submitIdentitySource, submitIdentityLabel, "submit-time policy denied: "+reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
+		// Must complete: the refusal stands whatever happens to its entry, and appendPolicyAudit logs ERROR.
+		_ = s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_denied", jobID, req.Topic, submitActorID, policybundles.PolicyRole(r), submitIdentitySource, submitIdentityLabel, "submit-time policy denied: "+reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
 		writeJSON(w, map[string]any{
@@ -1681,7 +1682,8 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		if policyResult.Reason != "" {
 			reason = policyResult.Reason
 		}
-		s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_throttled", jobID, req.Topic, submitActorID, policybundles.PolicyRole(r), submitIdentitySource, submitIdentityLabel, "submit-time policy throttled: "+reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
+		// Must complete: the refusal stands whatever happens to its entry, and appendPolicyAudit logs ERROR.
+		_ = s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_throttled", jobID, req.Topic, submitActorID, policybundles.PolicyRole(r), submitIdentitySource, submitIdentityLabel, "submit-time policy throttled: "+reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
 		w.Header().Set("Retry-After", "30")
 		writeErrorJSON(w, http.StatusTooManyRequests, reason)
 		return
@@ -1842,7 +1844,8 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			s.syncApprovalQueueDepth(r.Context())
 		}
-		s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_approval_required", jobID, req.Topic, submitActorID, policybundles.PolicyRole(r), submitIdentitySource, submitIdentityLabel, "submit-time policy requires approval: "+policyResult.Reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
+		// Must complete: the hold stands whatever happens to its entry, and appendPolicyAudit logs ERROR.
+		_ = s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_approval_required", jobID, req.Topic, submitActorID, policybundles.PolicyRole(r), submitIdentitySource, submitIdentityLabel, "submit-time policy requires approval: "+policyResult.Reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
 
 		w.Header().Set("X-Trace-Id", traceID)
 		w.Header().Set("Content-Type", "application/json")
