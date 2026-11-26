@@ -100,9 +100,13 @@ func TestTenantIsolationGatewayWorkflowIndexes(t *testing.T) {
 		checkIndexList(t, s.handleListAllRuns, path, "", "tenant-a-run", "tenant-b-run")
 	}
 	for _, org := range []string{"tenant-a", "tenant-b"} {
+		forbidden := "tenant-b"
+		if org == "tenant-b" {
+			forbidden = "tenant-a"
+		}
 		rr := httptest.NewRecorder()
 		s.handleListRuns(rr, tenantObjectRequest(http.MethodGet, "/api/v1/workflows/"+org+"-wf/runs", org, org+"-wf"))
-		if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), org+"-run") {
+		if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), org+"-run") || strings.Contains(rr.Body.String(), forbidden) {
 			t.Fatalf("own workflow runs: %d %s", rr.Code, rr.Body.String())
 		}
 	}
