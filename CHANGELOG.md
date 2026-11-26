@@ -57,6 +57,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Documentation
 
+- Delegation tokens: `docs/auth/delegation.md` states the parent-token tenant and expiry rules, the chain-link expiry check at verification, which permissions verification re-checks scope against, and the `delegation_issuer_chain` field of the Policy Decision Log record and the stored safety decision (task-ee196c6d).
 - Release documentation now describes the combined image/binary qualification record, digest-gated publication, eight-image checks and branch-based dry runs, including untested coverage and skipped publication steps (task-d9e90910).
 - Metric names: `docs/production.md`, `docs/output-safety.md`, `docs/k8s-deployment.md`, `docs/troubleshooting.md`, `docs/scheduler.md`, `docs/release-notes/unreleased.md` and `ROADMAP.md` now use the exported names, for example `cordum_scheduler_output_policy_skipped_total`, `cordum_scheduler_scheduler_dispatch_latency_seconds` and `cordum_api_gateway_http_requests_total`. Names that no Cordum process exports are removed: two rows of the `docs/k8s-deployment.md` metrics table, and the DLQ-depth and worker-heartbeat example alert rules. The workflow metrics in `docs/production.md` are marked as not exported (task-5d45fd40).
 - Input fail mode: `docs/safety-kernel.md` section 10 now says when a change to `scheduler.input_fail_mode` or `scheduler.input_fail_open_scope` takes effect: on a config-change notification or the 30-second reload, after a cached tenant entry is refreshed, and never for a tenant whose configuration has not loaded, whose jobs are requeued even in `open` mode. `ROADMAP.md` names the counter `cordum_scheduler_input_fail_open_total` and says open input mode admits only listed topics (task-c399879b).
@@ -938,8 +939,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   Missing cosign is refused unless `--insecure-allow-missing-cosign` /
   `-InsecureAllowMissingCosign` is passed; that flag logs a
   `binary-signature-unverified` audit event and still enforces checksums.
-  The release workflow does not publish this signature yet (PR2-03-PIPELINE).
   (PR2-03, task-83a43ecf)
+
+- The binary release workflow signs `SHA256SUMS` keylessly with GitHub OIDC and
+  Sigstore: `release.yml` job `sign-manifest` runs `cosign sign-blob` and writes
+  `SHA256SUMS.sigstore.json`. Before the upload, the same job runs
+  `tools/scripts/install.sh` on the release, which checks the signature and
+  every checksum, and requires it to refuse a copy with one changed byte.
+  `publish-binaries` in `docker.yml` requires `SHA256SUMS.sigstore.json` on the
+  canonical repository and publishes it with the binaries; `SHA256SUMS.asc`
+  stays optional. A `release-dry-run/**` run shows this end to end; no tagged
+  release has used it yet. (PR2-03-PIPELINE, task-182f2cd5)
 
 - HTTP job submit (task-ed8bd5e2): a client `labels.agent_id` is honored only when the request's principal is the authenticated principal; naming another worker's `principal_id` to validate the label is now refused with 403 before the policy check, matching gRPC SubmitJob. Requests without the label are unchanged.
 
