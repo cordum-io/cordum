@@ -9,6 +9,8 @@ func TestMatchScopes(t *testing.T) {
 		required string
 		want     bool
 	}{
+		{name: "MCP gateway scope excludes MCP API", granted: []string{"mcpgateway:*"}, required: "mcp:write", want: false},
+		{name: "MCP API scope excludes MCP gateway", granted: []string{"mcp:*"}, required: "mcpgateway:write", want: false},
 		{
 			name:     "empty granted allows for back-compat",
 			granted:  nil,
@@ -89,6 +91,11 @@ func TestPathToScope(t *testing.T) {
 		scope  string
 		ok     bool
 	}{
+		{name: "MCP SSE", method: "GET", path: "/mcp/sse", scope: "mcpgateway:read", ok: true},
+		{name: "MCP status", method: "GET", path: "/mcp/status", scope: "mcpgateway:read", ok: true},
+		{name: "MCP message", method: "POST", path: "/mcp/message", scope: "mcpgateway:write", ok: true},
+		{name: "MCP API approval", method: "POST", path: "/api/v1/mcp/approvals/a1/approve", scope: "mcp:write", ok: true},
+		{name: "MCP prefix boundary", method: "GET", path: "/mcpgateway/sse", ok: false},
 		{
 			name:   "jobs read",
 			method: "GET",

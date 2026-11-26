@@ -56,9 +56,7 @@ func TestAudienceMatrixMCPGateway(t *testing.T) {
 	identity.Run(t, identity.MCPGateway, func(t *testing.T, c identity.Credential) identity.Result {
 		newReq := func() *http.Request { return matrixRequest("/mcp/message", call) }
 		return m.presentHTTP(t, identity.MCPGateway, c, newReq, m.jobEffects, "job:state keys + sys.job.submit publishes")
-	},
-		identity.Skip(identity.APIKeyManaged, "PR1-32"),
-	)
+	})
 }
 
 // TestAudienceMatrixGRPCAPI presents every credential to CordumApi SubmitJob

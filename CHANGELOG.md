@@ -316,6 +316,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Managed API keys: the scope resource `mcpgateway` covers the gateway's MCP endpoints.
+  `GET /mcp/sse` and `GET /mcp/status` need `mcpgateway:read`, and `POST /mcp/message`
+  needs `mcpgateway:write`. `mcpgateway:read`, `mcpgateway:write` and `mcpgateway:*`
+  can be minted. The bare `admin`, `write` and `operator` scopes match it as they
+  match other resources, and `read` and `viewer` match its read routes. `mcp:*`
+  scopes do not cover these endpoints (task-10c21744).
+
 - Gateway, scheduler and workflow engine: the Safety Kernel clients can present a TLS client certificate from `SAFETY_KERNEL_TLS_CLIENT_CERT` and `SAFETY_KERNEL_TLS_CLIENT_KEY` (both or neither, and only with `SAFETY_KERNEL_TLS_CA`), reloaded when the files change. The bundled Compose files, Helm chart and k8s production overlay point them at the existing client keypair under `/etc/cordum/tls/client/` (task-0102f2cc)
 - Gateway: MCP env defaults (from PR #591). When the stored system config has no
   `mcp.enabled`, `mcp.transport` or `mcp.policy_gate_enabled` key, the gateway reads

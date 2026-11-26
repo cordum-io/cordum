@@ -172,6 +172,7 @@ func resourceForPath(path string) (string, bool) {
 		prefix   string
 		resource string
 	}{
+		{"/mcp", "mcpgateway"},
 		{"/api/v1/auth/keys", "apikeys"},
 		{"/api/v1/workflow-runs", "workflows"},
 		{"/api/v1/workflows", "workflows"},
