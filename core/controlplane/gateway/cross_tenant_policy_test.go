@@ -32,6 +32,7 @@ func init() {
 	registerCrossTenantFamily("PR1-02-POLICY", crossTenantCase{"GET /api/v1/policy/bundles/{id}", "bundle-detail", crossTenantBundleDetail})
 	registerCrossTenantFamily("PR1-02-POLICY", crossTenantCase{"GET /api/v1/policy/output/stats", "output-stats", crossTenantOutputStats})
 	registerCrossTenantFamily("PR1-02-POLICY", crossTenantCase{"POST /api/v1/policy/replay", "replay", crossTenantPolicyReplay})
+	registerCrossTenantFamily("PR1-02-POLICY", crossTenantCase{"GET /api/v1/policy/audit", "audit", crossTenantPolicyAudit})
 	for _, route := range []struct{ method, path, name string }{
 		{http.MethodPut, "/bundles/{id}", "bundle-put"},
 		{http.MethodDelete, "/bundles/{id}", "bundle-delete"},
@@ -380,5 +381,45 @@ func crossTenantPolicyReplay(t *testing.T, sw *crossTenantSweep) {
 		if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil || response.Summary.Evaluated != 1 || len(response.Changes) != 1 || response.Changes[0].JobID != jobID {
 			t.Fatalf("owner replay did not evaluate B's job: %v; %s", err, rr.Body.String())
 		}
+	}
+}
+
+func crossTenantPolicyAudit(t *testing.T, sw *crossTenantSweep) {
+	t.Run("list", func(t *testing.T) { crossTenantPolicyAuditList(t, sw) })
+	t.Run("output", func(t *testing.T) { crossTenantPolicyAuditOutput(t, sw) })
+}
+
+func crossTenantPolicyAuditList(t *testing.T, sw *crossTenantSweep) {
+	jobID, marker := seedCrossTenantJob(t, sw)
+	topic := "job." + marker
+	path := "/api/v1/policy/audit"
+	assertCrossTenantAbsent(t, sw.as(t, sw.tenantA, http.MethodGet, path, ""), "A policy audit", jobID, topic)
+	rr := sw.as(t, sw.tenantB, http.MethodGet, path, "")
+	assertCrossTenantAbsent(t, rr, "owner policy audit")
+	if !strings.Contains(rr.Body.String(), jobID) || !strings.Contains(rr.Body.String(), topic) {
+		t.Fatalf("owner policy audit missing B's submit entry: %s", rr.Body.String())
+	}
+}
+
+func crossTenantPolicyAuditOutput(t *testing.T, sw *crossTenantSweep) {
+	jobID, marker := seedCrossTenantJob(t, sw)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	// No route moves a job into OUTPUT_QUARANTINED, so B's quarantine is written through the job store.
+	for _, state := range []model.JobState{model.JobStateRunning, model.JobStateQuarantined} {
+		if err := sw.server.jobStore.SetStateWithContext(ctx, jobID, state, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	record := model.OutputSafetyRecord{Decision: model.OutputQuarantine, Reason: marker, CheckedAt: time.Now().UTC().UnixMicro()}
+	if err := sw.server.jobStore.SetOutputDecision(ctx, jobID, record); err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/policy/audit?type=output"
+	assertCrossTenantAbsent(t, sw.as(t, sw.tenantA, http.MethodGet, path, ""), "A output audit", jobID, marker)
+	rr := sw.as(t, sw.tenantB, http.MethodGet, path, "")
+	assertCrossTenantAbsent(t, rr, "owner output audit")
+	if !strings.Contains(rr.Body.String(), jobID) {
+		t.Fatalf("owner output audit missing B's quarantined job: %s", rr.Body.String())
 	}
 }
