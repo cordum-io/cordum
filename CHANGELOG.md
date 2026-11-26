@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Approvals: store the audit entry before applying an approval; if it cannot be
+  stored, return 500 without applying the approval. An approval repair whose audit
+  entry cannot be stored returns 500 and states that the repair was applied.
+
 - Installer: `tools/scripts/install.ps1` runs under Windows PowerShell 5.1, as its
   `#Requires -Version 5.1` line says. Native stderr from a successful gpg call no
   longer stops it, the version-floor write no longer needs .NET Core, and CI runs the
