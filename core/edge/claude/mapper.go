@@ -344,12 +344,26 @@ func degradedReason(input HookInput, kind edge.EventKind) string {
 	return ""
 }
 
-// redactHookActionInput pulls the action-relevant fields from the hook
-// payload and runs them through the EDGE-004 redactor. The result is the
-// authoritative `input_redacted` shape passed to ClassifyEvent and embedded
-// in MappedHookAction.InputRedacted. Hook-level fields like prompt and
-// tool_response are merged in for events that don't carry tool_input.
-func redactHookActionInput(input HookInput, kind edge.EventKind) (map[string]any, error) {
+// OriginalActionInput returns the canonical JSON of the action fields that
+// InputRedacted shows, taken from a raw hook payload before redaction. The
+// bytes hold raw secrets: they are for the local Edge client only and must
+// never be logged, stored or sent.
+func OriginalActionInput(raw []byte) ([]byte, error) {
+	input, err := parseHookInput(raw)
+	if err != nil {
+		return nil, err
+	}
+	kind, ok := mapHookEventToKind(input.HookEventName)
+	if !ok {
+		return nil, errors.New("unsupported hook event")
+	}
+	return json.Marshal(hookActionSource(input, kind))
+}
+
+// hookActionSource pulls the action-relevant fields from the hook payload.
+// Hook-level fields like prompt and tool_response are merged in for events
+// that don't carry tool_input.
+func hookActionSource(input HookInput, kind edge.EventKind) map[string]any {
 	source := map[string]any{}
 	switch kind {
 	case edge.EventKindHookPreToolUse:
@@ -385,7 +399,15 @@ func redactHookActionInput(input HookInput, kind edge.EventKind) (map[string]any
 			source["event"] = input.FileEvent
 		}
 	}
+	return source
+}
 
+// redactHookActionInput runs the action-relevant fields of the hook payload
+// through the EDGE-004 redactor. The result is the authoritative
+// `input_redacted` shape passed to ClassifyEvent and embedded in
+// MappedHookAction.InputRedacted.
+func redactHookActionInput(input HookInput, kind edge.EventKind) (map[string]any, error) {
+	source := hookActionSource(input, kind)
 	if len(source) == 0 {
 		return map[string]any{}, nil
 	}

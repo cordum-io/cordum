@@ -2,6 +2,10 @@ package agentd
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"time"
@@ -45,6 +49,10 @@ type Evaluator struct {
 	responseWriteBudget time.Duration
 	coalesce            singleflight.Group
 	coalesceWaitHook    func() // test hook; nil in production.
+
+	// commitmentKey keys every input commitment. It is drawn per Evaluator,
+	// which is one Edge session, and is never stored, logged or sent.
+	commitmentKey []byte
 }
 
 func NewEvaluator(cfg EvaluatorConfig) *Evaluator {
@@ -70,7 +78,32 @@ func NewEvaluator(cfg EvaluatorConfig) *Evaluator {
 		recorder:            cfg.Recorder,
 		hookTimeout:         hookTimeout,
 		responseWriteBudget: budget,
+		commitmentKey:       newCommitmentKey(),
 	}
+}
+
+// newCommitmentKey draws the per-session commitment key. A failed draw leaves
+// no key, so evaluates carry no commitment and enforce-mode sessions deny them.
+func newCommitmentKey() []byte {
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return nil
+	}
+	return key
+}
+
+// inputCommitment is "hmac-sha256:<hex>" over the hook's original,
+// pre-redaction action input under the session key. It binds an approval to
+// that exact input, and without the key nobody can test guesses against it.
+// It is empty when there is no key or no usable payload.
+func (e *Evaluator) inputCommitment(raw []byte) string {
+	original, err := claude.OriginalActionInput(raw)
+	if err != nil || len(e.commitmentKey) == 0 {
+		return ""
+	}
+	mac := hmac.New(sha256.New, e.commitmentKey)
+	mac.Write(original)
+	return "hmac-sha256:" + hex.EncodeToString(mac.Sum(nil))
 }
 
 func (e *Evaluator) EvaluateHook(ctx context.Context, req claude.AgentdRequest) (claude.AgentdDecision, error) {
@@ -113,7 +146,7 @@ func (e *Evaluator) evaluateHook(ctx context.Context, req claude.AgentdRequest, 
 	if e.cache != nil {
 		e.recordCacheLookup(evalReq, "miss")
 	}
-	if key, ok := evaluatorCoalesceKey(cacheReq); ok {
+	if key, ok := evaluatorCoalesceKey(cacheReq, evalReq.InputCommitment); ok {
 		return e.coalescedFreshDecision(ctx, evalCtx, key, req, evalReq, cacheReq, startedAt, writer, requireEvidence)
 	}
 	return e.evaluateFreshDecision(evalCtx, req, evalReq, cacheReq, startedAt, writer, requireEvidence)
@@ -198,14 +231,16 @@ func (e *Evaluator) evaluateFreshDecision(evalCtx context.Context, req claude.Ag
 	return decision, nil
 }
 
-func evaluatorCoalesceKey(req SafeAllowCacheRequest) (string, bool) {
+// evaluatorCoalesceKey shares one in-flight evaluate only between calls with
+// the same original input, so one call can never ride another's approval.
+func evaluatorCoalesceKey(req SafeAllowCacheRequest, inputCommitment string) (string, bool) {
 	if strings.TrimSpace(req.TenantID) == "" ||
 		strings.TrimSpace(req.PolicySnapshot) == "" ||
 		strings.TrimSpace(req.ActionHash) == "" ||
 		strings.TrimSpace(req.InputHash) == "" {
 		return "", false
 	}
-	return "edge-evaluate:" + safeAllowCacheKey(req), true
+	return "edge-evaluate:" + safeAllowCacheKey(req) + "\x00" + inputCommitment, true
 }
 
 func (e *Evaluator) evaluationContext(parent context.Context) (context.Context, context.CancelFunc) {
@@ -229,7 +264,7 @@ func (e *Evaluator) evaluateRequest(req claude.AgentdRequest) EvaluateRequest {
 		layer = string(edgecore.LayerHook)
 	}
 	agentProduct := nonEmpty(req.AgentProduct, "claude-code")
-	return boundedEvaluateRequest(EvaluateRequest{
+	evalReq := boundedEvaluateRequest(EvaluateRequest{
 		TenantID:      nonEmpty(req.TenantID, e.state.TenantID),
 		PrincipalID:   nonEmpty(req.PrincipalID, e.state.PrincipalID),
 		SessionID:     nonEmpty(req.SessionID, e.state.SessionID),
@@ -247,6 +282,8 @@ func (e *Evaluator) evaluateRequest(req claude.AgentdRequest) EvaluateRequest {
 		Labels:        evaluatorLabels(req.Labels),
 		CWD:           req.CWD,
 	})
+	evalReq.InputCommitment = e.inputCommitment(req.RawPayload)
+	return evalReq
 }
 
 func (e *Evaluator) cacheRequest(req claude.AgentdRequest, evalReq EvaluateRequest) SafeAllowCacheRequest {

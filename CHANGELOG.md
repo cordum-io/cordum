@@ -7,6 +7,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Edge approvals: an approval of a Bash command now also covers the files the command
+  names, the git HEAD of its working directory and, for kubectl, the target context and
+  namespace. cordum-hook adds a keyed digest of them to the approval's action identity
+  and checks them again before an allowed command starts, so a change after the
+  approval blocks the command until it is approved again. The hook labels a call
+  `artifact.binding=bound` only for one simple command of plain literal words whose
+  program and every argument it recognizes: `kubectl apply`, `create` (from files,
+  or a configmap or secret) or `get`
+  with only the `--context`, `--namespace`/`-n`, `--kubeconfig`, `-f`/`--filename`,
+  `--from-file`, `--from-env-file` and `-R`/`--recursive` flags, or `sh`, `bash`,
+  `zsh`, `dash`, `python`, `node`, `perl` or `ruby` running a script file from the
+  working directory. Any other call is labelled `artifact.binding=unbound` with an
+  `artifact.unbound_reason` (an unrecognized command, inline code, shell syntax, a URL
+  or network path, a Windows device or path that depends on the current drive, a
+  directory, an unreadable or oversized file, a name under /proc, /dev or /sys, by any
+  spelling or symlink, a Windows device or namespace link target, a read-size mismatch,
+  files that take over a second to read, an unknown
+  kube context, or a test or build command), so a policy can deny it. Where inputs can
+  be collected, the digest still covers the files it names. PowerShell, Monitor and
+  any other non-Bash tool carrying a command are labelled unbound without a digest.
+  Files a script or tool opens on its own are not covered
+  (task-14d105fb).
 - Python SDK: remove template-unused imports during generation with the pinned Ruff
   cleanup hook before formatting, without changing API or version markers (task-90b8033a).
 - Edge hook: a CONSTRAIN decision that carries a constraint kind the hook cannot apply
@@ -14,15 +36,48 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   those kinds. An approved action whose consumed ALLOW still carries such a kind blocks
   the same way. The hook applies none of the five kinds (budgets, sandbox, toolchain,
   diff, redaction level) yet (task-aa7ceb05).
+- Edge sessions: the session create, get, list, end and export responses, and the
+  session started and ended audit events, carry a server-derived `assurance_state`
+  (compatibility, hook-mediated, unsupported or stale). Get, list and export derive it
+  from the current facts, so a session whose heartbeat has lapsed or that has ended
+  reports stale. `executor-enforced` is reserved and not reported (task-50b24bdf).
+- Edge approvals: an approval now applies only to the exact original tool input it was
+  granted for, through a keyed commitment that cordum-agentd computes before redaction
+  and the Gateway binds into the approval's action hash. In enforce and
+  enterprise-strict sessions a hook evaluation without a commitment is denied, so
+  upgrade the Gateway and cordum-agentd together (task-6f885a33).
+- Edge approvals: after a server-side approval wait, the Gateway re-checks the caller's
+  credential and re-runs the policy check before it consumes the approval. A deny that
+  applies by then, or a credential that no longer authenticates as the same principal,
+  blocks the tool call and leaves the approval unconsumed (task-142fa2f0).
+- Dashboard: the Edge session list and detail pages show the assurance state the server
+  reports for each session, with a distinct label per state, and "Not reported" when the
+  server sends no recognized value. The session list can be filtered by assurance state,
+  and the policy-mode chip now reads "policy <mode>" (task-9b412c07).
 
 ### Documentation
 
 - Release documentation now describes the combined image/binary qualification record, digest-gated publication, eight-image checks and branch-based dry runs, including untested coverage and skipped publication steps (task-d9e90910).
+- Metric names: `docs/production.md`, `docs/output-safety.md`, `docs/k8s-deployment.md`, `docs/troubleshooting.md`, `docs/scheduler.md`, `docs/release-notes/unreleased.md` and `ROADMAP.md` now use the exported names, for example `cordum_scheduler_output_policy_skipped_total`, `cordum_scheduler_scheduler_dispatch_latency_seconds` and `cordum_api_gateway_http_requests_total`. Names that no Cordum process exports are removed: two rows of the `docs/k8s-deployment.md` metrics table, and the DLQ-depth and worker-heartbeat example alert rules. The workflow metrics in `docs/production.md` are marked as not exported (task-5d45fd40).
+- Input fail mode: `docs/safety-kernel.md` section 10 now says when a change to `scheduler.input_fail_mode` or `scheduler.input_fail_open_scope` takes effect: on a config-change notification or the 30-second reload, after a cached tenant entry is refreshed, and never for a tenant whose configuration has not loaded, whose jobs are requeued even in `open` mode. `ROADMAP.md` names the counter `cordum_scheduler_input_fail_open_total` and says open input mode admits only listed topics (task-c399879b).
+- Metric names: `docs/scheduler-internals.md` section 10, `docs/CORE.md` and `docs/AGENT_PROTOCOL.md` now use the exported names, for example `cordum_scheduler_jobs_received_total`, `cordum_scheduler_scheduler_dispatch_latency_seconds` and `cordum_scheduler_validation_rejections_total` (task-f8ddafe6).
+- Security contract: `docs/contract/README.md` indexes the M0 contract artifacts, names the check for each, states contract version 1 and lists the enforced-cell test gaps at the freeze. New cross-check tests in `tests/contract` reject a `verified` claim that names a `violated` invariant, and a claim invariant id missing from `invariants.yaml` (task-e2f303cd).
 - Protected-operation contract: `docs/contract/protected-operation.md` now points to [ADR-011](docs/adr/011-execution-grant-format.md), the proposed execution-grant format, for M2A-01's open questions and the grant issuer key row. ADR-011 is a design; it implements no schema, verifier, broker or protected operation (task-e43b5876).
 - Enforcement matrix: `docs/contract/enforcement-matrix.yaml` has a `ref_tests` section that links each code ref of an enforced cell to existing tests, or records a gap where none exists (three today: the agentd throttle mapping, the scheduler throttle requeue and the `budgets.max_concurrent_jobs` limit). `tests/contract` rejects a missing or orphan entry, an unknown test, an empty list without a gap and a gap alongside tests (task-4c0b9fe8).
 - MCP docs: `docs/mcp/approval_hold.md` and `docs/mcp-server.md` now state that a policy-gated `tools/call` with a blank agent ID answers `-32098` `no_identity` before any approval access, and that missing tenant, session or execution metadata answers `-32097` `missing_mcp_metadata` for plain and ref-bearing calls (task-850c7a0e).
 
 ### Breaking changes
+
+- Edge classifier: build and test commands (package-manager test and build scripts,
+  `go test` and `go build`, `pytest`, `vitest`, `cargo test` and `cargo build`,
+  `make build` and `make test`) are labelled `command.class=arbitrary_code` instead of
+  `safe`, because they run repository code. Only the read-only git commands stay `safe`.
+  agentd never serves these commands from the safe-allow cache and, in enforce mode,
+  denies them while the gateway is unavailable. The label does not confine a command
+  once it is allowed. The example Edge pack's production template now requires
+  approval for them (`claude-code.require-approval-for-build-test`), and the demo
+  policy still allows them. Upgrade note: a policy rule matching `command.class: safe`
+  for these commands no longer matches; match `arbitrary_code` (task-d040242d).
 
 - Delegation tokens: child issuance requires the parent's tenant and caps expiry
   at the parent's expiry. Chain-link expiry checks use the configured clock leeway.
@@ -110,6 +165,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Docs: Edge overview, Claude Code, CLI and runbook outage statements now follow
+  the failure and partition behavior contract's measured hook and Gateway probes.
+  The P0 decision table is labeled design intent; agentd Gateway-outage handling
+  in enforce and observe remains not measured (M0-06-DOCS-EDGE-OVERVIEW, task-0a0d8d11).
 - Guardrails demo: `tools/scripts/demo_guardrails_run.sh` reads `CORDUM_API_KEY`
   (then `API_KEY`) and `REDIS_PASSWORD` from the repository's `.env` when the
   environment does not set them, taking a key's last definition as Docker
@@ -221,6 +280,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   instead of TanStack, without changing table behavior (task-fc8b600a).
 
 ### Added
+
+- `POST /api/v1/edge/calibration-reports` summarizes the policy decisions recorded in
+  observe-mode Edge sessions for a time window, repositories and labels: deny and
+  require-approval counts per rule, policy rules with no matching event, the most affected
+  tools and command classes, and approval requests per UTC day. The report is stored under
+  a content-derived id, and `GET /api/v1/edge/calibration-reports/{id}` returns it
+  (M5-01B, task-c574681e).
+
+- Execution grant v1 schema (M2A-02A) and `core/execgrant` canonical bytes, strict
+  decoder and golden vectors; no service issues, signs or verifies grants yet (task-85bb037a).
+
+- Release-compose install: when none of `CORDUM_POLICY_SIGNING_KEY`,
+  `SAFETY_POLICY_PUBLIC_KEY` and `SAFETY_POLICY_SIGNATURE` is set, `quickstart.sh`
+  on `docker-compose.release.yml` generates an Ed25519 key with
+  `cordumctl pack keygen`, signs `config/safety.yaml` under key id `default` and
+  writes all three to `.env`. A re-run leaves `.env` unchanged, operator values
+  are kept, and a partial setting or a non-default `CORDUM_POLICY_SIGNING_KEY_ID`
+  stops with a named error before any write. `install.sh` with
+  `USE_RELEASE_IMAGES=1` now pulls images before quickstart only on a re-install.
+  `tools/scripts/quickstart_policy_bootstrap_test.sh` covers these cases
+  (task-5dc8476c).
+- Artifacts: tenant-scoped, write-once SHA-256 content storage rechecks bytes on reads and supports extend-only retention; no service uses it yet (task-0e661014).
 
 - Decision records: for a job dispatched under a delegation token, the Policy
   Decision Log record and the job's stored safety decision carry

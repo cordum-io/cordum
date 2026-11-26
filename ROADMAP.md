@@ -117,9 +117,9 @@ The path to v1.0.0 focuses on **production hardening** and **API stability**. Ba
 - [x] **Resources catalog** — 7 resources (jobs, workflows, runs, audit, health, policies)
 
 ### Input Safety Fail Modes
-- [x] **Configurable fail modes** — `open` (allow through) and `closed` (requeue/quarantine) for input and output safety
+- [x] **Configurable fail modes** — `open` (allow through; for input, only topics listed in `scheduler.input_fail_open_scope`) and `closed` (requeue/quarantine) for input and output safety
 - [x] **Dashboard settings** — InputSafetySettings and OutputSafetySettings pages
-- [x] **Metrics instrumentation** — `cordum_input_fail_open_total` and `cordum_output_policy_skipped_total` counters
+- [x] **Metrics instrumentation** — `cordum_scheduler_input_fail_open_total` and `cordum_scheduler_output_policy_skipped_total` counters
 
 ### CAP Protocol & Go SDK
 - [x] **CAP v2.5.2 integration** — Handshake, ErrorCode enum, AlertSeverity, MetricsHook
