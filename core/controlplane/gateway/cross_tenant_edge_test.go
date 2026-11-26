@@ -167,6 +167,9 @@ func crossTenantEdgeWrite(name, path, body string) crossTenantCase {
 		after, published := crossTenantEdgeStateOf(t, sw, seed), sw.publishedSince(mark)
 		owner := sw.as(t, sw.tenantB, http.MethodPost, target, payload)
 		assertCrossTenantAbsent(t, owner, "owner "+name)
+		if (name == "approval-wait" || name == "export") && !strings.Contains(owner.Body.String(), seed.marker) {
+			t.Error("owner response missing B evidence")
+		}
 		if name != "approval-wait" && reflect.DeepEqual(after, crossTenantEdgeStateOf(t, sw, seed)) {
 			t.Error("owner write had no observable effect")
 		}
@@ -231,14 +234,13 @@ func crossTenantIngestAs(t *testing.T, who crossTenantSweepTenant, role, path, b
 	return rr
 }
 
-func seedCrossTenantBinary(t *testing.T, sw *crossTenantSweep) string {
+func seedCrossTenantBinary(t *testing.T, sw *crossTenantSweep) {
 	t.Helper()
 	sw.server.auditChainer = audit.NewChainer(sw.server.redisClient(), "")
 	event := validBinaryVerifyOK()
 	event.Path = "private-edge-b-binary"
 	body := mustJSON(binaryVerifyIngestRequest{Events: []model.BinaryVerifyEvent{event}})
 	assertCrossTenantAbsent(t, sw.as(t, sw.tenantB, "POST", "/api/v1/edge/binary-integrity/events", body), "B binary seed")
-	return body
 }
 
 func crossTenantBinaryRecords(t *testing.T, sw *crossTenantSweep) string {
@@ -353,11 +355,12 @@ func crossTenantShadowCase(name, method, path string) crossTenantCase {
 		if strings.HasPrefix(name, "exception-") {
 			marker = "private-edge-exception-reason"
 		}
-		if name == "shadow-create" {
+		switch name {
+		case "shadow-create":
 			request := validShadowCreateBody(sw.tenantB.tenantID)
 			request.TenantID = sw.tenantB.tenantID
 			body = mustJSON(request)
-		} else if name == "exception-create" {
+		case "exception-create":
 			body = mustJSON(validExceptionCreateBody())
 			attacker.tenantID = sw.tenantB.tenantID
 		}
