@@ -1315,14 +1315,17 @@ func policyAuditEntriesFromDoc(doc *configsvc.Document) ([]policybundles.PolicyA
 	return entries, nil
 }
 
-// prependPolicyAuditEntry puts entry first in doc's entries list and keeps
-// the newest 500. A list that does not parse leaves doc unchanged.
-func prependPolicyAuditEntry(doc *configsvc.Document, entry policybundles.PolicyAuditEntry) error {
+// prependPolicyAuditEntry puts added, given in append order, first in doc's
+// entries list, newest first, and keeps the newest 500. A list that does not
+// parse leaves doc unchanged.
+func prependPolicyAuditEntry(doc *configsvc.Document, added ...policybundles.PolicyAuditEntry) error {
 	entries, err := policyAuditEntriesFromDoc(doc)
 	if err != nil {
 		return err
 	}
-	entries = append([]policybundles.PolicyAuditEntry{entry}, entries...)
+	newest := slices.Clone(added)
+	slices.Reverse(newest)
+	entries = append(newest, entries...)
 	if len(entries) > 500 {
 		entries = entries[:500]
 	}
@@ -1348,8 +1351,10 @@ func (s *server) appendPolicyAudit(ctx context.Context, entry policybundles.Poli
 	entry = normalizePolicyAuditEntry(entry)
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), policyAuditTimeout)
 	defer cancel()
-	err := s.configSvc.SetWithRetry(ctx, configsvc.Scope(policybundles.PolicyAuditScope), policybundles.PolicyAuditID, policyAuditAttempts,
-		func(doc *configsvc.Document) error { return prependPolicyAuditEntry(doc, entry) })
+	err := s.policyAudit.append(entry, func(batch []policybundles.PolicyAuditEntry) error {
+		return s.configSvc.SetWithRetry(ctx, configsvc.Scope(policybundles.PolicyAuditScope), policybundles.PolicyAuditID, policyAuditAttempts,
+			func(doc *configsvc.Document) error { return prependPolicyAuditEntry(doc, batch...) })
+	})
 	if err != nil {
 		slog.Error("policy audit entry not persisted", "action", entry.Action, "resource_type", entry.ResourceType, "resource_id", entry.ResourceID, "error", err)
 		return fmt.Errorf("policy bundle append audit: %w", err)
