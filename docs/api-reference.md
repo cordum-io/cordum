@@ -3080,7 +3080,7 @@ The following routes are registered in the gateway (`registerRoute` calls). Gene
 
 <!-- BEGIN:rest-routes -->
 
-_Generated from `core/controlplane/gateway/gateway.go`, `core/controlplane/gateway/handlers_mcp.go` (registration order) — do not edit by hand; run `make docs-tables`. 229 routes._
+_Generated from `core/controlplane/gateway/gateway.go`, `core/controlplane/gateway/handlers_mcp.go` (registration order) — do not edit by hand; run `make docs-tables`. 231 routes._
 
 | Method | Path |
 |--------|------|
@@ -3165,6 +3165,8 @@ _Generated from `core/controlplane/gateway/gateway.go`, `core/controlplane/gatew
 | GET | `/api/v1/edge/sessions/{session_id}` |
 | POST | `/api/v1/edge/sessions/{session_id}/heartbeat` |
 | POST | `/api/v1/edge/sessions/{session_id}/end` |
+| POST | `/api/v1/edge/calibration-reports` |
+| GET | `/api/v1/edge/calibration-reports/{id}` |
 | POST | `/api/v1/edge/executions` |
 | GET | `/api/v1/edge/executions` |
 | GET | `/api/v1/edge/executions/{execution_id}` |
