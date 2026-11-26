@@ -12,6 +12,7 @@ import (
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
+	wf "github.com/cordum/cordum/core/workflow"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
@@ -148,4 +149,64 @@ func TestApproveJobResolutionFailureRecordsFailedAttempt(t *testing.T) {
 			require.Empty(t, record.ApprovedBy)
 		})
 	}
+}
+
+func TestRejectJobAuditFailureStillRejects(t *testing.T) {
+	s, _, hooked, _ := auditPersistServer(t)
+	jobID := seedApprovalJob(t, s, "")
+	hooked.AddHook(auditPersistHook{failKey: auditPersistLogKey})
+	logs := storeWriterLogs(t)
+	rr := httptest.NewRecorder()
+	s.handleRejectJob(rr, approvalDecisionRequest(t, jobID, "reject", `{}`, "", "alice"))
+
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+	state, err := s.jobStore.GetState(context.Background(), jobID)
+	require.NoError(t, err)
+	require.Equal(t, model.JobStateDenied, state)
+	record, err := s.jobStore.GetApprovalRecord(context.Background(), jobID)
+	require.NoError(t, err)
+	require.Equal(t, model.ApprovalDecisionReject, record.Decision)
+	require.Len(t, auditPersistErrors(logs, "reject"), 1)
+}
+
+func TestCancelRunAuditFailureStillCancels(t *testing.T) {
+	s, _, hooked, _ := auditPersistServer(t)
+	s.workflowEng = wf.NewEngine(s.workflowStore, s.bus)
+	run := &wf.WorkflowRun{ID: "audit-cancel", OrgID: "default", Status: wf.RunStatusRunning}
+	require.NoError(t, s.workflowStore.CreateRun(context.Background(), run))
+	hooked.AddHook(auditPersistHook{failKey: auditPersistLogKey})
+	logs := storeWriterLogs(t)
+	r := approvalDecisionRequest(t, "", "cancel", `{}`, "", "alice")
+	r.SetPathValue("run_id", run.ID)
+	rr := httptest.NewRecorder()
+	s.handleCancelRun(rr, r)
+
+	require.Equal(t, http.StatusNoContent, rr.Code, rr.Body.String())
+	after, err := s.workflowStore.GetRun(context.Background(), run.ID)
+	require.NoError(t, err)
+	require.Equal(t, wf.RunStatusCancelled, after.Status)
+	require.Len(t, auditPersistErrors(logs, "cancel"), 1)
+}
+
+func TestSelfApprovalAuditFailureStillRefuses(t *testing.T) {
+	s, _, hooked, _ := auditPersistServer(t)
+	jobID := seedApprovalJob(t, s, "")
+	r := approvalDecisionRequest(t, jobID, "approve", `{}`, "", "alice")
+	identity := submitterIdentity(r)
+	require.NotEmpty(t, identity)
+	require.NoError(t, s.jobStore.SetSubmittedBy(context.Background(), jobID, identity))
+	hooked.AddHook(auditPersistHook{failKey: auditPersistLogKey})
+	logs := storeWriterLogs(t)
+	rr := httptest.NewRecorder()
+	s.handleApproveJob(rr, r)
+
+	require.Equal(t, http.StatusForbidden, rr.Code, rr.Body.String())
+	state, err := s.jobStore.GetState(context.Background(), jobID)
+	require.NoError(t, err)
+	require.Equal(t, model.JobStateApproval, state)
+	record, err := s.jobStore.GetApprovalRecord(context.Background(), jobID)
+	require.NoError(t, err)
+	require.Empty(t, record.ApprovedBy)
+	require.Empty(t, s.bus.(*stubBus).published)
+	require.Len(t, auditPersistErrors(logs, "self_approval_denied"), 1)
 }

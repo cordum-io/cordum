@@ -399,6 +399,7 @@ func (s *server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// Cancellation stops work and must complete; appendPolicyAudit logs persistence failures at ERROR.
 	s.appendAuditEntryNamed(r.Context(), "cancel", "run", runID, cancelRunWfName, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "cancel run "+runID)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -1012,6 +1013,7 @@ func (s *server) handleRepairApproval(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
+	// approve_failed and self_approval_denied record refusals that already answer non-2xx.
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermJobsApprove, []string{"admin"}, s.jobStore, s.bus) {
 		return
 	}
@@ -1329,6 +1331,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 					// ApprovalRef and JobHash are preserved (approval identity
 					// is still this job); ApprovalRevision is bumped so
 					// downstream consumers can detect the drift.
+					// Informational: approval continues and records its own required audit entry below.
 					s.appendAuditEntryNamed(ctx, "approve_snapshot_refreshed", "job", jobID, "", policybundles.PolicyActorID(r), policybundles.PolicyRole(r),
 						fmt.Sprintf("policy snapshot refreshed during approval (was=%s now=%s decision=%s rule=%s)",
 							snapshotBase(policySnapshot), snapshotBase(currentSnapshot), freshDecision.String(), freshResp.GetRuleId()))
@@ -1495,6 +1498,7 @@ func (s *server) approvalRunTerminalStatus(ctx context.Context, req *pb.JobReque
 }
 
 func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
+	// reject_failed and self_rejection_denied record refusals that already answer non-2xx.
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermJobsApprove, []string{"admin"}, s.jobStore, s.bus) {
 		return
 	}
@@ -1696,7 +1700,8 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 			rejectAgentID, rejectAgentName, rejectAgentRiskTier = s.resolveAgentForAudit(ctx, resolved.Request.Labels["agent_id"])
 		}
 		rejectActorID, rejectIdentitySource, rejectIdentityLabel := policybundles.PolicyActorIdentity(r)
-		s.appendApprovalDecisionAudit(ctx, "reject", jobID, rejectTopic, rejectActorID, policybundles.PolicyRole(r), rejectIdentitySource, rejectIdentityLabel, reason, note, rejectAgentID, rejectAgentName, rejectAgentRiskTier)
+		// Rejection reduces authority and must complete; appendPolicyAudit logs persistence failures at ERROR.
+		_ = s.appendApprovalDecisionAudit(ctx, "reject", jobID, rejectTopic, rejectActorID, policybundles.PolicyRole(r), rejectIdentitySource, rejectIdentityLabel, reason, note, rejectAgentID, rejectAgentName, rejectAgentRiskTier)
 		result = handlerResult{http.StatusOK, map[string]string{"job_id": jobID}}
 		return nil
 	})
