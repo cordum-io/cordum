@@ -108,12 +108,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `CORDUM_API_KEY`, managed keys and password sessions do not carry it.
   Existing pools, topic routes and workers are unchanged (task-5e780668).
 - Agents: `GET /api/v1/agents/{id}/denied-events` resolves the agent in the
-  caller's tenant first, and answers `404 AGENT_NOT_FOUND` when it cannot, as
-  `GET /api/v1/agents/{id}` does. `POST /api/v1/agents/verify-delegation`
-  verifies a token for a caller bound to one tenant only when the token's
-  tenant claim names that tenant; any other token gets `403` before it is
-  checked. A caller whose access spans all tenants verifies any token
-  (task-810a4b3a).
+  caller's tenant first, as `GET /api/v1/agents/{id}` does, and returns only
+  that agent's events, or `404 AGENT_NOT_FOUND` when no agent resolves.
+  `POST /api/v1/agents/verify-delegation` ignores whitespace around the token.
+  For a caller bound to one tenant it verifies a token only when the token's
+  tenant claim names that tenant: a token naming another tenant or none gets
+  `403` before it is checked, and a token that does not parse gets
+  `valid: false` with `malformed`. A caller whose access spans all tenants
+  verifies any token (task-810a4b3a).
 
 - Worker dispatch: with `WORKER_ATTESTATION=enforce`, or with
   `CORDUM_SDK_HANDSHAKE` at `warn` or `enforce`, the scheduler dispatches a
