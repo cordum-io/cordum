@@ -45,6 +45,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - typedoc, typedoc-plugin-coverage and typedoc-plugin-markdown are removed from the install with pnpm `-` overrides. typedoc 0.28 calls `Minimatch#matchOne`, which 11.x removed. orval 8.31.0 loads typedoc only for its `docs` output, which the dashboard does not configure. Until typedoc supports minimatch 11, enabling that output fails at import. orval stays at 8.31.0.
 
 ### Fixed
+- Gateway config: writing an `/api/v1/config` document in any scope other than
+  `org`, `team`, `workflow` or `step` (the flat body writes `system/default`),
+  reading a `system` scope document, and `GET /api/v1/config/effective` require
+  platform authority: no auth provider, an auth context spanning all tenants, or
+  the gateway's own tenant (`TENANT_ID`, `default` when unset). Other callers get
+  403 (task-6e7013d5).
 
 - Policy audit: each entry records a tenant: the job's tenant for job entries,
   otherwise the tenant of a caller bound to one tenant. For callers bound to one
