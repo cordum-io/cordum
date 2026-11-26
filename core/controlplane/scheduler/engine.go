@@ -1023,6 +1023,11 @@ func (e *Engine) handlePacket(ctx context.Context, p *pb.BusPacket) (err error) 
 			authority, _ := bus.RawAdmissionAuthorityFromContext(ctx)
 			return e.handleProductionJobResult(authority, p, res, tokenResult.Claims)
 		}
+		if allowed, err := e.compatJobTenantAllowed(tokenResult.Claims, strings.TrimSpace(res.GetJobId())); err != nil {
+			return RetryAfter(err, retryDelayStore)
+		} else if !allowed {
+			return nil
+		}
 		return e.handleCompatJobResult(p, res)
 	case *pb.BusPacket_JobProgress:
 		progress := payload.JobProgress
@@ -1078,6 +1083,11 @@ func (e *Engine) handlePacket(ctx context.Context, p *pb.BusPacket) (err error) 
 				return e.handleProductionWorkerCancel(authority, p, cancelReq, tokenResult.Claims)
 			}
 			return e.handleProductionServiceCancel(cancelReq)
+		}
+		if allowed, err := e.compatJobTenantAllowed(tokenResult.Claims, cancelReq.GetJobId()); err != nil {
+			return RetryAfter(err, retryDelayStore)
+		} else if !allowed {
+			return nil
 		}
 		slog.Info("job cancel received",
 			"job_id", cancelReq.JobId,

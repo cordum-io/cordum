@@ -46,6 +46,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Scheduler: in compat mode, a session-authenticated sender's `JobCancel`
+  or `JobResult` applies only to jobs in its own tenant, as in production.
+  Service identities and unauthenticated compat traffic are unchanged
+  (task-24d20bca).
+
 - Legal-hold routes and the audit export test act on the caller's own tenant.
   Naming or releasing another tenant's hold, or listing every tenant, requires
   platform authority: no auth provider, an auth context that spans all tenants,

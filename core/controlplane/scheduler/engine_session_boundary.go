@@ -21,6 +21,33 @@ type jobRequestGetter interface {
 	GetJobRequest(context.Context, string) (*pb.JobRequest, error)
 }
 
+func (e *Engine) compatJobTenantAllowed(claims *SessionTokenClaims, jobID string) (bool, error) {
+	if claims == nil || servicetoken.IsReservedIdentity(claims.Subject) {
+		return true, nil
+	}
+	if e.jobStore == nil {
+		return false, errors.New("compat job tenant store unavailable")
+	}
+	parent := e.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, storeOpTimeout)
+	defer cancel()
+	tenant, err := e.jobStore.GetTenant(ctx, jobID)
+	if err != nil {
+		return false, err
+	}
+	if nonemptyMatch(claims.Tenant, tenant) {
+		return true, nil
+	}
+	slog.Error("compat job event rejected", "reason", "tenant_mismatch")
+	if e.metrics != nil {
+		e.metrics.IncValidationRejections()
+	}
+	return false, nil
+}
+
 func (e *Engine) verifySessionTokenResult(packet *pb.BusPacket, workerID, packetType string) (TokenVerificationResult, bool) {
 	if e == nil || e.sessionMiddleware == nil {
 		return TokenVerificationResult{Verdict: TokenVerdictPass}, true
