@@ -7,6 +7,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- MCP: the gateway's HTTP MCP endpoint now serves nine read tools instead of answering
+  501 `read_only_unsupported`: listing jobs, runs, workflows, topics, agents and pending
+  approvals, reading a run and its timeline, and verifying the audit chain. Each read runs through
+  the route's own handler with the caller's tenant, so another tenant's objects are not
+  returned. The stdio server's runs reads now use the `/api/v1/workflow-runs` routes, and
+  both transports accept a list answered as a bare JSON array. `cordum_list_packs`,
+  `cordum_list_workers` and `cordum_audit_query` are documented as unavailable over HTTP
+  MCP (task-7c148803).
+
 - Installer: `tools/scripts/install.ps1` runs under Windows PowerShell 5.1, as its
   `#Requires -Version 5.1` line says. Native stderr from a successful gpg call no
   longer stops it, the version-floor write no longer needs .NET Core, and CI runs the
