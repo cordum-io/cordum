@@ -111,9 +111,11 @@ var storeKeyManifest = []storeKeyEntry{
 	{"eval:run:{tenant}:idx:t", "core/infra/store", "tenant-in-key", "TestEvalRunTenantIsolation"},
 	{"eval:run:{tenant}:idx:ds:{dataset}", "core/infra/store", "tenant-in-key", "TestTenantIsolationEvalRunReadOnly"},
 	{"cap:replay:{hash}", "core/infra/replay", "tenant-in-key", "TestTenantIsolationReplayStoreKey"},
-	// Non-tenant schemas are already excluded by data-inventory.yaml:
-	// schema:{id} is the shared JSON Schema registry with no tenant ownership;
-	// schema:url:{url} is its shared URL-reference registry, not tenant data.
+	// The schema registry is DI-C56 in data-inventory.yaml. cordum:schema:owners
+	// holds the owner tenant of each tenant-owned schema id; the pack-installed
+	// schema:url:{url} aliases are classified there as not tenant data.
+	{"schema:{id}", "core/infra/schema", "global-id", "TestSchemaRegistryTenantBound"},
+	{"cordum:schema:owners", "core/infra/schema", "tenant-in-value", "TestSchemaRegistryTenantBound"},
 	{"schema:index", "core/infra/schema", "global-id", "open-finding:PR1-51"},
 	{"sys:workers:snapshot", "core/infra/registry", "global-id", "open-finding:PR1-47"},
 	{"mem:{memory}:events", "core/contextwindow/engine", "tenant-in-key, enforced at store.TenantMemoryID", "TestTenantIsolationContextEngineBuildWindow"},
@@ -142,8 +144,8 @@ var storeKeyManifest = []storeKeyEntry{
 	{"user:id:{user}", "core/controlplane/gateway/auth", "global-id", "TestTenantIsolationAuthUserAndSCIMMetaObjects"},
 	{"user:tenant:{tenant}", "core/controlplane/gateway/auth", "tenant-in-key", "pending:PR1-03J"},
 	{"session:user:{user}", "core/controlplane/gateway/auth", "global-id", "pending:PR1-03J"},
-	{"login:failed:{user}:{ip}", "core/controlplane/gateway/auth", "global-id", "pending:PR1-03I"},
-	{"login:failed:global:{user}", "core/controlplane/gateway/auth", "global-id", "pending:PR1-03I"},
+	{"login:failed:{user}:{ip}", "core/controlplane/gateway/auth", "tenant-in-key, enforced at loginThrottleKey", "TestTenantIsolationLoginThrottle"},
+	{"login:failed:global:{user}", "core/controlplane/gateway/auth", "tenant-in-key, enforced at loginGlobalThrottleKey", "TestTenantIsolationLoginThrottle"},
 	{"apikey:{key}", "core/controlplane/gateway/auth", "tenant-in-value", "TestTenantIsolationAuthManagedKeyObject"},
 	{"apikey:prefix:{prefix}", "core/controlplane/gateway/auth", "global-id", "pending:PR1-03J"},
 	{"apikey:tenant:{tenant}", "core/controlplane/gateway/auth", "tenant-in-key", "pending:PR1-03J"},
@@ -160,15 +162,14 @@ var storeKeyManifest = []storeKeyEntry{
 	{"delegation:revoked:{jti}", "core/auth/delegation", "global-id", "TestTenantIsolationGatewayDelegationObject"},
 	{"run:{run}", "core/controlplane/gateway", "tenant-in-key, enforced at store.TenantMemoryID", "TestTenantIsolationGatewayRunChatMemory"},
 	{"eval:run:pending:{tenant}:{run}", "core/controlplane/gateway", "tenant-in-key", "TestTenantIsolationGatewayEvalRunPending"},
-	{"delegation:issue:{tenant}:{agent}:{minute}", "core/controlplane/gateway", "tenant-in-key", "pending:PR1-03I"},
+	{"delegation:issue:{tenant}:{agent}:{minute}", "core/controlplane/gateway", "tenant-in-key", "TestTenantIsolationDelegationIssueCounter"},
 	{"mcp:approvals:{approval}", "core/controlplane/gateway", "tenant-in-value", "TestTenantIsolationGatewayMCPApprovalObject"},
 	{"mcp:approvals:idx:{tenant}:{agent}:{tool}:{args_hash}", "core/controlplane/gateway", "tenant-in-key", "pending:PR1-03J"},
-	{"cordum:rl:{scope}:{second}", "core/controlplane/gateway", "global-id", "pending:PR1-03I"},
-	{"cordum:rl:tenant:{tenant}:{second}", "core/controlplane/gateway", "tenant-in-key", "pending:PR1-03I"},
-	{"cordum:rl:ip:{ip}:{second}", "core/controlplane/gateway", "global-id", "pending:PR1-03I"},
-	{"ip:{ip}", "core/controlplane/gateway", "global-id", "pending:PR1-03I"},
-	{"tenant:{tenant}", "core/controlplane/gateway", "tenant-in-key", "pending:PR1-03I"},
-	{"cordum:wf:run:admission:{org}", "core/controlplane/gateway", "tenant-in-key", "pending:PR1-03I"},
+	{"cordum:rl:{scope}:{second}", "core/controlplane/gateway", "global-id", "TestTenantIsolationRedisRateLimit"},
+	{"cordum:rl:tenant:{tenant}:{second}", "core/controlplane/gateway", "tenant-in-key", "TestTenantIsolationRedisRateLimit"},
+	{"cordum:rl:ip:{ip}:{second}", "core/controlplane/gateway", "global-id", "TestTenantIsolationRedisIPRateLimit"},
+	{"tenant:{tenant}", "core/controlplane/gateway", "tenant-in-key", "TestTenantIsolationMemoryRateLimit"},
+	{"cordum:wf:run:admission:{org}", "core/controlplane/gateway", "tenant-in-key", "TestTenantIsolationWorkflowRunAdmission"},
 	{"copilot:session:{tenant}:{session}", "core/controlplane/copilot", "tenant-in-key", "TestTenantIsolationCopilotSessionReadOnly"},
 	{"copilot:sessions:{tenant}:{user}", "core/controlplane/copilot", "tenant-in-key", "TestTenantIsolationCopilotSessionReadOnly"},
 	{"session:worker:v2:{tenant}:{worker}", "core/controlplane/scheduler", "tenant-in-key", "TestTenantIsolationSchedulerBoundSessionReadOnly"},
@@ -184,6 +185,7 @@ var storeKeyManifest = []storeKeyEntry{
 }
 
 var notTenantKeys = []notTenantKey{
+	{"ip:{ip}", "core/controlplane/gateway", "Public/unauthenticated in-memory rate-limit budget by client IP; no tenant data. Authenticated requests use tenant:<tenant>."},
 	{"cordum:safety:snapshots", "core/controlplane/safetykernel", "Install-level active policy snapshot history, shared across replicas."},
 	{"cfg:system:default", "core/configsvc", "Shared installation configuration, not a tenant-owned document."},
 	{"cfg:system:policy", "core/configsvc", "Installation-wide policy bundle configuration."},

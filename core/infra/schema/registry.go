@@ -3,6 +3,7 @@ package schema
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -15,6 +16,9 @@ import (
 const (
 	defaultRedisURL   = "redis://localhost:6379"
 	schemaIndexMaxLen = 500
+	// schemaOwnersKey maps a schema id to the tenant that owns it. It sits
+	// outside the schema: prefix, so no schema id can name it.
+	schemaOwnersKey = "cordum:schema:owners"
 )
 
 // Registry stores JSON Schemas in Redis and validates payloads.
@@ -107,9 +111,76 @@ func (r *Registry) Delete(ctx context.Context, id string) error {
 	pipe := r.client.TxPipeline()
 	pipe.Del(ctx, schemaKey(id))
 	pipe.ZRem(ctx, schemaIndexKey(), id)
+	pipe.HDel(ctx, schemaOwnersKey, id)
 	_, err := pipe.Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("delete schema %s: %w", id, err)
+	}
+	return nil
+}
+
+// Owner returns the tenant that owns a schema id, or "" when no tenant owns it.
+func (r *Registry) Owner(ctx context.Context, id string) (string, error) {
+	if r == nil || r.client == nil {
+		return "", fmt.Errorf("registry unavailable")
+	}
+	id = strings.TrimSpace(id)
+	owner, err := r.client.HGet(ctx, schemaOwnersKey, id).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("get schema owner %s: %w", id, err)
+	}
+	return owner, nil
+}
+
+// Owners returns the owner tenant of each id, in order, with "" for an id no
+// tenant owns.
+func (r *Registry) Owners(ctx context.Context, ids []string) ([]string, error) {
+	if r == nil || r.client == nil {
+		return nil, fmt.Errorf("registry unavailable")
+	}
+	owners := make([]string, len(ids))
+	if len(ids) == 0 {
+		return owners, nil
+	}
+	vals, err := r.client.HMGet(ctx, schemaOwnersKey, ids...).Result()
+	if err != nil {
+		return nil, fmt.Errorf("get schema owners: %w", err)
+	}
+	for i, v := range vals {
+		owners[i], _ = v.(string)
+	}
+	return owners, nil
+}
+
+// ClaimOwner records tenant as the owner of id unless an owner is already
+// recorded, and returns the owner in force.
+func (r *Registry) ClaimOwner(ctx context.Context, id, tenant string) (string, error) {
+	if r == nil || r.client == nil {
+		return "", fmt.Errorf("registry unavailable")
+	}
+	id = strings.TrimSpace(id)
+	if id == "" || tenant == "" {
+		return "", fmt.Errorf("schema id and tenant required")
+	}
+	pipe := r.client.TxPipeline()
+	pipe.HSetNX(ctx, schemaOwnersKey, id, tenant)
+	owner := pipe.HGet(ctx, schemaOwnersKey, id)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return "", fmt.Errorf("claim schema owner %s: %w", id, err)
+	}
+	return owner.Val(), nil
+}
+
+// ReleaseOwner removes the owner record of id.
+func (r *Registry) ReleaseOwner(ctx context.Context, id string) error {
+	if r == nil || r.client == nil {
+		return fmt.Errorf("registry unavailable")
+	}
+	if err := r.client.HDel(ctx, schemaOwnersKey, strings.TrimSpace(id)).Err(); err != nil {
+		return fmt.Errorf("release schema owner %s: %w", id, err)
 	}
 	return nil
 }

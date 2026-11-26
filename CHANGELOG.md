@@ -103,6 +103,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Login: failed-login counters are kept per tenant. The per-IP and per-username counters key on the login's tenant (base64url-encoded), so failures recorded for a username count only toward that username's limits in that tenant. Counters recorded before this release are not read and expire within the lockout period.
+
+- Velocity rule stats: for callers without cross-tenant access, `GET /api/v1/policy/velocity-rules/stats` counts only buckets recorded under the caller's own tenant. Buckets without a tenant segment count only for callers with cross-tenant access.
 - Safety kernel: velocity rules count each tenant's requests in that tenant's own bucket, `cordum:velocity:{rule}:{tenant}:{key}` with the tenant base64url-encoded. A request without a tenant counts in the default tenant's bucket. Counts held under `cordum:velocity:{rule}:{key}` age out with their window.
 
 - Docs: the gRPC services and Safety Kernel pages give the output metadata check's timeout as
@@ -872,6 +875,41 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Worker reads: a worker belongs to the tenant of its worker credential. For a
+  caller without cross-tenant access, `GET /api/v1/workers` lists only that
+  tenant's workers, `GET /api/v1/workers/{id}` and
+  `GET /api/v1/workers/{id}/jobs` answer 404 for any other worker, and the jobs
+  list holds only that tenant's jobs. A worker without a credential record is
+  listed only to callers with cross-tenant access (task-fa19ec96).
+
+- Mock-bank demo: `demo/mock-bank/integration_test.sh` issues worker
+  credentials in the API key's tenant for `megacorp-transfer-agent-01` and
+  `megacorp-transfer-agent-02` (`cordumctl worker credential create`, with
+  the printed token discarded) before it waits for their heartbeats, so
+  `GET /api/v1/workers` lists both agents. A rerun replaces both credentials.
+  The demo's other workers stay without credentials (task-50828e1f).
+
+- Test and demo scripts: `tools/scripts/e2e_test.sh` and
+  `tools/scripts/demo_guardrails_run.sh` issue a worker credential in the API
+  key's tenant for the worker each one starts (`hello-worker`,
+  `demo-guardrails-worker`) before waiting for its heartbeat, so
+  `GET /api/v1/workers` lists it. The token is discarded, and a rerun
+  replaces the credential (task-e7d1fe1d).
+
+- Production gate: before it starts or reuses the mock-bank fleet,
+  `tools/scripts/production_gate.sh` issues a worker credential in the API
+  key's tenant for each of the seven workers `demo/mock-bank/worker` starts,
+  so its readiness check finds them in `GET /api/v1/workers`. Each token is
+  discarded, and a new start replaces the credentials (task-729c47ac).
+
+- Governed A2A demo: `demo/a2a-governed/integration_test.sh` issues a worker
+  credential in the API key's tenant for `a2a-demo-worker` before it waits
+  for the worker's heartbeat, so `GET /api/v1/workers` lists the worker and
+  `GET /api/v1/workers/a2a-demo-worker/jobs` returns its jobs. The token is
+  discarded, and a rerun replaces the credential (task-f1a5c71d).
+
+- Workflow runs: `POST /api/v1/workflows/{id}/runs/{run_id}/cancel` reads the run's tenant before cancelling; a failed lookup returns `503`, and a run whose tenant cannot be read returns `404 run not found` to callers without cross-tenant access.
+
 - Audit: submit, approve and reject audit events and spans name the agent in a job's `agent_id` label only when that agent belongs to the job's tenant; otherwise they carry the label's id with no name or risk tier.
 
 - Approvals: when a job's tenant cannot be read, callers without cross-tenant
@@ -1176,6 +1214,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `approval_ref`, then retry with `_approval_ref`.
 - The governed MCP demo worker retries a `429` on the approval poll, and its
   README lists the MCP, agent identity and endpoint prerequisites.
+- Schemas: a new schema id belongs to the tenant that registers it. A caller
+  bound to one tenant lists and reads platform schemas and its own tenant's;
+  another tenant's schema, like an id with no schema, answers `404` to a read
+  or delete. A register over another tenant's id, and a register over or
+  delete of a platform schema, answer `403`. Schemas registered before this
+  release, by pack install or by a cross-tenant caller, are platform schemas:
+  every tenant can read them and only a cross-tenant caller can change or
+  delete them (task-01abd084).
 - Edge approvals: a held MCP call whose arguments differ from a still-pending
   hold of the same tool in the same session now gets its own approval ref. It
   used to get the first hold's ref, so resuming it failed with `-32096`
