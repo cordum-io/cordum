@@ -46,6 +46,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- `GET /api/v1/status` counts the caller's own tenant's jobs and workers.
+  Deployment-wide figures and infrastructure details go to callers with platform
+  authority: no auth provider, an auth context that spans all tenants, or the
+  gateway's own tenant (task-51149f99).
+
 - Deployment settings: OIDC group-role mapping, admin lock inspection, license
   reload and telemetry routes require platform authority: no auth provider, an
   auth context spanning all tenants, or the gateway's own tenant (`TENANT_ID`,
