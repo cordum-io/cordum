@@ -31,6 +31,7 @@ func init() {
 	}
 	registerCrossTenantFamily("PR1-02-POLICY", crossTenantCase{"GET /api/v1/policy/bundles/{id}", "bundle-detail", crossTenantBundleDetail})
 	registerCrossTenantFamily("PR1-02-POLICY", crossTenantCase{"GET /api/v1/policy/output/stats", "output-stats", crossTenantOutputStats})
+	registerCrossTenantFamily("PR1-02-POLICY", crossTenantCase{"POST /api/v1/policy/replay", "replay", crossTenantPolicyReplay})
 	for _, route := range []struct{ method, path, name string }{
 		{http.MethodPut, "/bundles/{id}", "bundle-put"},
 		{http.MethodDelete, "/bundles/{id}", "bundle-delete"},
@@ -345,4 +346,39 @@ func prepareCrossTenantVelocityWrite(t *testing.T, sw *crossTenantSweep, name st
 		t.Fatal(err)
 	}
 	return path + "/policy-sweep", string(body)
+}
+
+func crossTenantPolicyReplay(t *testing.T, sw *crossTenantSweep) {
+	id, marker := seedCrossTenantPolicy(t, sw)
+	jobID, jobMarker := seedCrossTenantJob(t, sw)
+	before, meta := crossTenantPolicyState(t, sw, id), crossTenantJobMeta(t, sw, jobID)
+	now := time.Now().UTC()
+	candidate := "version: \"1\"\nrules:\n  - id: deny-replay\n    match:\n      topics: [\"job.*\"]\n    decision: deny\n"
+	for _, filter := range []string{"null", fmt.Sprintf(`{"tenant":%q}`, sw.tenantB.tenantID)} {
+		body := fmt.Sprintf(`{"from":%q,"to":%q,"candidate_content":%q,"filters":%s}`, now.Add(-time.Hour).Format(time.RFC3339), now.Add(time.Hour).Format(time.RFC3339), candidate, filter)
+		mark := sw.publishMark()
+		rr := sw.as(t, sw.tenantA, http.MethodPost, "/api/v1/policy/replay", body)
+		assertCrossTenantPolicyUnchanged(t, sw, id, before, mark)
+		if !reflect.DeepEqual(meta, crossTenantJobMeta(t, sw, jobID)) {
+			t.Error("cross-tenant replay changed B's job")
+		}
+		if rr.Code == http.StatusForbidden || rr.Code == http.StatusNotFound {
+			assertCrossTenantRefused(t, rr, "A replay", marker, jobID, jobMarker)
+		} else {
+			assertCrossTenantAbsent(t, rr, "A replay", marker, jobID, jobMarker)
+			var response policyReplayResponse
+			if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if response.Summary.TotalJobs != 0 || response.Summary.Evaluated != 0 || len(response.Changes) != 0 || len(response.RuleHits) != 0 {
+				t.Errorf("A replay included B's job with filter %s: %s", filter, rr.Body.String())
+			}
+		}
+		rr = sw.as(t, sw.tenantB, http.MethodPost, "/api/v1/policy/replay", body)
+		assertCrossTenantAbsent(t, rr, "owner replay")
+		var response policyReplayResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil || response.Summary.Evaluated != 1 || len(response.Changes) != 1 || response.Changes[0].JobID != jobID {
+			t.Fatalf("owner replay did not evaluate B's job: %v; %s", err, rr.Body.String())
+		}
+	}
 }
