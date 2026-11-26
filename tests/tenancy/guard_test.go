@@ -97,7 +97,7 @@ func checkManifest(keys []contract.DataKeyRef, manifest []storeKeyEntry, exclusi
 }
 
 var bindingRE = regexp.MustCompile(`^(tenant-in-key|tenant-in-value|global-id)(, enforced at \S.*)?$`)
-var coverageRE = regexp.MustCompile(`^(Test[A-Za-z0-9_]+|pending:PR1-03[B-I]|open-finding:[A-Z][A-Z0-9]*-[0-9A-Z]+(-[0-9A-Z]+)*)$`)
+var coverageRE = regexp.MustCompile(`^(Test[A-Za-z0-9_]+|pending:PR1-03[B-J]|open-finding:[A-Z][A-Z0-9]*-[0-9A-Z]+(-[0-9A-Z]+)*)$`)
 var testFuncRE = regexp.MustCompile(`^Test[A-Za-z0-9_]*$`)
 var placeholderRE = regexp.MustCompile(`\{[^{}]+\}`)
 
