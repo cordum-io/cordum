@@ -189,8 +189,9 @@ Verification inputs:
 
 When signature is required:
 
-- Always in production (`CORDUM_ENV=production` or `CORDUM_PRODUCTION=true`)
-- Or when `SAFETY_POLICY_SIGNATURE_REQUIRED=true`
+- When `CORDUM_POLICY_STRICT=enforce`. An explicit `CORDUM_POLICY_STRICT` always wins, so `warn` or `off` downgrades a production deployment
+- With `CORDUM_POLICY_STRICT` unset: in production (`CORDUM_ENV=prod` or `production`, or `CORDUM_PRODUCTION=true`), or when `SAFETY_POLICY_SIGNATURE_REQUIRED=true`
+- The same rule (`policysign.ResolveMode`) covers every policy source: file, URL and config store
 
 Failure conditions include missing public key, invalid key/signature length, or verification failure.
 
@@ -365,7 +366,7 @@ What is measured is recorded in the [failure and partition behavior contract](co
 | `SAFETY_POLICY_CONFIG_KEY` | safety kernel loader | `bundles` | Config key containing policy bundle map. |
 | `SAFETY_DECISION_CACHE_TTL` | safety kernel evaluator | `0` (disabled) | Cache TTL for policy decisions. |
 | `SAFETY_DECISION_CACHE_MAX_SIZE` | safety kernel evaluator | `10000` | Max cache entries before eviction. |
-| `SAFETY_POLICY_SIGNATURE_REQUIRED` | safety kernel loader | `true` in production | Enforce signature verification. |
+| `SAFETY_POLICY_SIGNATURE_REQUIRED` | safety kernel loader | unset | Legacy: `true` enforces signature verification when `CORDUM_POLICY_STRICT` is unset. Production enforces without it. |
 | `SAFETY_POLICY_PUBLIC_KEY` | safety kernel loader | unset | Ed25519 public key (base64/hex). |
 | `SAFETY_POLICY_SIGNATURE` | safety kernel loader | unset | Inline signature (base64/hex). |
 | `SAFETY_POLICY_SIGNATURE_PATH` | safety kernel loader | unset | Detached signature file path. |
