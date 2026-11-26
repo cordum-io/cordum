@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/controlplane/copilot"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/evals/runner"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
@@ -19,6 +20,10 @@ import (
 
 func init() {
 	registerCrossTenantFamily("PR1-02-PLATFORM",
+		crossTenantCase{"PUT /api/v1/config", "config-put", crossTenantPlatformConfigWrites(http.MethodPut)},
+		crossTenantCase{"POST /api/v1/config", "config-post", crossTenantPlatformConfigWrites(http.MethodPost)},
+		crossTenantCase{"GET /api/v1/config", "config-reads", crossTenantPlatformConfigReads},
+		crossTenantCase{"GET /api/v1/config/effective", "config-effective", crossTenantPlatformConfigEffective},
 		crossTenantCase{"GET /api/v1/license/usage", "license-usage", crossTenantPlatformUsage},
 		crossTenantCase{"GET /api/v1/copilot/sessions/{sessionId}", "copilot-session", crossTenantPlatformCopilot},
 		crossTenantPlatformGovernance("/api/v1/governance/health", "governance-health"),
@@ -125,9 +130,10 @@ func crossTenantPlatformGovernance(path, name string) crossTenantCase {
 		}
 		before, meta := crossTenantPlatformDecisions(t, sw), crossTenantJobMeta(t, sw, id)
 		query := path + "?tenant=" + sw.tenantB.tenantID
-		if name == "governance-decisions" {
+		switch name {
+		case "governance-decisions":
 			query += "&agent_id=platform-b-agent"
-		} else if name == "approval-analytics" {
+		case "approval-analytics":
 			query += "&group_by=rule"
 		}
 		rr := sw.as(t, sw.tenantA, http.MethodGet, query, "")
@@ -287,5 +293,205 @@ func crossTenantPlatformEvalIncidents(t *testing.T, sw *crossTenantSweep) {
 	assertCrossTenantAbsent(t, owner, "B extraction control")
 	if !strings.Contains(crossTenantPlatformEvalSnapshot(t, sw), incidentMarker) {
 		t.Error("B extraction control did not retain its incident")
+	}
+}
+
+func crossTenantPlatformAdmin(t *testing.T, sw *crossTenantSweep, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	req := httptest.NewRequest(method, path, strings.NewReader(body)).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Tenant-ID", sw.tenantB.tenantID)
+	admin := &auth.AuthContext{Role: "admin", Tenant: sw.tenantB.tenantID, AllowCrossTenant: true}
+	rr := httptest.NewRecorder()
+	sw.mux.ServeHTTP(rr, withAuth(req, admin))
+	return rr
+}
+
+func crossTenantPlatformConfigBody(target systemConfigTarget, value string) string {
+	data := fmt.Sprintf(`{"private_%s":%q}`, target.id, value)
+	if target.scope == "system" && target.id == "default" {
+		data = fmt.Sprintf(`{"private_default":%q,"pools":{"topics":{},"pools":{}}}`, value)
+	}
+	if target.scope == "system" && target.id == "topics" {
+		data = fmt.Sprintf(`{"job.platform-config-control":{"name":"job.platform-config-control","pack_id":%q}}`, value)
+	}
+	if target.name == "flat" {
+		return data
+	}
+	return fmt.Sprintf(`{"scope":%q,"scope_id":%q,"data":%s}`, target.scope, target.id, data)
+}
+
+func seedCrossTenantPlatformConfig(t *testing.T, sw *crossTenantSweep) (map[string]systemConfigTarget, string) {
+	t.Helper()
+	id, marker := seedCrossTenantJob(t, sw)
+	targets := make(map[string]systemConfigTarget)
+	for _, scope := range []string{"org", "team", "workflow", "step"} {
+		scopeID := "platform-" + scope + "-" + id
+		if scope == "org" {
+			scopeID = sw.tenantB.tenantID
+		}
+		target := systemConfigTarget{scope, scope, scopeID}
+		targets[scope] = target
+		body := crossTenantPlatformConfigBody(target, marker+"-"+scope)
+		assertCrossTenantAbsent(t, sw.as(t, sw.tenantB, http.MethodPut, "/api/v1/config", body), "B config seed")
+	}
+	for _, name := range []string{"default", "policy", "policy_snapshots", "policy_audit", "topics"} {
+		target := systemConfigTarget{name, "system", name}
+		targets[name] = target
+		if name == "topics" {
+			continue // B registers this document through the topic route below.
+		}
+		body := crossTenantPlatformConfigBody(target, marker+"-"+name)
+		assertCrossTenantAbsent(t, crossTenantPlatformAdmin(t, sw, http.MethodPut, "/api/v1/config", body), "platform config seed")
+	}
+	targets["flat"] = systemConfigTarget{"flat", "system", "default"}
+	topic := "job." + marker + "-topics"
+	for _, seed := range []struct{ path, body string }{
+		{"/api/v1/pools/platform-config-b", fmt.Sprintf(`{"description":%q}`, marker+"-pool")},
+		{"/api/v1/pools/platform-config-b/topics/" + topic, ""},
+	} {
+		assertCrossTenantAbsent(t, crossTenantPlatformAdmin(t, sw, http.MethodPut, seed.path, seed.body), "platform pool seed")
+	}
+	body := fmt.Sprintf(`{"name":%q,"pool":"platform-config-b"}`, topic)
+	assertCrossTenantAbsent(t, sw.as(t, sw.tenantB, http.MethodPost, "/api/v1/topics", body), "B topic seed")
+	return targets, marker
+}
+
+func crossTenantPlatformConfigState(t *testing.T, sw *crossTenantSweep) map[string]string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	rdb := sw.server.jobStore.Client()
+	keys, err := rdb.Keys(ctx, "cfg:*").Result()
+	if err != nil || len(keys) == 0 {
+		t.Fatalf("config keys snapshot: %v", err)
+	}
+	state := make(map[string]string, len(keys))
+	for _, key := range keys {
+		state[key], err = rdb.Get(ctx, key).Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	return state
+}
+
+func crossTenantPlatformConfigRead(t *testing.T, sw *crossTenantSweep, name string, effective bool) {
+	t.Helper()
+	targets, marker := seedCrossTenantPlatformConfig(t, sw)
+	target := targets[name]
+	path := "/api/v1/config?scope=" + target.scope + "&scope_id=" + target.id
+	if name == "default" {
+		path = "/api/v1/config?scope=system"
+	}
+	if effective {
+		path = "/api/v1/config/effective?org_id=" + sw.tenantB.tenantID
+		if target.scope != "org" && target.scope != "system" {
+			path += "&" + target.scope + "_id=" + target.id
+		}
+	}
+	before, mark := crossTenantPlatformConfigState(t, sw), sw.publishMark()
+	rr := sw.as(t, sw.tenantA, http.MethodGet, path, "")
+	if rr.Code == http.StatusForbidden || rr.Code == http.StatusNotFound {
+		assertCrossTenantRefused(t, rr, "A config read", marker)
+	} else {
+		assertCrossTenantAbsent(t, rr, "A config read", marker)
+	}
+	if !reflect.DeepEqual(before, crossTenantPlatformConfigState(t, sw)) || len(sw.publishedSince(mark)) != 0 {
+		t.Error("A read changed config data, revisions, Redis bytes or published")
+	}
+	var owner *httptest.ResponseRecorder
+	if effective || target.scope == "system" {
+		owner = crossTenantPlatformAdmin(t, sw, http.MethodGet, path, "")
+	} else {
+		owner = sw.as(t, sw.tenantB, http.MethodGet, path, "")
+	}
+	assertCrossTenantAbsent(t, owner, "config owner control")
+	if owner.Code != http.StatusOK || !strings.Contains(owner.Body.String(), marker+"-"+name) {
+		t.Error("config owner control missing its stored scope data")
+	}
+	if (name == "default" || name == "topics") && !strings.Contains(owner.Body.String(), marker+"-topics") {
+		t.Error("platform control missing B topic mapping or registration")
+	}
+}
+
+func crossTenantPlatformConfigReads(t *testing.T, _ *crossTenantSweep) {
+	for _, name := range []string{"org", "default", "topics"} {
+		t.Run(name, func(t *testing.T) {
+			crossTenantPlatformConfigRead(t, newCrossTenantSweep(t), name, false)
+		})
+	}
+}
+
+func crossTenantPlatformConfigEffective(t *testing.T, _ *crossTenantSweep) {
+	for _, name := range []string{"org", "team", "workflow", "step", "default"} {
+		t.Run(name, func(t *testing.T) {
+			crossTenantPlatformConfigRead(t, newCrossTenantSweep(t), name, true)
+		})
+	}
+}
+
+func crossTenantPlatformConfigWriteEffects(t *testing.T, sw *crossTenantSweep, before map[string]string, mark int, rr *httptest.ResponseRecorder, target systemConfigTarget, marker string) {
+	t.Helper()
+	after := crossTenantPlatformConfigState(t, sw)
+	// Compare every pre-existing B/system document; A may create its own scoped document.
+	for key, raw := range before {
+		if after[key] != raw {
+			t.Errorf("A write changed B/system config data, revision or Redis bytes: %s", key)
+		}
+	}
+	messages := sw.publishedSince(mark)
+	if (rr.Code >= 400 || target.scope == "system") && len(messages) != 0 {
+		t.Error("A refused or system-scope write published messages")
+	}
+	for _, message := range messages {
+		if strings.Contains(message.packet.String(), sw.tenantB.tenantID) || strings.Contains(message.packet.String(), marker) {
+			t.Error("A write published B tenant or marker")
+		}
+	}
+}
+
+func crossTenantPlatformConfigWrite(t *testing.T, sw *crossTenantSweep, name, method string) {
+	t.Helper()
+	targets, marker := seedCrossTenantPlatformConfig(t, sw)
+	target := targets[name]
+	body := crossTenantPlatformConfigBody(target, "A-update")
+	before, mark := crossTenantPlatformConfigState(t, sw), sw.publishMark()
+	rr := sw.as(t, sw.tenantA, method, "/api/v1/config", body)
+	crossTenantPlatformConfigWriteEffects(t, sw, before, mark, rr, target, marker)
+	if rr.Code == http.StatusForbidden || rr.Code == http.StatusNotFound {
+		assertCrossTenantRefused(t, rr, "A config write", marker)
+	} else {
+		assertCrossTenantAbsent(t, rr, "A config write", marker)
+	}
+	body = crossTenantPlatformConfigBody(target, marker+"-owner-update")
+	var owner *httptest.ResponseRecorder
+	if target.scope == "system" {
+		owner = crossTenantPlatformAdmin(t, sw, method, "/api/v1/config", body)
+	} else {
+		owner = sw.as(t, sw.tenantB, method, "/api/v1/config", body)
+	}
+	assertCrossTenantAbsent(t, owner, "config write owner control")
+	path := "/api/v1/config?scope=" + target.scope + "&scope_id=" + target.id
+	if target.scope == "system" {
+		owner = crossTenantPlatformAdmin(t, sw, http.MethodGet, path, "")
+	} else {
+		owner = sw.as(t, sw.tenantB, http.MethodGet, path, "")
+	}
+	assertCrossTenantAbsent(t, owner, "stored config owner control")
+	if !strings.Contains(owner.Body.String(), marker+"-owner-update") {
+		t.Error("config write owner control did not persist the update")
+	}
+}
+
+func crossTenantPlatformConfigWrites(method string) func(*testing.T, *crossTenantSweep) {
+	return func(t *testing.T, _ *crossTenantSweep) {
+		for _, name := range []string{"org", "default", "policy", "policy_snapshots", "policy_audit", "topics", "flat"} {
+			t.Run(name, func(t *testing.T) {
+				crossTenantPlatformConfigWrite(t, newCrossTenantSweep(t), name, method)
+			})
+		}
 	}
 }
