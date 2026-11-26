@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -717,7 +718,7 @@ func (s *server) handlePublishPolicyBundles(w http.ResponseWriter, r *http.Reque
 		writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, "no policy bundles to publish")
 		return
 	}
-	beforeSnapshot, _ := s.capturePolicyBundleSnapshotWithBundles(r.Context(), bundles, body.Note)
+	before, beforeErr := buildPolicyBundleSnapshot(bundles, body.Note)
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	for _, bundleID := range targets {
@@ -743,33 +744,30 @@ func (s *server) handlePublishPolicyBundles(w http.ResponseWriter, r *http.Reque
 		writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, err.Error())
 		return
 	}
-	if doc == nil {
-		doc = &configsvc.Document{Scope: configsvc.Scope(packs.PolicyConfigScope), ScopeID: packs.PolicyConfigID, Data: map[string]any{}}
-	}
-	if doc.Data == nil {
-		doc.Data = map[string]any{}
-	}
-	doc.Data[packs.PolicyConfigKey] = bundles
-	if err := s.configSvc.Set(r.Context(), doc); err != nil {
+	after, afterErr := buildPolicyBundleSnapshot(bundles, body.Note)
+	if err := errors.Join(beforeErr, afterErr); err != nil {
 		writeInternalError(w, r, "policy operation", err)
 		return
 	}
-	afterSnapshot, _ := s.capturePolicyBundleSnapshotWithBundles(r.Context(), bundles, body.Note)
-	_ = s.appendPolicyAudit(r.Context(), policybundles.PolicyAuditEntry{
+	if err := s.commitPolicyBundles(r.Context(), policyRevision(doc), bundles, policybundles.PolicyAuditEntry{
 		Action:         "publish",
 		ResourceType:   "policy",
 		ActorID:        policybundles.PolicyActorID(r),
 		Role:           policybundles.PolicyRole(r),
 		BundleIDs:      targets,
 		Message:        strings.TrimSpace(body.Message),
-		SnapshotBefore: beforeSnapshot,
-		SnapshotAfter:  afterSnapshot,
+		SnapshotBefore: before.ID,
+		SnapshotAfter:  after.ID,
 		CreatedAt:      now,
-	})
+	}); err != nil {
+		writePolicyCommitError(w, r, "policy operation", err)
+		return
+	}
+	s.storeCommittedPolicySnapshots(r.Context(), before, after)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]any{
-		"snapshot_before": beforeSnapshot,
-		"snapshot_after":  afterSnapshot,
+		"snapshot_before": before.ID,
+		"snapshot_after":  after.ID,
 		"published":       targets,
 	})
 }
@@ -793,7 +791,7 @@ func (s *server) handleRollbackPolicyBundles(w http.ResponseWriter, r *http.Requ
 		writeInternalError(w, r, "policy operation", err)
 		return
 	}
-	beforeSnapshot, _ := s.capturePolicyBundleSnapshotWithBundles(r.Context(), bundles, body.Note)
+	before, beforeErr := buildPolicyBundleSnapshot(bundles, body.Note)
 
 	snapshots, _, err := s.loadPolicySnapshots(r.Context())
 	if err != nil {
@@ -811,33 +809,30 @@ func (s *server) handleRollbackPolicyBundles(w http.ResponseWriter, r *http.Requ
 		writeErrorJSON(w, http.StatusNotFound, "snapshot not found")
 		return
 	}
-	if doc == nil {
-		doc = &configsvc.Document{Scope: configsvc.Scope(packs.PolicyConfigScope), ScopeID: packs.PolicyConfigID, Data: map[string]any{}}
-	}
-	if doc.Data == nil {
-		doc.Data = map[string]any{}
-	}
-	doc.Data[packs.PolicyConfigKey] = target.Bundles
-	if err := s.configSvc.Set(r.Context(), doc); err != nil {
+	after, afterErr := buildPolicyBundleSnapshot(target.Bundles, body.Note)
+	if err := errors.Join(beforeErr, afterErr); err != nil {
 		writeInternalError(w, r, "policy operation", err)
 		return
 	}
-	afterSnapshot, _ := s.capturePolicyBundleSnapshotWithBundles(r.Context(), target.Bundles, body.Note)
-	_ = s.appendPolicyAudit(r.Context(), policybundles.PolicyAuditEntry{
+	if err := s.commitPolicyBundles(r.Context(), policyRevision(doc), target.Bundles, policybundles.PolicyAuditEntry{
 		Action:         "rollback",
 		ResourceType:   "policy",
 		ActorID:        policybundles.PolicyActorID(r),
 		Role:           policybundles.PolicyRole(r),
 		BundleIDs:      []string{},
 		Message:        strings.TrimSpace(body.Message),
-		SnapshotBefore: beforeSnapshot,
-		SnapshotAfter:  afterSnapshot,
+		SnapshotBefore: before.ID,
+		SnapshotAfter:  after.ID,
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
-	})
+	}); err != nil {
+		writePolicyCommitError(w, r, "policy operation", err)
+		return
+	}
+	s.storeCommittedPolicySnapshots(r.Context(), before, after)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]any{
-		"snapshot_before": beforeSnapshot,
-		"snapshot_after":  afterSnapshot,
+		"snapshot_before": before.ID,
+		"snapshot_after":  after.ID,
 		"rollback_to":     snapshotID,
 	})
 }
@@ -1078,21 +1073,20 @@ func (s *server) handleCapturePolicyBundleSnapshot(w http.ResponseWriter, r *htt
 		Bundles:   bundles,
 	}
 
-	snapshots, doc, err := s.loadPolicySnapshots(r.Context())
-	if err != nil {
+	// Contract class: capturing a snapshot creates a rollback target, so the
+	// snapshot is saved only after its audit entry is stored.
+	if err := s.appendPolicyAudit(r.Context(), policybundles.PolicyAuditEntry{
+		Action: "snapshot", ResourceType: "policy", ResourceID: snapshot.ID, ResourceName: snapshot.ID,
+		ActorID: policybundles.PolicyActorID(r), Role: policybundles.PolicyRole(r), Message: "capture policy snapshot " + snapshot.ID,
+	}); err != nil {
 		writeInternalError(w, r, "policy operation", err)
 		return
 	}
-	snapshots = append([]policybundles.PolicyBundleSnapshot{snapshot}, snapshots...)
-	if len(snapshots) > 10 {
-		snapshots = snapshots[:10]
-	}
-	if err := s.savePolicySnapshots(r.Context(), snapshots, doc); err != nil {
+	if err := s.storePolicyBundleSnapshots(r.Context(), snapshot); err != nil {
 		writeInternalError(w, r, "policy operation", err)
 		return
 	}
 
-	s.appendAuditEntryNamed(r.Context(), "snapshot", "policy", snapshot.ID, snapshot.ID, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "capture policy snapshot "+snapshot.ID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, snapshot)
 }
@@ -1206,38 +1200,56 @@ func (s *server) loadPolicyBundlesWithDoc(ctx context.Context) (map[string]any, 
 	return bundles, doc, nil
 }
 
-func (s *server) capturePolicyBundleSnapshotWithBundles(ctx context.Context, bundles map[string]any, note string) (string, error) {
+// buildPolicyBundleSnapshot returns a snapshot of a deep copy of bundles. For
+// no bundles it returns the zero snapshot, whose empty ID names no snapshot.
+func buildPolicyBundleSnapshot(bundles map[string]any, note string) (policybundles.PolicyBundleSnapshot, error) {
 	if len(bundles) == 0 {
-		return "", nil
+		return policybundles.PolicyBundleSnapshot{}, nil
 	}
 	hash, err := packs.HashValue(bundles)
 	if err != nil {
-		return "", err
+		return policybundles.PolicyBundleSnapshot{}, err
 	}
 	timestamp := time.Now().UTC().Format(time.RFC3339)
-	id := timestamp + "-" + hash[:10]
 	copyBundles, ok := packs.DeepCopy(bundles).(map[string]any)
 	if !ok || copyBundles == nil {
 		copyBundles = policybundles.CloneBundleMap(bundles)
 	}
-	snapshot := policybundles.PolicyBundleSnapshot{
-		ID:        id,
+	return policybundles.PolicyBundleSnapshot{
+		ID:        timestamp + "-" + hash[:10],
 		CreatedAt: timestamp,
 		Note:      strings.TrimSpace(note),
 		Bundles:   copyBundles,
+	}, nil
+}
+
+// storePolicyBundleSnapshots puts snapshots ahead of the stored ones in the
+// order given, so the last is newest, and keeps 10. It skips a snapshot with
+// no ID and writes nothing when none is left.
+func (s *server) storePolicyBundleSnapshots(ctx context.Context, snapshots ...policybundles.PolicyBundleSnapshot) error {
+	snapshots = slices.DeleteFunc(snapshots, func(snap policybundles.PolicyBundleSnapshot) bool { return snap.ID == "" })
+	if len(snapshots) == 0 {
+		return nil
 	}
-	snapshots, doc, err := s.loadPolicySnapshots(ctx)
+	stored, doc, err := s.loadPolicySnapshots(ctx)
 	if err != nil {
-		return "", err
+		return err
 	}
-	snapshots = append([]policybundles.PolicyBundleSnapshot{snapshot}, snapshots...)
-	if len(snapshots) > 10 {
-		snapshots = snapshots[:10]
+	slices.Reverse(snapshots)
+	stored = append(snapshots, stored...)
+	if len(stored) > 10 {
+		stored = stored[:10]
 	}
-	if err := s.savePolicySnapshots(ctx, snapshots, doc); err != nil {
-		return "", err
+	return s.savePolicySnapshots(ctx, stored, doc)
+}
+
+// storeCommittedPolicySnapshots stores the snapshots a committed policy change
+// names. The change and its audit entry are already stored, so a failure is
+// logged and the request still succeeds.
+func (s *server) storeCommittedPolicySnapshots(ctx context.Context, before, after policybundles.PolicyBundleSnapshot) {
+	if err := s.storePolicyBundleSnapshots(ctx, before, after); err != nil {
+		slog.Error("policy snapshots not stored after the policy change", "snapshot_before", before.ID, "snapshot_after", after.ID, "error", err)
 	}
-	return id, nil
 }
 
 const (

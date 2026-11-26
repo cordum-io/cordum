@@ -21,9 +21,11 @@ import (
 
 // policyWriteCase is one handler that writes system/policy. bundles is the
 // system/policy bundle map stored before the request; nil stores no document.
+// snapshots are the policy snapshots stored before the request.
 type policyWriteCase struct {
 	name                             string
 	bundles                          map[string]any
+	snapshots                        []policybundles.PolicyBundleSnapshot
 	call                             func(s *server) *httptest.ResponseRecorder
 	status                           int
 	action, resourceType, resourceID string
@@ -55,6 +57,7 @@ func policyWriteCases(t *testing.T) []policyWriteCase {
 	velocityBody := policyWriteJSON(t, velocity)
 	velocityBundles := map[string]any{velocityRuleBundleID(storeWriterRuleID): storeWriterVelocityBundle(t, velocity, map[string]any{})}
 	velocityPath := "/api/v1/policy/velocity-rules/" + storeWriterRuleID
+	globalBody := policyWriteJSON(t, map[string]any{"sections": map[string]any{globalSectionInputRules: map[string]any{"content": policyContent}}})
 	return []policyWriteCase{
 		{
 			name:    "output rule toggle",
@@ -102,7 +105,40 @@ func policyWriteCases(t *testing.T) []policyWriteCase {
 			},
 			status: http.StatusNoContent, action: "delete", resourceType: "velocity_rule", resourceID: storeWriterRuleID,
 		},
+		{
+			name:    "publish",
+			bundles: policyWritePublishBundles(policyContent),
+			call:    func(s *server) *httptest.ResponseRecorder { return policyWritePublish(s) },
+			status:  http.StatusOK, action: "publish", resourceType: "policy",
+		},
+		{
+			name:    "rollback",
+			bundles: policyWritePublishBundles(policyContent),
+			snapshots: []policybundles.PolicyBundleSnapshot{{
+				ID: "2026-01-01T00:00:00Z-seed", CreatedAt: "2026-01-01T00:00:00Z", Bundles: map[string]any{"secops/old": map[string]any{"content": policyContent}},
+			}},
+			call: func(s *server) *httptest.ResponseRecorder {
+				return policyWriteCall(s.handleRollbackPolicyBundles, http.MethodPost, "/api/v1/policy/rollback", "", `{"snapshot_id":"2026-01-01T00:00:00Z-seed"}`)
+			},
+			status: http.StatusOK, action: "rollback", resourceType: "policy",
+		},
+		{
+			name: "global put",
+			call: func(s *server) *httptest.ResponseRecorder {
+				return policyWriteCall(s.handlePutPolicyGlobal, http.MethodPut, "/api/v1/policy/global", "", globalBody)
+			},
+			status: http.StatusOK, action: "edit", resourceType: "policy", resourceID: "global",
+		},
 	}
+}
+
+// policyWritePublishBundles is one unpublished policy bundle with content.
+func policyWritePublishBundles(content string) map[string]any {
+	return map[string]any{"secops/test": map[string]any{"content": content, "enabled": false}}
+}
+
+func policyWritePublish(s *server) *httptest.ResponseRecorder {
+	return policyWriteCall(s.handlePublishPolicyBundles, http.MethodPost, "/api/v1/policy/publish", "", `{}`)
 }
 
 // policyWriteServer returns auditPersistServer's gateway with c's bundles
@@ -117,6 +153,9 @@ func policyWriteServer(t *testing.T, c policyWriteCase) (*server, *miniredis.Min
 		require.NoError(t, configsvc.NewFromClient(plain).Set(context.Background(), &configsvc.Document{
 			Scope: configsvc.ScopeSystem, ScopeID: packs.PolicyConfigID, Data: map[string]any{packs.PolicyConfigKey: c.bundles},
 		}))
+	}
+	if c.snapshots != nil {
+		require.NoError(t, s.savePolicySnapshots(context.Background(), c.snapshots, nil))
 	}
 	return s, mr, hooked, plain
 }
@@ -185,4 +224,41 @@ func TestPolicyWriters_StoreAndExportTheirEntryOnce(t *testing.T) {
 			require.Equal(t, []audit.SIEMEvent{policybundles.AuditEntryToSIEM(got, s.tenant)}, sink.events)
 		})
 	}
+}
+
+func TestPolicySnapshotCapture_AuditFailureSavesNoSnapshot(t *testing.T) {
+	s, mr, hooked, _ := policyWriteServer(t, policyWriteCase{bundles: policyWritePublishBundles(policyContent)})
+	before := auditPersistKeyspace(t, mr)
+	hooked.AddHook(auditPersistHook{failKey: auditPersistLogKey})
+
+	rec := policyWriteCall(s.handleCapturePolicyBundleSnapshot, http.MethodPost, "/api/v1/policy/bundles/snapshots", "", `{"note":"capture"}`)
+	require.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
+	require.Equal(t, before, auditPersistKeyspace(t, mr), "a capture whose audit entry failed changed stored documents")
+}
+
+func TestPolicyPublish_StoresTheSnapshotsItsEntryNames(t *testing.T) {
+	s, _, _, _ := policyWriteServer(t, policyWriteCase{bundles: policyWritePublishBundles(policyContent)})
+
+	rec := policyWritePublish(s)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	entries := policyWriteAuditItems(t, s)
+	require.Len(t, entries, 1)
+	require.NotEmpty(t, entries[0].SnapshotBefore)
+	require.NotEmpty(t, entries[0].SnapshotAfter)
+	snapshots, _, err := s.loadPolicySnapshots(context.Background())
+	require.NoError(t, err)
+	ids := make([]string, len(snapshots))
+	for i, snap := range snapshots {
+		ids[i] = snap.ID
+	}
+	require.Equal(t, []string{entries[0].SnapshotAfter, entries[0].SnapshotBefore}, ids, "newest first")
+}
+
+func TestPolicyPublish_RefusedPublishStoresNoSnapshot(t *testing.T) {
+	s, mr, _, _ := policyWriteServer(t, policyWriteCase{bundles: policyWritePublishBundles("rules: [")})
+	before := auditPersistKeyspace(t, mr)
+
+	rec := policyWritePublish(s)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Equal(t, before, auditPersistKeyspace(t, mr), "a refused publish changed stored documents")
 }
