@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 from typing import List
 
@@ -9,8 +9,7 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 from ..types import UNSET, Unset
-from typing import cast
-from typing import cast, List
+from typing import List
 from typing import Dict
 from typing import Union
 
@@ -28,16 +27,17 @@ class EdgeRuntimeIngestResponse:
         accepted_count (int):
         dropped_count (int):
         dropped (Union[Unset, List['EdgeRuntimeIngestDropReport']]):
+        replayed (Union[Unset, bool]): True when a duplicate nonce was suppressed and no events were appended. Default:
+            False.
     """
 
     accepted_count: int
     dropped_count: int
     dropped: Union[Unset, List["EdgeRuntimeIngestDropReport"]] = UNSET
+    replayed: Union[Unset, bool] = False
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.edge_runtime_ingest_drop_report import EdgeRuntimeIngestDropReport
-
         accepted_count = self.accepted_count
 
         dropped_count = self.dropped_count
@@ -49,6 +49,8 @@ class EdgeRuntimeIngestResponse:
                 dropped_item = dropped_item_data.to_dict()
                 dropped.append(dropped_item)
 
+        replayed = self.replayed
+
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -59,6 +61,8 @@ class EdgeRuntimeIngestResponse:
         )
         if dropped is not UNSET:
             field_dict["dropped"] = dropped
+        if replayed is not UNSET:
+            field_dict["replayed"] = replayed
 
         return field_dict
 
@@ -78,10 +82,13 @@ class EdgeRuntimeIngestResponse:
 
             dropped.append(dropped_item)
 
+        replayed = d.pop("replayed", UNSET)
+
         edge_runtime_ingest_response = cls(
             accepted_count=accepted_count,
             dropped_count=dropped_count,
             dropped=dropped,
+            replayed=replayed,
         )
 
         edge_runtime_ingest_response.additional_properties = d

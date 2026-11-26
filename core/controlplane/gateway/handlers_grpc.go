@@ -140,7 +140,11 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	// Strip reserved labels from client input (same as HTTP path).
+	// Same label handling as the HTTP path: loud reject for spoofed
+	// governance/multi-agent labels, then strip the rest of the reserved set.
+	if err := rejectReservedGovernanceLabels(payloadReq.Labels); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
 	payloadReq.Labels = stripReservedLabels(payloadReq.Labels)
 
 	// Inject request source for policy rules.
@@ -186,18 +190,17 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		meta.Labels = payloadReq.Labels
 	}
 
-	// Inject agent_id from linked worker credential if not already set.
-	if payloadReq.Labels["agent_id"] == "" && s.agentIdentityStore != nil {
-		if agent, err := s.agentIdentityStore.GetByWorkerIDForTenant(ctx, orgID, principalID); err == nil && agent != nil {
-			if payloadReq.Labels == nil {
-				payloadReq.Labels = map[string]string{}
-			}
-			payloadReq.Labels["agent_id"] = agent.ID
-			if meta.Labels == nil {
-				meta.Labels = map[string]string{}
-			}
-			meta.Labels["agent_id"] = agent.ID
+	// Bind agent_id to the authenticated principal; never trust the label.
+	agentID, err := s.bindGRPCSubmitAgentID(ctx, orgID, principalID, payloadReq.Labels["agent_id"])
+	if err != nil {
+		return nil, err
+	}
+	if agentID != "" {
+		payloadReq.Labels["agent_id"] = agentID
+		if meta.Labels == nil {
+			meta.Labels = map[string]string{}
 		}
+		meta.Labels["agent_id"] = agentID
 	}
 	if s.capProfile.IsProduction() {
 		probe := &pb.JobRequest{
@@ -543,6 +546,37 @@ func (s *server) requireRoleGRPC(ctx context.Context, roles ...string) error {
 	}
 	slog.Warn("gRPC permission denied", "role", role, "required", roles)
 	return status.Error(codes.PermissionDenied, "permission denied")
+}
+
+// bindGRPCSubmitAgentID returns the agent linked to principalID in orgID, or
+// "" when there is none. Like handleSubmitJobHTTP, it refuses a client
+// labels.agent_id that does not equal that agent: resolveAgentForAudit reads
+// the label without a tenant check, so an unchecked label could name any
+// tenant's agent in the policy check and the audit trail. Binding needs a
+// credential-backed principal (AuthenticatedPrincipal): SubmitJob attributes
+// the job to the request's principal_id when the auth context has none, and
+// to a caller-asserted x-principal-id, but a caller must not get another
+// worker's agent by naming that worker in either place, whether it sends the
+// label or omits it and lets the agent be inferred.
+func (s *server) bindGRPCSubmitAgentID(ctx context.Context, orgID, principalID, clientAgentID string) (string, error) {
+	if ap := auth.FromContext(ctx).AuthenticatedPrincipal(); ap == "" || ap != strings.TrimSpace(principalID) {
+		if clientAgentID != "" {
+			return "", status.Error(codes.PermissionDenied, "client-supplied agent_id requires an authenticated principal")
+		}
+		return "", nil
+	}
+	linked, err := s.linkedAgentID(ctx, orgID, principalID)
+	if err != nil {
+		slog.Error("submit agent link lookup unavailable", "tenant", orgID, "error", err)
+		return "", status.Error(codes.Unavailable, errAgentLinkUnavailable.Error())
+	}
+	if clientAgentID == "" || clientAgentID == linked {
+		return linked, nil
+	}
+	if linked == "" {
+		return "", status.Error(codes.PermissionDenied, "client-supplied agent_id requires an authenticated worker credential")
+	}
+	return "", status.Error(codes.PermissionDenied, "client-supplied agent_id does not match authenticated principal")
 }
 
 func resolveGRPCTenant(ctx context.Context, requested, fallback string) (string, error) {

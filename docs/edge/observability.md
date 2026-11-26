@@ -12,6 +12,15 @@ implementation in `core/edge/observability_prom.go`. Call sites must not create
 ad hoc registries. Tenant IDs are intentionally not metric labels; tenant
 correlation belongs in audit/log records.
 
+Each process records into its own registry. The Gateway registers its
+recorder on the registry its metrics listener serves (`/metrics` on
+`GATEWAY_METRICS_ADDR`), so it exports what the Edge store, the session and
+approval sweepers, and its Edge API and stream handlers record.
+`cordum-agentd` records its hook, decision, approval, cache, latency,
+degraded, fail-closed and agentd metrics into its own process registry,
+which it does not serve yet, and `cordum-hook` runs without a recorder.
+Rows marked "Not emitted yet" below have no call site.
+
 ## EDGE-072 reviewer metric gap audit
 
 External reviewer names omit Cordum's `cordum_edge_` namespace. For existing
@@ -41,11 +50,11 @@ for EDGE-072.
 
 | Metric | Type | Labels | Source / emission path | Dashboard hook |
 | --- | --- | --- | --- | --- |
-| `cordum_edge_sessions_created_total` | counter | `mode`, `agent_product` | `RecordSessionCreated` on session creation. | Backend/API state powers Edge Sessions; no Prometheus widget. |
-| `cordum_edge_sessions_ended_total` | counter | `mode`, `status` | `RecordSessionEnded` on terminal session state. | Backend-only metric. |
-| `cordum_edge_sessions_active` | gauge | `mode` | `SetSessionsActive` from active-session accounting. | Backend-only metric. |
-| `cordum_edge_executions_started_total` | counter | `mode`, `agent_product` | `RecordExecutionStarted` on execution creation. | Backend/API state powers session detail; no metric widget. |
-| `cordum_edge_executions_ended_total` | counter | `mode`, `status` | `RecordExecutionEnded` on terminal execution state. | Backend-only metric. |
+| `cordum_edge_sessions_created_total` | counter | `mode`, `agent_product` | Not emitted yet: no call site calls `RecordSessionCreated`. | Backend/API state powers Edge Sessions; no Prometheus widget. |
+| `cordum_edge_sessions_ended_total` | counter | `mode`, `status` | Not emitted yet: no call site calls `RecordSessionEnded`. | Backend-only metric. |
+| `cordum_edge_sessions_active` | gauge | `mode` | Not emitted yet: no call site calls `SetSessionsActive`. | Backend-only metric. |
+| `cordum_edge_executions_started_total` | counter | `mode`, `agent_product` | Not emitted yet: no call site calls `RecordExecutionStarted`. | Backend/API state powers session detail; no metric widget. |
+| `cordum_edge_executions_ended_total` | counter | `mode`, `status` | Not emitted yet: no call site calls `RecordExecutionEnded`. | Backend-only metric. |
 | `cordum_edge_create_execution_aborted_total` | counter | `reason` | `RedisStore.CreateExecution` aborts when parent is terminal/missing. | Backend-only metric. |
 | `cordum_edge_session_cleanup_duration_seconds` | histogram | none | `RedisStore.DeleteSession` bounded cleanup duration. | Backend-only; see retention runbook. |
 | `cordum_edge_session_cleanup_keys_deleted_total` | counter | none | `RedisStore.DeleteSession` deleted Redis-key count. | Backend-only; see retention runbook. |
@@ -64,16 +73,16 @@ for EDGE-072.
 | `cordum_edge_idempotency_ttl_extended_total` | counter | `state` | Idempotency reserve/replay TTL refresh path. | Backend-only metric. |
 | `cordum_edge_idempotency_window_expired_total` | counter | `phase` | Reserve/complete/append idempotency expiry rejections. | Backend-only metric. |
 | `cordum_edge_degraded_total` | counter | `mode`, `component`, `reason_code` | `RecordDegraded` on degraded Gateway/agentd/hook/evidence paths. | Backend-only alert candidate. |
-| `cordum_edge_fail_closed_total` | counter | `mode`, `reason_code` | `RecordFailClosed` when enterprise/workflow enforcement blocks on governance miss. | Backend-only alert candidate. |
+| `cordum_edge_fail_closed_total` | counter | `mode`, `reason_code` | `RecordFailClosed` at three call sites. agentd counts an action it denies because Gateway governance is unavailable and its fail mode closes (`core/edge/agentd/metrics.go:66`), with `mode` set to agentd's policy mode and `reason_code` to the Gateway error category. The Claude hook runner counts a hook it blocks because agentd is unavailable under `CORDUM_AGENTD_FAIL_CLOSED` or `enterprise-strict`, or because agentd answered a `PreToolUse` degraded under `enforce` or `enterprise-strict` (`core/edge/claude/runner.go:249`); `cordum-hook` passes it no recorder, so this site records nothing yet. The Gateway's Edge retention sweeper counts a cleanup page that the legal-hold guard keeps (`core/edge/store_redis.go:705`), with `mode="unknown"` and `reason_code="retention_hold_unverifiable"` when the hold check or the page's `MULTI`/`EXEC` fails (`core/edge/store_redis.go:721`), or `reason_code="retention_hold_changed"` when a watched hold key changes before `EXEC` (`core/edge/store_redis.go:719`). A page kept for an active hold is not counted; see [retention.md](retention.md#background-retention-sweeper). | Backend-only alert candidate. |
 | `cordum_edge_agentd_response_write_aborted_total` | counter | `reason` | agentd local-server slow-loris/write-abort guard. | Backend-only metric. |
 | `cordum_edge_agentd_shutdown_forced_total` | counter | `reason` | agentd graceful-shutdown subcomponent timeout. | Backend-only metric. |
 | `cordum_edge_export_request_rejected_total` | counter | `reason` | Edge export request validation rejections. | Export UI consumes API errors; metric backend-only. |
 | `cordum_edge_redaction_failed_total` | counter | `site`, `reason` | Edge redaction call sites fail closed. | Backend-only alert candidate. |
-| `cordum_edge_artifact_exports_total` | counter | `artifact_type`, `result` | Artifact/evidence export attempts/results. | Backend-only metric. |
+| `cordum_edge_artifact_exports_total` | counter | `artifact_type`, `result` | Not emitted yet: no call site calls `RecordArtifactExport`. | Backend-only metric. |
 | `cordum_edge_hook_latency_seconds` | histogram | `hook_event`, `decision` | Claude hook end-to-end latency observation. | Backend-only SLO input. |
-| `cordum_edge_evaluate_latency_seconds` | histogram | `layer`, `kind`, `decision` | Gateway evaluate latency observation. | Backend-only SLO input. |
+| `cordum_edge_evaluate_latency_seconds` | histogram | `layer`, `kind`, `decision` | `cordum-agentd` evaluate latency, including its Gateway call. | Backend-only SLO input. |
 | `cordum_edge_cache_lookups_total` | counter | `layer`, `kind`, `result` | agentd safe-allow cache lookup result. | Backend-only metric. |
-| `cordum_edge_stream_clients` | gauge | none | Edge WebSocket stream client connect/disconnect accounting. | Dashboard uses the stream; no Prometheus widget. |
+| `cordum_edge_stream_clients` | gauge | none | Not emitted yet: no call site calls `AddStreamClients`. | Dashboard uses the stream; no Prometheus widget. |
 | `cordum_edge_ws_events_sent_total` | counter | `tenant_present` | Gateway stream bridge when an Edge event is accepted into the broadcast queue. | Backend-only for now. |
 | `cordum_edge_stream_drops_total` | counter | `reason` | Gateway stream bridge drop paths. | Backend-only alert candidate. |
 
@@ -161,7 +170,10 @@ whose `approval_ref` and `action_hash` exactly match the `EdgeApproval`. An
 was requested, but it does not prove that the destructive retry was approved and
 does not satisfy `ProvenanceGate` by itself.
 
-Verifier dependencies fail closed. If Redis or the audit chainer/verifier is
+Verifier dependency outages are not measured (approval-store/protected [c]
+and audit-sink/protected [b] in the
+[failure and partition behavior contract](../contract/failure-behavior.md#behavior-table)).
+As implemented, if Redis or the audit chainer/verifier is
 missing or unavailable, the gate returns `service_unavailable` with an
 `audit_chain_verifier_unavailable` / `audit_chain_verify_failed` sub-reason so
 operators see a dependency outage instead of a surprise `internal_error` after
@@ -194,8 +206,13 @@ errors, or copied into audit `extra`.
 | `edge.approval_rejected` | `SIEMEventForApprovalResolved` rejected branch. | `HIGH`. |
 | `edge.approval_expired` | `SIEMEventForApprovalResolved` expired branch. | `MEDIUM`. |
 | `edge.artifact_exported` | `SIEMEventForArtifactExported`. | Result-based. |
-| `edge.agentd_degraded` | `SIEMEventForDegraded`. | `MEDIUM`; `HIGH` in local-dev-enforce. |
-| `edge.fail_closed` | `SIEMEventForFailClosed`. | `CRITICAL`. |
+| `edge.agentd_degraded` | `SIEMEventForDegraded`. Not emitted yet: no call site sends it, and the degraded states it describes occur in `cordum-agentd` and `cordum-hook`, which have no audit sender. | `MEDIUM`; `HIGH` in local-dev-enforce. |
+| `edge.fail_closed` | `SIEMEventForFailClosed`. Not emitted yet, for the same reason. | `CRITICAL`. |
+
+The Gateway's own degraded evaluate outcome (Safety Kernel unavailable)
+reaches the audit pipeline as the evaluate decision event from
+`SIEMEventForAction`: `edge.policy_decision` when observe mode records it,
+`edge.action_denied` when the action fails closed.
 
 ### Reviewer audit-field mapping
 
@@ -288,9 +305,10 @@ successful event enqueues, and drops. Tenant filtering and quarantine/redaction
 behavior are preserved.
 
 Edge event idempotency conflicts return the standard Edge error envelope
-`{code, message, request_id, details?}`. Error details are centrally redacted
-before serialization, so idempotency keys, signed URLs, bearer tokens, and raw
-payload snippets cannot leak to clients.
+`{code, message, request_id, details?}`. The envelope's `details` field is
+redacted before serialization (`sanitizeEdgeErrorDetails`), which masks secret
+values in it, such as the idempotency key, bearer token and signed-URL token in
+`TestWriteEdgeErrorRedactsSecretDetails` (CLM-076, `supported`).
 
 ## See also
 

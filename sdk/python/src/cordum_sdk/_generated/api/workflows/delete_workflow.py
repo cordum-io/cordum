@@ -1,10 +1,10 @@
 from http import HTTPStatus
-from typing import Any, Dict, List, Optional, Union, cast
+from typing import Any, Dict, Optional, Union
 
 import httpx
 
 from ...client import AuthenticatedClient, Client
-from ...types import Response, UNSET
+from ...types import Response
 from ... import errors
 
 
@@ -34,9 +34,13 @@ def _parse_response(
         return None
     if response.status_code == 401:
         return None
+    if response.status_code == 403:
+        return None
     if response.status_code == 404:
         return None
     if response.status_code == 500:
+        return None
+    if response.status_code == 503:
         return None
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)

@@ -17,7 +17,8 @@ func TestGenerateHookSettings_ShapeAndGovernanceEvents(t *testing.T) {
 		t.Fatalf("GenerateHookSettings: %v", err)
 	}
 	var doc struct {
-		Hooks map[string][]struct {
+		Version int `json:"version"`
+		Hooks   map[string][]struct {
 			Type    string            `json:"type"`
 			Command string            `json:"command"`
 			Timeout int               `json:"timeout"`
@@ -26,6 +27,10 @@ func TestGenerateHookSettings_ShapeAndGovernanceEvents(t *testing.T) {
 	}
 	if err := json.Unmarshal(out, &doc); err != nil {
 		t.Fatalf("unmarshal: %v\n%s", err, out)
+	}
+	// The GitHub Copilot hooks reference rejects a file without version 1.
+	if doc.Version != 1 {
+		t.Fatalf("version = %d, want 1", doc.Version)
 	}
 	// Every chat + every action must be wired.
 	for _, ev := range []string{"UserPromptSubmit", "PreToolUse", "PostToolUse"} {
@@ -128,5 +133,45 @@ func TestGenerateHookSettings_Defaults(t *testing.T) {
 	}
 	if !strings.Contains(s, `"CORDUM_EDGE_POLICY_MODE": "enforce"`) {
 		t.Fatalf("default policy mode should be enforce: %s", s)
+	}
+}
+
+// Copilot times a hook out fail-open, so the generated timeout must stay above
+// cordum-hook's 4.5s budget: a shorter request is raised to 5s.
+func TestTimeoutSecondsNeverBelowHookDeadline(t *testing.T) {
+	for ms, want := range map[int]int{0: 5, 3000: 5, 4500: 5, 5000: 5, 5001: 6, 10000: 10} {
+		if got := timeoutSeconds(ms); got != want {
+			t.Errorf("timeoutSeconds(%d) = %d, want %d", ms, got, want)
+		}
+	}
+}
+
+func TestVerifyHookSettings(t *testing.T) {
+	generated, err := GenerateHookSettings(HookSettingsOptions{HookCommand: "/Applications/Cordum Edge/cordum-hook", FailClosed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := string(generated)
+	cases := []struct{ name, file, wantErr string }{
+		{"generated", g, ""},
+		{"sibling hook", strings.Replace(g, `"PreToolUse": [`, `"PreToolUse": [{"type": "command", "command": "./lint.sh"},`, 1), ""},
+		{"not JSON", "{", "cannot parse"},
+		{"no version", strings.Replace(g, `"version": 1,`, "", 1), `"version" is not 1`},
+		{"version 2", strings.Replace(g, `"version": 1`, `"version": 2`, 1), `"version" is not 1`},
+		// camelCase selects Copilot's camelCase payload, which cordum-hook cannot read.
+		{"camelCase event", strings.Replace(g, `"PreToolUse"`, `"preToolUse"`, 1), "PreToolUse has no hook"},
+		{"wrong subcommand", strings.Replace(g, "copilot pre-tool-use", "copilot post-tool-use", 1), "PreToolUse has no hook"},
+		{"platform override", strings.ReplaceAll(g, `"type": "command",`, `"type": "command", "powershell": "echo hi",`), "has no hook"},
+		{"short timeout", strings.ReplaceAll(g, `"timeout": 5`, `"timeout": 2`), "timeout is 2s"},
+		{"short timeoutSec", strings.ReplaceAll(g, `"timeout": 5`, `"timeout": 5, "timeoutSec": 3`), "timeoutSec is 3s"},
+	}
+	for _, tc := range cases {
+		if tc.name != "generated" && tc.name != "not JSON" && tc.file == g {
+			t.Fatalf("%s: replacement did not apply", tc.name)
+		}
+		err := VerifyHookSettings([]byte(tc.file))
+		if (tc.wantErr == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), tc.wantErr)) {
+			t.Errorf("%s: err = %v, want %q", tc.name, err, tc.wantErr)
+		}
 	}
 }

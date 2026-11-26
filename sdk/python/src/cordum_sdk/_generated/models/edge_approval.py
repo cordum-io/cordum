@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 from typing import List
 
@@ -19,8 +19,8 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
-    from ..models.edge_approval_metadata import EdgeApprovalMetadata
     from ..models.edge_labels import EdgeLabels
+    from ..models.edge_approval_metadata import EdgeApprovalMetadata
 
 
 T = TypeVar("T", bound="EdgeApproval")
@@ -84,9 +84,6 @@ class EdgeApproval:
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.edge_approval_metadata import EdgeApprovalMetadata
-        from ..models.edge_labels import EdgeLabels
-
         approval_ref = self.approval_ref
 
         tenant_id = self.tenant_id
@@ -197,8 +194,8 @@ class EdgeApproval:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.edge_approval_metadata import EdgeApprovalMetadata
         from ..models.edge_labels import EdgeLabels
+        from ..models.edge_approval_metadata import EdgeApprovalMetadata
 
         d = src_dict.copy()
         approval_ref = d.pop("approval_ref")

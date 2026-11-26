@@ -268,26 +268,30 @@ func TestConfigWritePublishesNotification(t *testing.T) {
 }
 
 // TestConfigWritePublishesNotification_PolicyScope verifies that a WRAPPED
-// config write to the system/policy scope — the exact path `cordumctl pack
-// install` uses to apply a policy overlay (cmd/cordumctl/pack.go
-// applyPolicyOverlay -> setConfig -> POST /api/v1/config scope=system
-// scope_id=policy) — also publishes a sys.config.changed notification carrying
-// scope_id=policy, so the Safety Kernel reloads the new bundles live with no
-// restart and no manual cache clear. Regression guard for task-2e36d64a: the
-// reported "pack install did not propagate" was NOT a missing publish (this
-// path DOES notify); pinning scope_id=policy prevents a future regression that
+// config write to the system/policy scope publishes a sys.config.changed
+// notification carrying scope_id=policy, so the Safety Kernel reloads the
+// document live with no restart and no manual cache clear. The write echoes
+// the stored bundles unchanged, because only the policy bundle and pack APIs
+// change them, and changes an unmanaged key. Regression guard for
+// task-2e36d64a: pinning scope_id=policy prevents a future regression that
 // special-cases the policy scope to skip the broadcast.
 func TestConfigWritePublishesNotification_PolicyScope(t *testing.T) {
 	s, stubBus, _ := newTestGateway(t)
 
+	bundles := map[string]any{
+		"pack.demo/safety": map[string]any{"fragment": "version: t\nrules: []\n"},
+	}
+	if err := s.configSvc.Set(context.Background(), &configsvc.Document{
+		Scope:   configsvc.ScopeSystem,
+		ScopeID: "policy",
+		Data:    map[string]any{"bundles": bundles, "note": "seeded"},
+	}); err != nil {
+		t.Fatalf("seed policy config: %v", err)
+	}
 	body, _ := json.Marshal(map[string]any{
 		"scope":    "system",
 		"scope_id": "policy",
-		"data": map[string]any{
-			"bundles": map[string]any{
-				"pack.demo/safety": map[string]any{"fragment": "version: t\nrules: []\n"},
-			},
-		},
+		"data":     map[string]any{"bundles": bundles, "note": "changed"},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/config", bytes.NewReader(body))
 	req.Header.Set("X-Tenant-ID", "default")
@@ -317,7 +321,7 @@ func TestConfigWritePublishesNotification_PolicyScope(t *testing.T) {
 		break
 	}
 	if !found {
-		t.Fatalf("expected sys.config.changed notification for the system/policy (pack-install) write path")
+		t.Fatalf("expected sys.config.changed notification for the system/policy write path")
 	}
 }
 
@@ -382,15 +386,22 @@ func TestHandleRegisterSchemaMissingIDReturnsStableCode(t *testing.T) {
 
 func TestSetConfigAllowsBundlesInSystemPolicy(t *testing.T) {
 	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
 
+	bundles := map[string]any{
+		"test-pack/default": map[string]any{"content": "allow"},
+	}
+	if err := s.configSvc.Set(ctx, &configsvc.Document{
+		Scope:   configsvc.ScopeSystem,
+		ScopeID: "policy",
+		Data:    map[string]any{"bundles": bundles},
+	}); err != nil {
+		t.Fatalf("seed policy config: %v", err)
+	}
 	payload := map[string]any{
 		"scope":    "system",
 		"scope_id": "policy",
-		"data": map[string]any{
-			"bundles": map[string]any{
-				"test-pack/default": map[string]any{"content": "allow"},
-			},
-		},
+		"data":     map[string]any{"bundles": bundles},
 	}
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/config", bytes.NewReader(body))
@@ -401,13 +412,14 @@ func TestSetConfigAllowsBundlesInSystemPolicy(t *testing.T) {
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
 	}
-	doc, err := s.configSvc.Get(context.Background(), configsvc.ScopeSystem, "policy")
+	doc, err := s.configSvc.Get(ctx, configsvc.ScopeSystem, "policy")
 	if err != nil {
 		t.Fatalf("get policy config: %v", err)
 	}
-	bundles, ok := doc.Data["bundles"].(map[string]any)
-	if !ok || bundles["test-pack/default"] == nil {
-		t.Fatalf("expected bundles written to system/policy, got %v", doc.Data["bundles"])
+	stored, _ := doc.Data["bundles"].(map[string]any)
+	entry, _ := stored["test-pack/default"].(map[string]any)
+	if entry["content"] != "allow" {
+		t.Fatalf("expected the echoed bundles kept in system/policy, got %v", doc.Data["bundles"])
 	}
 }
 

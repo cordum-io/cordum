@@ -64,6 +64,7 @@ const (
 	metaFieldSafetyChecked         = "safety_checked_at"
 	metaFieldSafetyConstraints     = "safety_constraints"
 	metaFieldSafetyRemediations    = "safety_remediations"
+	metaFieldSafetyIssuerChain     = "safety_delegation_issuer_chain"
 	metaFieldOutputSafety          = "output_safety"
 	metaFieldApprovalRequired      = "safety_approval_required"
 	metaFieldApprovalRef           = "safety_approval_ref"
@@ -1812,6 +1813,11 @@ func (s *RedisJobStore) SetSafetyDecision(ctx context.Context, jobID string, rec
 	if remediationsJSON != "" {
 		fields[metaFieldSafetyRemediations] = remediationsJSON
 	}
+	if len(record.DelegationIssuerChain) > 0 {
+		if data, err := json.Marshal(record.DelegationIssuerChain); err == nil {
+			fields[metaFieldSafetyIssuerChain] = string(data)
+		}
+	}
 
 	var rawConstraints json.RawMessage
 	if constraintsJSON != "" {
@@ -2198,8 +2204,10 @@ func (s *RedisJobStore) InspectApprovalRepair(ctx context.Context, jobID string)
 	runID := ""
 	if req != nil {
 		topic = strings.TrimSpace(req.GetTopic())
-		if req.Labels != nil {
-			runID = strings.TrimSpace(req.Labels["run_id"])
+		// Only a job the workflow engine dispatched (WorkflowId set) belongs
+		// to a run; the run_id label alone links nothing.
+		if strings.TrimSpace(req.GetWorkflowId()) != "" {
+			runID = strings.TrimSpace(req.GetLabels()["run_id"])
 		}
 	}
 	return &ApprovalRepairSnapshot{
@@ -2244,9 +2252,23 @@ func ClassifyApprovalRepair(snapshot ApprovalRepairSnapshot, opts ApprovalRepair
 
 	isApprovedResolution := approval.Decision == model.ApprovalDecisionApprove || approval.Status == model.ApprovalStatusApproved
 	if !isApprovedResolution && snapshot.Request != nil && snapshot.Request.Labels != nil {
-		isApprovedResolution = strings.EqualFold(strings.TrimSpace(snapshot.Request.Labels["approval_granted"]), "true")
+		// Legacy approvals persisted only approval_by plus the label. The
+		// label alone is no evidence of a human decision (the reconciler
+		// auto-applies this plan), so require the server-written approver.
+		isApprovedResolution = strings.TrimSpace(approval.ApprovedBy) != "" &&
+			strings.EqualFold(strings.TrimSpace(snapshot.Request.Labels["approval_granted"]), "true")
 	}
-	if isApprovedResolution {
+	staleRequest := snapshot.SafetyRecord.JobHash != "" && snapshot.RequestHash != "" && snapshot.RequestHash != snapshot.SafetyRecord.JobHash
+	// Re-queue an approval only while the scheduler will still honor it.
+	// Otherwise the scheduler re-gates the job and the next sweep re-queues it
+	// again. A stale request or snapshot is invalidated below, like an
+	// unresolved approval; an approval granted under another policy snapshot
+	// than the stored decision waits for a fresh human decision.
+	if isApprovedResolution && !staleRequest && !opts.StaleSnapshot {
+		if !approvalSnapshotBinds(snapshot) {
+			plan.Reason = "approval was granted under a different policy snapshot than the stored decision; it needs a fresh human decision"
+			return plan
+		}
 		plan.Kind = ApprovalRepairApplyApprovedResolution
 		plan.Repairable = true
 		plan.Reason = "approval was already resolved as approved while the job remained awaiting approval"
@@ -2296,7 +2318,7 @@ func ClassifyApprovalRepair(snapshot ApprovalRepairSnapshot, opts ApprovalRepair
 		return plan
 	}
 
-	if snapshot.SafetyRecord.JobHash != "" && snapshot.RequestHash != "" && snapshot.RequestHash != snapshot.SafetyRecord.JobHash {
+	if staleRequest {
 		plan.Kind = ApprovalRepairInvalidateStaleRequest
 		plan.Repairable = true
 		plan.Reason = "job request changed since the approval request was created"
@@ -2308,6 +2330,22 @@ func ClassifyApprovalRepair(snapshot ApprovalRepairSnapshot, opts ApprovalRepair
 	}
 
 	return plan
+}
+
+// approvalSnapshotBinds mirrors the scheduler's approval snapshot check: the
+// approval_snapshot label the approve path stamped must match the stored
+// decision's policy snapshot (base only). Workflow approval gates carry no
+// policy snapshot and skip the check.
+func approvalSnapshotBinds(snapshot ApprovalRepairSnapshot) bool {
+	if snapshot.Request == nil || snapshot.Topic == capsdk.SubjectWorkflowApprovalGate || snapshot.Topic == capsdk.SubjectApprovalGate {
+		return true
+	}
+	base := func(s string) string {
+		b, _, _ := strings.Cut(strings.TrimSpace(s), "|")
+		return b
+	}
+	asserted := base(snapshot.Request.GetLabels()["approval_snapshot"])
+	return asserted != "" && asserted == base(snapshot.SafetyRecord.PolicySnapshot)
 }
 
 func (s *RedisJobStore) ApplyApprovalRepair(ctx context.Context, params ApprovalRepairApplyParams) (*ApprovalRepairResult, error) {
@@ -2982,6 +3020,12 @@ func (s *RedisJobStore) GetSafetyDecision(ctx context.Context, jobID string) (mo
 		var remediations []*pb.PolicyRemediation
 		if err := json.Unmarshal([]byte(raw), &remediations); err == nil {
 			record.Remediations = remediations
+		}
+	}
+	if raw := data[metaFieldSafetyIssuerChain]; raw != "" {
+		var chain []string
+		if err := json.Unmarshal([]byte(raw), &chain); err == nil {
+			record.DelegationIssuerChain = chain
 		}
 	}
 	return record, nil

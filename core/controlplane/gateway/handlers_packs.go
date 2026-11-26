@@ -171,6 +171,15 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 			Err:    fmt.Errorf("%s: %s", verifyErr.Code, verifyErr.Message),
 		}
 	}
+	var policySigner *policyStoreSigner
+	if len(manifest.Overlays.Policy) > 0 {
+		policySigner, err = resolvePolicyStoreSigner("pack " + manifest.Metadata.ID)
+		if err != nil {
+			refusal := fmt.Errorf("%s: pack %q %w", PackVerificationCodePolicyUnsigned, manifest.Metadata.ID, err)
+			s.appendAuditEntryNamed(ctx, PackVerificationEventRejected, "pack", manifest.Metadata.ID, manifest.Metadata.Title, opts.InstalledBy, "", refusal.Error())
+			return packs.PackRecord{}, nil, &packs.PackInstallError{Status: http.StatusBadRequest, Err: refusal}
+		}
+	}
 	s.appendAuditEntryNamed(ctx, PackVerificationEventVerified, "pack", manifest.Metadata.ID, manifest.Metadata.Title, opts.InstalledBy, "", fmt.Sprintf("signed=%t kid=%s cordum=%t", verifyResult.Signed, verifyResult.KID, verifyResult.HasCordumCounterSig))
 	owner := strings.TrimSpace(opts.Owner)
 	if owner == "" {
@@ -277,7 +286,7 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 		}
 	}
 	for _, overlay := range manifest.Overlays.Policy {
-		applied, err := s.applyPolicyOverlay(ctx, overlay, manifest.Metadata.ID, manifest.Metadata.Version, bundleDir)
+		applied, err := s.applyPolicyOverlay(ctx, overlay, manifest.Metadata.ID, manifest.Metadata.Version, bundleDir, policySigner)
 		if err != nil {
 			rollback()
 			return packs.PackRecord{}, nil, &packs.PackInstallError{Status: http.StatusBadRequest, Err: err}
@@ -913,7 +922,7 @@ func (s *server) restoreConfigOverlay(ctx context.Context, change packs.AppliedC
 	return s.configSvc.Set(ctx, doc)
 }
 
-func (s *server) applyPolicyOverlay(ctx context.Context, overlay packs.PackPolicyOverlay, packID, packVersion, dir string) (packs.AppliedPolicyChange, error) {
+func (s *server) applyPolicyOverlay(ctx context.Context, overlay packs.PackPolicyOverlay, packID, packVersion, dir string, signer *policyStoreSigner) (packs.AppliedPolicyChange, error) {
 	strategy := strings.TrimSpace(overlay.Strategy)
 	if strategy != "" && strategy != "bundle_fragment" {
 		return packs.AppliedPolicyChange{}, fmt.Errorf("unsupported policy overlay strategy %q", strategy)
@@ -961,12 +970,20 @@ func (s *server) applyPolicyOverlay(ctx context.Context, overlay packs.PackPolic
 	previous, hadPrevious := bundles[fragmentID]
 	installedAt := time.Now().UTC().Format(time.RFC3339)
 	sum := sha256.Sum256(content)
-	bundles[fragmentID] = map[string]any{
+	fragment := map[string]any{
 		"content":      string(content),
 		"version":      packVersion,
 		"sha256":       hex.EncodeToString(sum[:]),
 		"installed_at": installedAt,
 	}
+	if signer != nil && len(content) > 0 {
+		signature, err := signer.sign(content)
+		if err != nil {
+			return packs.AppliedPolicyChange{}, err
+		}
+		fragment[policyBundleSignatureKey] = signature
+	}
+	bundles[fragmentID] = fragment
 	doc.Data[packs.PolicyConfigKey] = bundles
 	if err := s.configSvc.Set(ctx, doc); err != nil {
 		return packs.AppliedPolicyChange{}, err

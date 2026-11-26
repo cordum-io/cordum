@@ -36,6 +36,14 @@ spec:
             name: cordum-api-gateway
             port:
               number: 8081
+      # MCP HTTP+SSE transport (/mcp/sse, /mcp/message, /mcp/status).
+      - path: /mcp
+        pathType: Prefix
+        backend:
+          service:
+            name: cordum-api-gateway
+            port:
+              number: 8081
       - path: /
         pathType: Prefix
         backend:

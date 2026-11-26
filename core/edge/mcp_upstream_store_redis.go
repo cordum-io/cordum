@@ -46,7 +46,7 @@ func (r *RedisMCPUpstreamRegistry) Create(ctx context.Context, upstream *Upstrea
 	if err != nil {
 		return err
 	}
-	if err := ValidateMCPUpstream(ctx, &record, "", nil); err != nil {
+	if err := ValidateMCPUpstreamWithOptions(ctx, &record, "", nil, mcpUpstreamValidationOptionsFrom(ctx)); err != nil {
 		return err
 	}
 	key := mcpUpstreamKey(record.TenantID, record.Name)
@@ -149,7 +149,7 @@ func (r *RedisMCPUpstreamRegistry) Update(ctx context.Context, upstream *Upstrea
 	if err != nil {
 		return err
 	}
-	if err := ValidateMCPUpstream(ctx, &record, "", nil); err != nil {
+	if err := ValidateMCPUpstreamWithOptions(ctx, &record, "", nil, mcpUpstreamValidationOptionsFrom(ctx)); err != nil {
 		return err
 	}
 	key := mcpUpstreamKey(record.TenantID, record.Name)

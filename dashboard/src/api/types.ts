@@ -31,6 +31,8 @@ export type EdgePrincipalType = "human" | "service" | "unknown";
 export type EdgeMode = "local-dev" | "enterprise-managed" | "workflow" | "ci" | "prod-runner";
 export type EdgePolicyMode = "observe" | "enforce" | "enterprise-strict";
 export type EdgeSessionStatus = "starting" | "running" | "waiting_for_approval" | "degraded" | "ended" | "failed";
+/** Server-derived (core/edge/assurance.go); the dashboard never derives it. */
+export type EdgeAssuranceState = "compatibility" | "hook-mediated" | "executor-enforced" | "unsupported" | "stale";
 export type EdgeExecutionStatus = "running" | "waiting_for_approval" | "succeeded" | "failed" | "cancelled" | "timeout" | "degraded";
 export type EdgeLayer = "hook" | "mcp" | "llm" | "runtime" | "workflow" | "system";
 export type EdgeDecision = "ALLOW" | "DENY" | "REQUIRE_APPROVAL" | "THROTTLE" | "CONSTRAIN" | "RECORDED";
@@ -101,6 +103,8 @@ export interface EdgeSession {
   sessionId: string;
   tenantId: string;
   principalId?: string;
+  /** Display label only, never an authenticated principal (task-b5d2cde2). */
+  principalDisplayName?: string;
   principalType: EdgePrincipalType | string;
   agentProduct?: string;
   agentVersion?: string;
@@ -119,6 +123,8 @@ export interface EdgeSession {
   enforcementLayers?: EdgeEnforcementLayers;
   policyMode: EdgePolicyMode | string;
   status: EdgeSessionStatus | string;
+  /** Undefined when the server sent no value or one outside the five states. */
+  assuranceState?: EdgeAssuranceState;
   riskSummary: EdgeRiskSummary;
   startedAt: string;
   endedAt?: string | null;
@@ -1755,7 +1761,6 @@ export interface McpConfig {
   enabled: boolean;
   transport: McpTransport;
   port: number;
-  requireAuth: boolean;
   allowedOrigins: string[];
   apiKeyMasked?: string;
   tools: Record<string, { enabled: boolean }>;

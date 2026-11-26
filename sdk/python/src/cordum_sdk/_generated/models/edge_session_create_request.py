@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 from typing import List
 
@@ -14,13 +14,12 @@ from ..models.edge_session_create_request_principal_type import (
     EdgeSessionCreateRequestPrincipalType,
 )
 from ..types import UNSET, Unset
-from typing import cast
 from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-    from ..models.edge_enforcement_layers import EdgeEnforcementLayers
     from ..models.edge_labels import EdgeLabels
+    from ..models.edge_enforcement_layers import EdgeEnforcementLayers
 
 
 T = TypeVar("T", bound="EdgeSessionCreateRequest")
@@ -76,9 +75,6 @@ class EdgeSessionCreateRequest:
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.edge_enforcement_layers import EdgeEnforcementLayers
-        from ..models.edge_labels import EdgeLabels
-
         tenant_id = self.tenant_id
 
         principal_id = self.principal_id
@@ -177,8 +173,8 @@ class EdgeSessionCreateRequest:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.edge_enforcement_layers import EdgeEnforcementLayers
         from ..models.edge_labels import EdgeLabels
+        from ..models.edge_enforcement_layers import EdgeEnforcementLayers
 
         d = src_dict.copy()
         tenant_id = d.pop("tenant_id", UNSET)

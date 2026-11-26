@@ -58,11 +58,12 @@ OUTPUT_POLICY_ENABLED=true
 
 ### 3.2 Fail mode
 
-Current scheduler behavior is effectively `fail_mode: open`:
+The two phases handle a checker error differently:
 
-- if sync check fails, scheduler increments `output_policy_skipped` and does not block result completion
+- if the synchronous metadata check fails, the scheduler increments `output_policy_skipped` and does not block result completion (fail-open)
+- if the asynchronous content check fails, the scheduler follows the config-service key `scheduler.output_fail_mode` (system or tenant level): `closed`, the default when unset and the mode the production identity profile forces, is documented to quarantine the job; `open` allows the result and counts it as skipped
 
-`fail_mode: closed` is not currently implemented as a first-class runtime toggle in the scheduler path.
+Output-check outage outcomes are not measured; see [failure and partition behavior](contract/failure-behavior.md#scope-and-operator-modes).
 
 ### 3.3 Per-topic override pattern
 

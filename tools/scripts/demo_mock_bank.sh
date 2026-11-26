@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+cd "${ROOT_DIR}"
+
 require() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "missing dependency: $1" >&2
@@ -20,7 +23,7 @@ else
   CTL_BIN=""
 fi
 
-API_BASE=${CORDUM_API_BASE:-http://localhost:8081}
+API_BASE=${CORDUM_API_BASE:-https://localhost:8081}
 API_KEY=${CORDUM_API_KEY:-${API_KEY:-}}
 if [[ -z "${API_KEY}" ]]; then
   echo "CORDUM_API_KEY is required; export it before running the demo." >&2
@@ -29,8 +32,33 @@ fi
 export CORDUM_GATEWAY=${CORDUM_GATEWAY:-${API_BASE}}
 ORG_ID=${CORDUM_ORG_ID:-${CORDUM_TENANT_ID:-default}}
 TENANT_ID=${CORDUM_TENANT_ID:-${ORG_ID}}
-NATS_URL=${NATS_URL:-nats://localhost:4222}
-REDIS_URL=${REDIS_URL:-redis://:${REDIS_PASSWORD:-cordum-dev}@localhost:6379}
+
+# The compose stack is TLS-only: trust the dev CA from `cordumctl generate-certs`
+# and give the worker the client certificate that NATS requires.
+CURL_TLS_OPTS=()
+TLS_CA="${CORDUM_TLS_CA:-}"
+if [[ -z "${TLS_CA}" && "${API_BASE}" == https://* && -f "${ROOT_DIR}/certs/ca/ca.crt" ]]; then
+  TLS_CA="${ROOT_DIR}/certs/ca/ca.crt"
+fi
+if [[ -n "${TLS_CA}" ]]; then
+  export CORDUM_TLS_CA="${TLS_CA}"
+  CURL_TLS_OPTS=(--cacert "${TLS_CA}")
+  if curl --version 2>/dev/null | grep -qi schannel; then
+    CURL_TLS_OPTS+=(--ssl-no-revoke)
+  fi
+  NATS_URL=${NATS_URL:-tls://localhost:4222}
+  REDIS_URL=${REDIS_URL:-rediss://:${REDIS_PASSWORD:-cordum-dev}@localhost:6379}
+  : "${NATS_TLS_CA:=${TLS_CA}}"
+  : "${NATS_TLS_CERT:=${ROOT_DIR}/certs/client/tls.crt}"
+  : "${NATS_TLS_KEY:=${ROOT_DIR}/certs/client/tls.key}"
+  : "${REDIS_TLS_CA:=${TLS_CA}}"
+  : "${REDIS_TLS_CERT:=${ROOT_DIR}/certs/client/tls.crt}"
+  : "${REDIS_TLS_KEY:=${ROOT_DIR}/certs/client/tls.key}"
+  export NATS_TLS_CA NATS_TLS_CERT NATS_TLS_KEY REDIS_TLS_CA REDIS_TLS_CERT REDIS_TLS_KEY
+else
+  NATS_URL=${NATS_URL:-nats://localhost:4222}
+  REDIS_URL=${REDIS_URL:-redis://:${REDIS_PASSWORD:-cordum-dev}@localhost:6379}
+fi
 
 MODE=${1:-docker}
 
@@ -54,7 +82,8 @@ if [[ "${MODE}" == "docker" ]]; then
 
   echo ""
   echo "=== Mock Bank Demo Ready ==="
-  echo "Mock Bank UI:  http://localhost:${MOCK_BANK_UI_PORT:-3000}"
+  # The UI's nginx proxies /api/ to the gateway, so point the UI at itself.
+  echo "Mock Bank UI:  http://localhost:${MOCK_BANK_UI_PORT:-3000}/?apiBaseUrl=http://localhost:${MOCK_BANK_UI_PORT:-3000}"
   echo "Dashboard:     http://localhost:8082"
   echo "API Gateway:   ${API_BASE}"
   echo ""
@@ -91,7 +120,7 @@ cleanup() {
 trap cleanup EXIT
 
 echo "[mock-bank] checking gateway"
-curl -sS "${API_BASE}/api/v1/status" -H "X-API-Key: ${API_KEY}" -H "X-Tenant-ID: ${TENANT_ID}" >/dev/null
+curl -sS "${CURL_TLS_OPTS[@]}" "${API_BASE}/api/v1/status" -H "X-API-Key: ${API_KEY}" -H "X-Tenant-ID: ${TENANT_ID}" >/dev/null
 
 echo "[mock-bank] installing pack"
 install_pack

@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 from typing import List
 
@@ -17,9 +17,9 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
-    from ..models.status_response_license_type_0 import StatusResponseLicenseType0
-    from ..models.status_response_redis import StatusResponseRedis
     from ..models.status_response_build import StatusResponseBuild
+    from ..models.status_response_redis import StatusResponseRedis
+    from ..models.status_response_license_type_0 import StatusResponseLicenseType0
     from ..models.status_response_nats import StatusResponseNats
 
 
@@ -50,9 +50,6 @@ class StatusResponse:
 
     def to_dict(self) -> Dict[str, Any]:
         from ..models.status_response_license_type_0 import StatusResponseLicenseType0
-        from ..models.status_response_redis import StatusResponseRedis
-        from ..models.status_response_build import StatusResponseBuild
-        from ..models.status_response_nats import StatusResponseNats
 
         time: Union[Unset, str] = UNSET
         if not isinstance(self.time, Unset):
@@ -104,9 +101,9 @@ class StatusResponse:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.status_response_license_type_0 import StatusResponseLicenseType0
-        from ..models.status_response_redis import StatusResponseRedis
         from ..models.status_response_build import StatusResponseBuild
+        from ..models.status_response_redis import StatusResponseRedis
+        from ..models.status_response_license_type_0 import StatusResponseLicenseType0
         from ..models.status_response_nats import StatusResponseNats
 
         d = src_dict.copy()

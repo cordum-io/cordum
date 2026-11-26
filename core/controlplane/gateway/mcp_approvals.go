@@ -63,9 +63,9 @@ type MCPApprovalRequest struct {
 	// Tenant is the org/tenant the calling agent belongs to. Drives both
 	// the storage namespace and the audit-chain partition.
 	Tenant string
-	// AgentID is the display-facing MCP agent identifier (X-Agent-Id).
-	// Persisted for audit clarity; the self-approval guard uses
-	// Principal, not AgentID.
+	// AgentID is the agent identity ID bound to the authenticated
+	// principal, never the raw X-Agent-Id header. Persisted for audit
+	// clarity; the self-approval guard uses Principal, not AgentID.
 	AgentID string
 	// Principal is the authenticated subject that initiated the call
 	// (API-key principal, SSO subject). The self-approval guard
@@ -93,6 +93,13 @@ type MCPApprovalRequest struct {
 	// trigger reason and never overwritten by a resolver's free-form
 	// reason — see ResolutionReason on the record.
 	Reason string
+	// ID, when set, is the record id to use instead of a generated one. The
+	// gate pre-generates it so the Edge approval minted first can name the
+	// record it is dual-written with.
+	ID string
+	// EdgeApprovalRef names the Edge approval this record is dual-written
+	// with; see MCPApprovalRecord.EdgeApprovalRef.
+	EdgeApprovalRef string
 }
 
 // MCPApprovalRecord is the persisted shape stored at mcp:approvals:<id>.
@@ -122,6 +129,11 @@ type MCPApprovalRecord struct {
 	ResolvedBy       string                 `json:"resolved_by,omitempty"`
 	Decision         model.ApprovalDecision `json:"decision,omitempty"`
 	ConsumedAt       int64                  `json:"consumed_at,omitempty"`
+	// EdgeApprovalRef names the Edge approval dual-written with this record.
+	// The Edge approval is the pair's consume token and is resolved together
+	// with the record from either approvals page; ClaimPreApproved never
+	// consumes such a record.
+	EdgeApprovalRef string `json:"edge_approval_ref,omitempty"`
 }
 
 // MCPApprovalStore is the per-server handle for MCP approval persistence.
@@ -255,7 +267,9 @@ func validateMCPApprovalRequest(req *MCPApprovalRequest) error {
 }
 
 // EnqueueMCPApproval creates a PENDING approval record, writes it to
-// Redis, and registers it in the lookup index.
+// Redis, and registers it in the lookup index. When the requester already
+// has a PENDING record for the same tenant/agent/tool/args it returns that
+// record instead, without writing or auditing anything.
 //
 // Returns the created MCPApprovalRecord on success. The approval ID is
 // crypto/rand-derived so callers can safely use it as a stable handle.
@@ -272,9 +286,12 @@ func (s *MCPApprovalStore) EnqueueMCPApproval(ctx context.Context, req *MCPAppro
 		ttl = mcpApprovalDefaultTTL
 	}
 
-	id, err := mcpApprovalID()
-	if err != nil {
-		return nil, fmt.Errorf("mcp approval: generate id: %w", err)
+	id := strings.TrimSpace(req.ID)
+	if id == "" {
+		var err error
+		if id, err = mcpApprovalID(); err != nil {
+			return nil, fmt.Errorf("mcp approval: generate id: %w", err)
+		}
 	}
 	now := time.Now().UTC()
 
@@ -303,27 +320,77 @@ func (s *MCPApprovalStore) EnqueueMCPApproval(ctx context.Context, req *MCPAppro
 		Status:    model.ApprovalStatusPending,
 		CreatedAt: now.UnixMicro(),
 		ExpiresAt: now.Add(ttl).UnixMicro(),
+
+		EdgeApprovalRef: strings.TrimSpace(req.EdgeApprovalRef),
 	}
 	raw, err := json.Marshal(rec)
 	if err != nil {
 		return nil, fmt.Errorf("mcp approval: marshal: %w", err)
 	}
 
-	pipe := s.client.TxPipeline()
-	pipe.Set(ctx, mcpApprovalKey(rec.ID), raw, ttl+time.Minute)
-	// Index goes into a per-tuple set so a single agent/tool/args trio
-	// can have at most one outstanding PENDING approval. The set member
-	// is the approval ID — pre-approval lookup walks members and picks
-	// an APPROVED+unconsumed record via CAS.
+	// The per-tuple index holds each requester's one outstanding PENDING
+	// approval for an agent/tool/args trio: a repeat of a still-pending call
+	// (a redelivered or concurrent duplicate) gets that record back instead
+	// of a second one. WATCH on the index makes a concurrent enqueue of the
+	// same trio retry and find the winner's record. An Edge-paired request
+	// always writes its own record, since the gate minted that Edge approval
+	// for this id (pendingMCPPair is its re-ask path). Pre-approval lookup
+	// walks the same members and picks an APPROVED+unconsumed record via CAS.
 	idxKey := mcpApprovalIndexKey(rec.Tenant, rec.AgentID, rec.ToolName, rec.ArgsHash)
-	pipe.SAdd(ctx, idxKey, rec.ID)
-	pipe.Expire(ctx, idxKey, ttl+time.Minute)
-	if _, err := pipe.Exec(ctx); err != nil {
+	var reused *MCPApprovalRecord
+	write := func(tx *redis.Tx) error {
+		reused = nil
+		if rec.EdgeApprovalRef == "" {
+			var err error
+			if reused, err = pendingApprovalFor(ctx, tx, idxKey, rec); err != nil || reused != nil {
+				return err
+			}
+		}
+		_, err := tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			pipe.Set(ctx, mcpApprovalKey(rec.ID), raw, ttl+time.Minute)
+			pipe.SAdd(ctx, idxKey, rec.ID)
+			pipe.Expire(ctx, idxKey, ttl+time.Minute)
+			return nil
+		})
+		return err
+	}
+	if err := redisutil.Retry(ctx, s.client, write,
+		redisutil.WithKeys(idxKey),
+		redisutil.WithMaxAttempts(mcpCASMaxAttempts),
+	); err != nil {
 		return nil, fmt.Errorf("mcp approval: write redis: %w", err)
+	}
+	if reused != nil {
+		return reused, nil
 	}
 
 	s.emitAudit(rec, "enqueued", "", audit.SeverityMedium)
 	return rec, nil
+}
+
+// pendingApprovalFor returns the PENDING, unexpired, non-Edge record in the
+// index at idxKey that rec's requester enqueued, or nil. It reads on the
+// transaction's own connection, the one holding the WATCH.
+func pendingApprovalFor(ctx context.Context, tx *redis.Tx, idxKey string, rec *MCPApprovalRecord) (*MCPApprovalRecord, error) {
+	ids, err := tx.SMembers(ctx, idxKey).Result()
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		raw, err := tx.Get(ctx, mcpApprovalKey(id)).Bytes()
+		if errors.Is(err, redis.Nil) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		var prior MCPApprovalRecord
+		if json.Unmarshal(raw, &prior) == nil && prior.Status == model.ApprovalStatusPending &&
+			prior.ExpiresAt > rec.CreatedAt && prior.EdgeApprovalRef == "" && prior.Requester == rec.Requester {
+			return &prior, nil
+		}
+	}
+	return nil, nil
 }
 
 // Get returns the approval record by ID. Returns (nil, redis.Nil) when
@@ -410,6 +477,12 @@ func (s *MCPApprovalStore) ClaimPreApproved(ctx context.Context, tenant, agentID
 	// first — the CAS then decides the winner consistently.
 	sort.Strings(ids)
 	for _, id := range ids {
+		// A record dual-written with an Edge approval is consumed only through
+		// that approval, the pair's single consume token, so one approval
+		// cannot run the call once per path.
+		if rec, err := s.Get(ctx, id); err == nil && rec.EdgeApprovalRef != "" {
+			continue
+		}
 		consumed, rec, err := s.consumeRecord(ctx, id)
 		if err != nil {
 			if errors.Is(err, redis.Nil) {
@@ -680,7 +753,7 @@ func (s *MCPApprovalStore) SweepExpired(ctx context.Context, now time.Time) (int
 				continue
 			}
 			id := strings.TrimPrefix(key, mcpApprovalKeyPrefix)
-			expired, rec := s.expireOne(ctx, id, deadline)
+			expired, rec := s.expireOne(ctx, id, deadline, false)
 			if expired && rec != nil {
 				matched++
 				s.pruneIndexFor(ctx, rec)
@@ -695,11 +768,28 @@ func (s *MCPApprovalStore) SweepExpired(ctx context.Context, now time.Time) (int
 	return matched, nil
 }
 
+// WithdrawPending expires a PENDING record now, whatever its deadline. A
+// record that is no longer PENDING is left alone, and the sweeper stays the
+// backstop. Reports whether this call expired the record.
+func (s *MCPApprovalStore) WithdrawPending(ctx context.Context, id string, now time.Time) bool {
+	if s == nil || s.client == nil || strings.TrimSpace(id) == "" {
+		return false
+	}
+	expired, rec := s.expireOne(ctx, id, now.UnixMicro(), true)
+	if !expired || rec == nil {
+		return false
+	}
+	s.pruneIndexFor(ctx, rec)
+	s.emitAudit(rec, "expired", "", audit.SeverityMedium)
+	return true
+}
+
 // expireOne CAS-transitions a single PENDING record to EXPIRED if its
-// ExpiresAt has passed. Returns (true, rec) on transition, (false, nil)
-// otherwise. Shared by SweepExpired; kept on the store so unit tests
-// can exercise the CAS directly if needed.
-func (s *MCPApprovalStore) expireOne(ctx context.Context, id string, deadline int64) (bool, *MCPApprovalRecord) {
+// ExpiresAt has passed, or at once when force is set. Returns (true, rec) on
+// transition, (false, nil) otherwise. Shared by SweepExpired (force=false)
+// and WithdrawPending (force=true); kept on the store so unit tests can
+// exercise the CAS directly if needed.
+func (s *MCPApprovalStore) expireOne(ctx context.Context, id string, deadline int64, force bool) (bool, *MCPApprovalRecord) {
 	key := mcpApprovalKey(id)
 	var (
 		expired bool
@@ -717,7 +807,7 @@ func (s *MCPApprovalStore) expireOne(ctx context.Context, id string, deadline in
 		if rec.Status != model.ApprovalStatusPending {
 			return nil
 		}
-		if rec.ExpiresAt > deadline {
+		if !force && rec.ExpiresAt > deadline {
 			return nil
 		}
 		next := rec

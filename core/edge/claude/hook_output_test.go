@@ -24,6 +24,16 @@ func TestRequireApprovalMapsToImmediateDenyWithApprovalRef(t *testing.T) {
 	assertCompactJSON(t, string(data), `{"decision":"block","reason":"approval required; approval_ref=edge_appr_123; approve then retry the tool call","hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"approval required; approval_ref=edge_appr_123; approve then retry the tool call"}}`)
 }
 
+// agentd's REQUIRE_APPROVAL reason already ends with the approval_ref retry
+// guidance; the PreToolUse deny must not repeat it.
+func TestRequireApprovalDoesNotRepeatAgentdApprovalGuidance(t *testing.T) {
+	reason := "Cordum approval required. Action was not run.; approval_ref=edge_appr_123; approve then retry the tool call"
+	out := ClaudeHookOutputForDecision("PreToolUse", AgentdDecision{Decision: DecisionRequireApproval, Reason: reason, ApprovalRef: "edge_appr_123"})
+	if got := out.HookSpecificOutput.PermissionDecisionReason; got != reason || out.Reason != reason {
+		t.Fatalf("reason = %q / %q, want agentd's reason unchanged: %q", got, out.Reason, reason)
+	}
+}
+
 func TestPreToolUseAskIncludesUpdatedInput(t *testing.T) {
 	out := ClaudeHookOutputForDecision("PreToolUse", AgentdDecision{
 		Decision:     DecisionAsk,

@@ -352,6 +352,7 @@ func TestProcessApprovalGateProductionEchoesRequestIdentity(t *testing.T) {
 		Decision: SafetyRequireApproval, ApprovalRequired: true,
 		PolicySnapshot: workflowGateSnapshot, JobHash: jobHash,
 	}
+	store.approve(req.GetJobId())
 	bus := &fakeBus{}
 	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil).
 		WithProductionIdentityEnforcement(true)

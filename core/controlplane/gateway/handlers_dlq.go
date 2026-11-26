@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"log/slog"
+	"maps"
 	"net/http"
 	"strconv"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/cordum/cordum/core/protocol/reqhash"
 	"github.com/google/uuid"
 )
 
@@ -196,7 +198,13 @@ func (s *server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
 	var baseLabels map[string]string
 	if origReq != nil {
 		baseEnv = origReq.GetEnv()
-		baseLabels = origReq.GetLabels()
+		// The retry is a new job: the original's server-owned labels (its
+		// approval, gate marker, bus dedupe ID, policy attachment and run
+		// context) stay behind. The "_" system labels describe the request
+		// itself (provenance, content, delegation), so the retry is checked
+		// like the original.
+		baseLabels = maps.Clone(origReq.GetLabels())
+		maps.DeleteFunc(baseLabels, func(k, _ string) bool { return reqhash.ServerOwnedLabel(k) })
 	}
 
 	jobReq := &pb.JobRequest{
@@ -212,6 +220,10 @@ func (s *server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
 	if origReq != nil {
 		jobReq.Meta = origReq.GetMeta()
 		jobReq.Identity = origReq.GetIdentity()
+		// The workflow link comes from WorkflowId, which only the workflow
+		// engine sets; keeping it keeps the retry under its workflow's
+		// policy scope and saga, as the original's labels used to.
+		jobReq.WorkflowId = origReq.GetWorkflowId()
 	}
 	jobReq, err = s.normalizeStoredJobRequest(jobReq)
 	if err != nil {

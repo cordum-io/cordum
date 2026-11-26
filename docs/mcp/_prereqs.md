@@ -53,13 +53,12 @@
    If unset, the client defaults to `default`. Multi-tenant
    operators should always set this explicitly.
 
-6. **Rate limits.** The gateway applies a baseline rate limit on the
-   MCP endpoints: 100 req/s per API key with a short burst allowance.
-   Exceeding the limit returns HTTP 429 with a
-   `Retry-After` header; MCP clients interpret this as a transient
-   failure and back off. Increase the limit per-tenant via
-   `cordumctl config set rate.mcp.rps <n>` if a legitimate workload
-   hits it.
+6. **Rate limits.** The MCP endpoints share the gateway's API rate
+   limiter with `/api/`. Its default rate comes from the license tier,
+   and the gateway settings `API_RATE_LIMIT_RPS` and
+   `API_RATE_LIMIT_BURST` change it; while `REDIS_RATE_LIMIT` is on
+   (the default), the tier caps them. Exceeding the limit returns
+   HTTP 429.
 
 ## First prompts to try
 

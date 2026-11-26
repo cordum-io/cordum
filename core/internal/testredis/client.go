@@ -1,10 +1,13 @@
 package testredis
 
 import (
+	"context"
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -48,6 +51,52 @@ func NewClient(t testing.TB, addr string) *redis.Client {
 	t.Helper()
 	client := redis.NewClient(Options(addr))
 	t.Cleanup(func() { _ = client.Close() })
+	return client
+}
+
+// NewMiniClusterClient creates a Redis Cluster client over miniredis, which
+// serves every slot from one node. It runs a store's cluster code path, and
+// go-redis still rejects a cross-slot MULTI client-side, but miniredis does
+// not enforce CROSSSLOT for scripts: cluster integration tests do that.
+func NewMiniClusterClient(t testing.TB, addr string) *redis.ClusterClient {
+	t.Helper()
+	client := redis.NewClusterClient(&redis.ClusterOptions{
+		Addrs:        []string{addr},
+		PoolSize:     PoolSize,
+		MinIdleConns: MinIdleConns,
+	})
+	t.Cleanup(func() { _ = client.Close() })
+	return client
+}
+
+// ClusterAddrsEnv names the comma-separated seed addresses of a cluster-mode
+// Redis (production: REDIS_CLUSTER_ADDRESSES). Cluster integration tests skip
+// when it is unset. They write only keys under unique test prefixes or
+// tenants and never flush, but point it at a disposable cluster anyway.
+const ClusterAddrsEnv = "CORDUM_TEST_REDIS_CLUSTER_ADDRESSES"
+
+// NewClusterClient connects to the cluster named by ClusterAddrsEnv, or skips
+// the test when it is unset.
+func NewClusterClient(t testing.TB) *redis.ClusterClient {
+	t.Helper()
+	var addrs []string
+	for _, addr := range strings.Split(os.Getenv(ClusterAddrsEnv), ",") {
+		if addr = strings.TrimSpace(addr); addr != "" {
+			addrs = append(addrs, addr)
+		}
+	}
+	if len(addrs) == 0 {
+		t.Skipf("%s not set; skipping Redis Cluster integration test", ClusterAddrsEnv)
+	}
+	client := redis.NewClusterClient(&redis.ClusterOptions{Addrs: addrs})
+	t.Cleanup(func() { _ = client.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := client.ForEachMaster(ctx, func(ctx context.Context, node *redis.Client) error {
+		return node.Ping(ctx).Err()
+	}); err != nil {
+		t.Fatalf("redis cluster %v: %v", addrs, err)
+	}
 	return client
 }
 

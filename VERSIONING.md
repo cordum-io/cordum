@@ -9,12 +9,14 @@ ergonomics tweak does not force a core bump.
 
 | Artifact | Tag format | Version source of truth | Ships as | Workflow |
 |----------|------------|-------------------------|----------|----------|
-| Core platform (7 services + dashboard) | `v<major>.<minor>.<patch>` | Git tag + image tag | ghcr.io images | `.github/workflows/docker.yml` |
+| Core platform (8 images + 15 Edge binaries) | `v<major>.<minor>.<patch>` | Git tag + qualification record | GHCR/Docker Hub images, GitHub Release binaries | `.github/workflows/docker.yml` (calls `release.yml`) |
 | Python SDK | `sdk-python-v<major>.<minor>.<patch>` | `sdk/python/src/cordum_sdk/__init__.py` `__version__` | PyPI `cordum-sdk` | `.github/workflows/sdk-python.yml` |
 | TypeScript SDK | `sdk-ts-v<major>.<minor>.<patch>` | `sdk/typescript/package.json` `version` | npm `@cordum/sdk` | `.github/workflows/sdk-typescript.yml` |
 
-Tag prefixes are load-bearing: each publish workflow only fires on its own
-prefix. Pushing an unprefixed `v*` tag will build core images, not the SDKs.
+Tag prefixes are load-bearing: each publish workflow handles its own tag
+prefix. Pushing an unprefixed `v*` tag builds core images and calls the Edge
+binary build, not the SDKs. The core workflow also accepts `release-dry-run/**`
+branch pushes without real publication; see [RELEASING.md](RELEASING.md).
 
 ## Semver
 

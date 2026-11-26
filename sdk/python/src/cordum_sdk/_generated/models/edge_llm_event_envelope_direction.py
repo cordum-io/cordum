@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class EdgeLLMEventEnvelopeDirection(str, Enum):
     PROMPT = "prompt"
     RESPONSE = "response"

@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 from typing import List
 
@@ -17,10 +17,10 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
+    from ..models.safety_decision import SafetyDecision
     from ..models.policy_check_response_constraints_type_0 import (
         PolicyCheckResponseConstraintsType0,
     )
-    from ..models.safety_decision import SafetyDecision
 
 
 T = TypeVar("T", bound="PolicyCheckResponse")
@@ -48,7 +48,6 @@ class PolicyCheckResponse:
         from ..models.policy_check_response_constraints_type_0 import (
             PolicyCheckResponseConstraintsType0,
         )
-        from ..models.safety_decision import SafetyDecision
 
         decision: Union[Unset, str] = UNSET
         if not isinstance(self.decision, Unset):
@@ -100,10 +99,10 @@ class PolicyCheckResponse:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
+        from ..models.safety_decision import SafetyDecision
         from ..models.policy_check_response_constraints_type_0 import (
             PolicyCheckResponseConstraintsType0,
         )
-        from ..models.safety_decision import SafetyDecision
 
         d = src_dict.copy()
         _decision = d.pop("decision", UNSET)

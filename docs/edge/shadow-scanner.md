@@ -71,7 +71,7 @@ opt-out.
 | Codex | `~/.codex/config.toml` — minimal regex extract of `[mcp_servers.<name>]` headers + `transport = "..."` + `endpoint = "..."` hostname. |
 | Cursor | `~/.cursor/mcp.json` — JSON parse, same shape as Claude Code. |
 | Process names | Case-insensitive substring match against `claude-code`, `claude`, `codex`, `cursor`, and the `mcp-*` prefix. PID is recorded; cmdline / environ are not. |
-| Env vars | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `CURSOR_API_KEY` — only the **fact-of-presence** is recorded; values are never read. |
+| Env vars | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `CURSOR_API_KEY` — only the **fact-of-presence** is recorded; values are not recorded. |
 
 Adding a new source means amending `clientSpecs`, `processMatches`, or
 `knownEnvVars` in `core/edge/shadow/scanner.go`. Each addition should
@@ -358,7 +358,7 @@ for GitHub Actions signals, §6.3/§6.4 for tenant/principal mapping,
 | `agent_action_used` | Workflow YAML references a known agent action (`uses:`) or a known `run:` leading token (`claude`, `codex`, `cursor`). |
 | `missing_cordum_attach` | Agent use is present and both `cordum/cordum-edge-attach` and a Cordum EdgeSession heartbeat are absent. |
 | `self_hosted_runner_unlabeled` | Job runner labels include `self-hosted` without a Cordum managed-runner label. |
-| `env_var_name_indicator` | Workflow/job/step env-var **names** are present; values are never read. |
+| `env_var_name_indicator` | Workflow/job/step env-var **names** are present; values are not recorded. |
 | `agent_config_present` | Known agent/MCP config-file path exists; only redacted path + structural summary are recorded. |
 | `direct_provider_endpoint` | Operator-supplied CI-log metadata reports a known provider hostname; query strings and tokens are stripped. |
 
@@ -504,8 +504,8 @@ Buildkite `source=schedule`, CircleCI `trigger.type=schedule|scheduled_pipeline`
   repo / pipeline / build / runner identifiers appear as label
   values per design §13.1.
 
-**Observe-only guarantee**: enforced by type system (no scanner
-publishes a write/mutation method) plus a black-box test
+**Observe-only** (CLM-077, `supported`): no scanner publishes a
+write/mutation method, and a black-box test
 (`TestAllProviders_NoMutationCalls`) that asserts every HTTP method
 issued against all four mock servers is GET or HEAD.
 

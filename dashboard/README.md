@@ -12,6 +12,10 @@ pnpm install
 pnpm run dev
 ```
 
+`pnpm run dev` proxies `/api` (and the `/api/v1/stream` WebSocket) to the compose
+gateway at `https://localhost:8081`, trusting `../certs/ca/ca.crt`. Override the
+target with `VITE_API_TARGET`; see `docs/dashboard/README.md`.
+
 ## Testing
 
 Page-level tests that render a page composing React Query hooks must use the

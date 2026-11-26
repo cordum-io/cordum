@@ -3,7 +3,7 @@
 The eval runner is the execution half of Cordum's phase-2 governance
 regression pipeline:
 
-1. an immutable **eval dataset** captures curated job-request snapshots,
+1. a write-once **eval dataset** version captures curated job-request snapshots,
 2. the **runner** replays each entry through the current or candidate policy,
 3. the gateway stores a durable **RunResult** with per-entry outcomes and a
    summary score.
@@ -19,7 +19,7 @@ The HTTP surface is:
 
 The runner is intentionally layered:
 
-1. **Dataset lookup** — the gateway loads the immutable dataset from the
+1. **Dataset lookup** — the gateway loads the requested dataset version from the
    eval-dataset store.
 2. **Policy resolution** — the handler builds either the active merged policy
    or a candidate policy using the existing policy-bundle loader.

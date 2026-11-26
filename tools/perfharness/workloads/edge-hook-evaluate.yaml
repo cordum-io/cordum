@@ -1,0 +1,23 @@
+# Thresholds are workload inputs, not measured baselines.
+name: edge-hook-evaluate
+description: Redacted Edge hook HTTP evaluations without tool execution.
+latency_scope: http
+target: {base_url_env: PERF_GATEWAY_URL, api_key_env: CORDUM_API_KEY, tenant_env: CORDUM_TENANT_ID}
+prerequisites:
+  - Disposable stack with active session perf-session and execution perf-execution linked to that session.
+  - Both records belong to the credential principal and tenant; policy allows the synthetic Read action.
+  - Shadow evaluation enabled; PERF_KERNEL_METRICS_URL names its Prometheus endpoint.
+  - The queue gauge measures shadow evaluations, not gateway backlog or tool completion.
+request_mix:
+  - name: evaluate
+    weight: 1
+    requests:
+      - kind: edge.hook.evaluate
+        payload: {event_id: '{{uuid}}', session_id: perf-session, execution_id: perf-execution, agent_product: claude-code, layer: hook, kind: hook.pre_tool_use, tool_name: Read, input_redacted: {file_path: /tmp/perf-fixture.txt}}
+profiles:
+  smoke: {steps: [{concurrency: 1, duration: 1s}]}
+  standard: {steps: [{concurrency: 4, duration: 10s}]}
+  saturation-search: {steps: [{concurrency: 1, duration: 10s}, {concurrency: 4, duration: 10s}, {concurrency: 16, duration: 10s}]}
+saturation: {p99_ms: 1000, error_rate: 0.01, min_throughput_gain_pct: 5}
+queue_depth: {kind: prometheus, url_env: PERF_KERNEL_METRICS_URL, metric: cordum_shadow_eval_queue_depth, interval_ms: 100}
+tolerance: {throughput_pct: 10, p99_pct: 10}

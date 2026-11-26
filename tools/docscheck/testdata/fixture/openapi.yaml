@@ -1,0 +1,10 @@
+openapi: 3.0.3
+info:
+  title: docscheck fixture
+  version: '1'
+paths:
+  /api/v1/things/{id}:
+    get:
+      responses:
+        '200':
+          description: ok

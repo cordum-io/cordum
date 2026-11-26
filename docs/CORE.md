@@ -117,7 +117,7 @@ If no mapping exists: fail fast to DLQ with `no_pool_mapping`.
 ### CAP Protocol Features introduced in v2.5.1 (Scheduler)
 - **Handshake handling**: The scheduler subscribes to `sys.handshake` and processes `BusPacket{Handshake}` messages. Worker-role handshakes update the in-memory worker registry with component capabilities, enabling capability-aware routing.
 - **ErrorCode enum**: Job failures now carry a structured `error_code_enum` (`ErrorCode` enum) alongside the deprecated string `error_code`. The scheduler auto-populates `error_code_enum` from the string code when only the string is provided (e.g., `"timeout"` maps to `ERROR_CODE_JOB_TIMEOUT`). DLQ entries also carry the structured code.
-- **Bus-layer validation**: Incoming `JobRequest` and `JobResult` packets are validated using CAP SDK helpers (`ValidateJobRequest`/`ValidateJobResult`). Invalid packets are rejected, logged, and counted via the `validation_rejections_total` metric.
+- **Bus-layer validation**: Incoming `JobRequest` and `JobResult` packets are validated using CAP SDK helpers (`ValidateJobRequest`/`ValidateJobResult`). Invalid packets are rejected, logged, and counted via the `cordum_scheduler_validation_rejections_total` metric.
 - **Enhanced SystemAlert**: Alerts emitted by the workflow engine now include `severity` (enum), `source_component`, `details` (map), and `trace_id` alongside the deprecated string fields.
 
 ### CAP v2.9.0 Boundary Hardening (Scheduler + Gateway)
@@ -194,7 +194,8 @@ Safety kernel config-service source can be tuned via `SAFETY_POLICY_CONFIG_SCOPE
 - Admins install policy overlays that:
   - allow/deny specific capabilities
   - require approvals for risky actions (prod writes, PR creation, shell exec)
-  - impose constraints (max diff size, deny-paths, network restrictions)
+  - attach constraints (max diff size, deny-paths, network restrictions); enforcing
+    them is planned (see the [enforcement support matrix](contract/enforcement-matrix.yaml))
 - Kernel gates every job/run/tool call **before execution**.
 - When policy provides remediations, the gateway can apply them to create a new job without hand-editing inputs.
 
@@ -389,7 +390,8 @@ Core must support:
 ### Package usage model
 - Workers never read raw secrets unless policy allows and runner profile permits.
 - Evidence is redacted before it becomes an artifact or LLM input.
-- Kernel constraints enforce “no secret material to LLM”.
+- Planned: kernel constraints that keep secret material out of LLM input (see the
+  [enforcement support matrix](contract/enforcement-matrix.yaml)).
 
 ---
 
@@ -409,9 +411,9 @@ Extend scheduler mapping to support constraints:
 
 ---
 
-## 11) Budgets + quotas (enforced by kernel + scheduler)
+## 11) Budgets + quotas
 
-**Status:** Partially implemented: safety constraints for max runtime/retries/artifact bytes/concurrency; gateway enforces max concurrent runs.
+**Status:** Partially implemented: the scheduler enforces the `max_retries` and `max_concurrent_jobs` constraints; `max_runtime_ms`, `max_artifact_bytes` and the diff limits are advisory (see the [enforcement support matrix](contract/enforcement-matrix.yaml)); gateway enforces max concurrent runs.
 
 Per tenant / per actor:
 - max concurrent runs
@@ -425,7 +427,9 @@ Per tenant / per actor:
 ### Package usage model
 - SRE package PR creation step is constrained:
   - max files, max lines, deny paths, require approval in prod
-- Kernel returns `ALLOW_WITH_CONSTRAINTS` that the workflow engine/scheduler must honor.
+- Kernel returns `ALLOW_WITH_CONSTRAINTS`; the scheduler enforces its retry and concurrency
+  limits, and the file, line and path limits above are planned (see the
+  [enforcement support matrix](contract/enforcement-matrix.yaml)).
 
 ---
 
@@ -474,9 +478,9 @@ verification and three tiers (Community/Team/Enterprise). Entitlement enforcemen
 is applied across all services: gateway rate limits, scheduler concurrency caps,
 workflow step limits, safety kernel policy bundle quotas, and audit retention
 periods. Licenses degrade gracefully on expiry (services continue at Community
-tier). Enterprise add-ons (license issuance, SSO/SAML, advanced RBAC, SIEM
-export, support SLA) live in the enterprise and tools repos; this repo provides
-the loading, validation, and tier enforcement layer.
+tier). Enterprise features (SSO/SAML and OIDC, SCIM, advanced RBAC, SIEM
+export) ship in this repo behind license entitlements; license issuance is the
+`cordum-tools/cmd/licensegen/` CLI. See [enterprise.md](enterprise.md).
 
 ---
 
@@ -570,7 +574,7 @@ Even if core ships zero workers, define **execution profiles** packages can requ
 
 Scheduler routes based on `requires[]`.
 
-**Why:** lets you enforce “this job can’t touch network” at the platform level.
+**Why (planned):** lets you enforce “this job can’t touch network” at the platform level.
 
 **Status:** Partially implemented: scheduler routes by `requires` and constraints are passed via env; sandbox enforcement is up to workers/runners.
 
@@ -611,7 +615,7 @@ Maintain an append-only timeline:
 
 ---
 
-## 7) First‑class budgets enforced by kernel + scheduler
+## 7) First‑class budgets
 
 Budgets are safety:
 - max runtime, max retries, max artifact bytes, max concurrent runs
@@ -619,10 +623,10 @@ Budgets are safety:
 
 **Why:** keeps early packages safe and sellable.
 
-**Status:** Partially implemented (policy constraints for runtime/retries/artifacts/concurrency).
+**Status:** Partially implemented: the scheduler enforces the `max_retries` and `max_concurrent_jobs` constraints; the runtime, artifact and diff budgets are advisory (see the [enforcement support matrix](contract/enforcement-matrix.yaml)).
 
 ### Package integration
-- SRE patch generation constrained to `max_files_changed`, `max_lines_changed`.
+- Planned: SRE patch generation constrained to `max_files_changed`, `max_lines_changed`.
 - Kernel can auto-rewrite budgets per environment (prod stricter than dev).
 
 ---

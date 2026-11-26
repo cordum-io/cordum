@@ -54,11 +54,8 @@ func TestScheduler_FailedRetryableDoesNotSilentlyDrop(t *testing.T) {
 }
 
 // TestFailOpenEmitsAuditEvent asserts that when safety kernel admit a job via
-// the fail-open path, a dedicated audit event is emitted carrying the tenant,
-// job ID, and bypass reason. Currently fail-open is logged at WARN only,
-// which is insufficient for forensic correlation of bypassed jobs.
-//
-// Regression for audit finding #11 (scheduler/engine.go:1514-1532).
+// the fail-open path, a dedicated audit event carries the tenant, job ID,
+// bypass reason and the operator's scope rule.
 func TestFailOpenEmitsAuditEvent(t *testing.T) {
 	bus := &fakeBus{}
 	jobStore := newFakeJobStore()
@@ -68,7 +65,7 @@ func TestFailOpenEmitsAuditEvent(t *testing.T) {
 	safety := &unavailableSafety{}
 	engine := NewEngine(bus, safety, newTestRegistry(t), NewNaiveStrategy(), jobStore, nil).
 		WithDispatchAuditSink(sink).
-		WithInputFailMode("open")
+		WithFailModeResolver(newFailOpenScopeResolver(t, "open", failOpenRules("default-low-risk", "job.default")))
 
 	req := &pb.JobRequest{
 		JobId:    "job-fail-open",
@@ -83,6 +80,9 @@ func TestFailOpenEmitsAuditEvent(t *testing.T) {
 	found := false
 	for _, ev := range sink.events {
 		if ev.EventType == audit.EventSafetyBypassAdmit {
+			if ev.Extra["scope_rule"] != "default-low-risk" {
+				t.Errorf("scope_rule = %q, want default-low-risk", ev.Extra["scope_rule"])
+			}
 			if ev.TenantID != "tenant-x" {
 				t.Errorf("audit event TenantID = %q, want tenant-x", ev.TenantID)
 			}

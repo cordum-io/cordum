@@ -117,7 +117,6 @@ jobs:
         CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
         REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
         NATS_URL: tls://localhost:4222
-        NATS_TOKEN: cordum-dev-token
         NATS_TLS_CA: ${{ github.workspace }}/certs/ca/ca.crt
         NATS_TLS_CERT: ${{ github.workspace }}/certs/client/tls.crt
         NATS_TLS_KEY: ${{ github.workspace }}/certs/client/tls.key

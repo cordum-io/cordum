@@ -102,6 +102,8 @@ const job = await client.jobs.create(
 );
 ```
 
+`jobs.create` sends `idempotencyKey` as the `Idempotency-Key` header, which enables the retry, and as the `idempotency_key` body field, which the gateway uses to return the existing job when a key repeats.
+
 Why this matters:
 
 - `GET` / `PUT` / `DELETE` retries are safe by default.

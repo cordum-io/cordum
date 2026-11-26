@@ -83,7 +83,7 @@ type ApprovalConsumeFunc func(ctx context.Context, approvalRef string) (*Evaluat
 // approved inline wait, consume re-issues evaluate with the approval_ref so the
 // single-use CAS runs before ALLOW (see approvalRequiredDecision).
 func AgentdDecisionFromEvaluateResponse(ctx context.Context, resp EvaluateResponse, cfg ApprovalDecisionConfig, waiter ApprovalWaiter, consume ApprovalConsumeFunc) claude.AgentdDecision {
-	switch strings.ToUpper(strings.TrimSpace(resp.Decision)) {
+	switch resp = denyUnenforceableConstraints(resp); strings.ToUpper(strings.TrimSpace(resp.Decision)) {
 	case string(edgecore.DecisionAllow):
 		return claude.AgentdDecision{Decision: claude.DecisionAllow}
 	case string(edgecore.DecisionDeny):
@@ -108,34 +108,31 @@ func approvalRequiredDecision(ctx context.Context, resp EvaluateResponse, cfg Ap
 	if ref == "" {
 		return claude.AgentdDecision{Decision: claude.DecisionDeny, Reason: "Cordum approval is required but no approval reference was returned; action was not run"}
 	}
+	// The hook maps this to a deny; the approval stays pending at the Gateway,
+	// so the reviewer can approve it and the agent retry the same action.
+	pending := claude.AgentdDecision{
+		Decision:          claude.DecisionRequireApproval,
+		Reason:            approvalRetryReason(resp, "approval required"),
+		ApprovalRef:       ref,
+		AdditionalContext: approvalAdditionalContext(resp),
+	}
 	if !cfg.InlineWaitEnabled || waiter == nil {
-		return claude.AgentdDecision{
-			Decision:          claude.DecisionRequireApproval,
-			Reason:            approvalRetryReason(resp, "approval required"),
-			ApprovalRef:       ref,
-			AdditionalContext: approvalAdditionalContext(resp),
-		}
-	}
-	timeout := cfg.InlineWaitTimeout
-	if timeout <= 0 {
-		timeout = defaultInlineApprovalWaitTimeout
-	}
-	if timeout > maxAgentdDuration {
-		timeout = maxAgentdDuration
+		return pending
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	budget := inlineApprovalWaitBudget(ctx, cfg.InlineWaitTimeout)
+	if budget <= 0 {
+		return pending
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
-	result, err := waiter.WaitForApproval(waitCtx, ApprovalWaitRequest{ApprovalRef: ref, Timeout: timeout})
+	result, err := waiter.WaitForApproval(waitCtx, ApprovalWaitRequest{ApprovalRef: ref, Timeout: budget})
 	if err != nil {
-		return claude.AgentdDecision{
-			Decision:          claude.DecisionDeny,
-			Reason:            boundDecisionText(fmt.Sprintf("approval wait unavailable for %s; approve then retry the tool call", ref)),
-			ApprovalRef:       ref,
-			AdditionalContext: approvalAdditionalContext(resp),
-		}
+		// Cut short by the budget or the Gateway wait failed: either way the
+		// approval is unresolved, so answer like the non-inline path.
+		return pending
 	}
 	switch result.Status {
 	case ApprovalWaitApproved:
@@ -156,16 +153,41 @@ func approvalRequiredDecision(ctx context.Context, resp EvaluateResponse, cfg Ap
 			ApprovalRef:       ref,
 			AdditionalContext: approvalAdditionalContext(resp),
 		}
-	case ApprovalWaitTimeout, ApprovalWaitPending, "":
-		fallthrough
-	default:
-		return claude.AgentdDecision{
-			Decision:          claude.DecisionDeny,
-			Reason:            boundDecisionText(fmt.Sprintf("approval wait timed out for %s; approve then retry the tool call", ref)),
-			ApprovalRef:       ref,
-			AdditionalContext: approvalAdditionalContext(resp),
-		}
+	default: // ApprovalWaitTimeout, ApprovalWaitPending, unknown
+		return pending
 	}
+}
+
+// inlineApprovalAnswerReserve is the part of the hook's budget the inline
+// approval wait leaves unused, for the consume re-evaluate, the evidence flush
+// and the response write. Without it the hook times out first and blocks with
+// a generic timeout instead of returning the pending approval_ref.
+const inlineApprovalAnswerReserve = time.Second
+
+type hookAnswerByKey struct{}
+
+// withHookAnswerBy records when cordum-hook stops waiting for this request.
+func withHookAnswerBy(ctx context.Context, answerBy time.Time) context.Context {
+	return context.WithValue(ctx, hookAnswerByKey{}, answerBy)
+}
+
+// inlineApprovalWaitBudget bounds the configured inline wait by the hook's
+// answer-by time (minus inlineApprovalAnswerReserve) and by ctx's deadline.
+// A result <= 0 means there is no time left to wait.
+func inlineApprovalWaitBudget(ctx context.Context, configured time.Duration) time.Duration {
+	budget := configured
+	if budget <= 0 {
+		budget = defaultInlineApprovalWaitTimeout
+	}
+	budget = min(budget, maxAgentdDuration)
+	now := time.Now()
+	if answerBy, ok := ctx.Value(hookAnswerByKey{}).(time.Time); ok {
+		budget = min(budget, answerBy.Sub(now)-inlineApprovalAnswerReserve)
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		budget = min(budget, deadline.Sub(now))
+	}
+	return budget
 }
 
 // consumeApprovedInlineWait turns an approved inline wait into a terminal
@@ -199,7 +221,7 @@ func consumeApprovedInlineWait(ctx context.Context, resp EvaluateResponse, ref s
 // rejected, expired, error) fails closed. The reviewer's wait-result reason/
 // updated input is preferred, falling back to the consume response.
 func decisionFromConsumedEvaluate(resp EvaluateResponse, ref string, waitResult ApprovalWaitResult) claude.AgentdDecision {
-	switch strings.ToUpper(strings.TrimSpace(resp.Decision)) {
+	switch resp = denyUnenforceableConstraints(resp); strings.ToUpper(strings.TrimSpace(resp.Decision)) {
 	case string(edgecore.DecisionAllow), string(edgecore.DecisionConstrain):
 		updated := cloneAnyMap(waitResult.UpdatedInput)
 		if updated == nil {
@@ -221,6 +243,21 @@ func decisionFromConsumedEvaluate(resp EvaluateResponse, ref string, waitResult 
 			ApprovalRef: ref,
 		}
 	}
+}
+
+// denyUnenforceableConstraints turns an ALLOW or CONSTRAIN response that
+// carries constraint kinds the hook path cannot apply into a DENY whose reason
+// names those kinds.
+func denyUnenforceableConstraints(resp EvaluateResponse) EvaluateResponse {
+	decision := edgecore.EdgeDecision(strings.ToUpper(strings.TrimSpace(resp.Decision)))
+	kinds := edgecore.UnenforceableConstraintKinds(resp.Constraints)
+	if (decision != edgecore.DecisionAllow && decision != edgecore.DecisionConstrain) || len(kinds) == 0 {
+		return resp
+	}
+	reason := boundDecisionText(edgecore.UnenforceableConstraintReason(kinds))
+	resp.Decision, resp.UpdatedInput = string(edgecore.DecisionDeny), nil
+	resp.Reason, resp.PermissionDecisionReason, resp.TerminalMessage = reason, reason, reason
+	return resp
 }
 
 func approvalRetryReason(resp EvaluateResponse, fallback string) string {

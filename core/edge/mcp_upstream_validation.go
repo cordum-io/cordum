@@ -29,6 +29,20 @@ type MCPUpstreamValidationOptions struct {
 	AllowPlainHTTP bool
 }
 
+type mcpUpstreamValidationOptionsKey struct{}
+
+// WithMCPUpstreamValidationOptions returns a context that carries opts to the
+// validation RedisMCPUpstreamRegistry runs again on Create and Update. Set it
+// only from trusted server or tenant config, never from request input.
+func WithMCPUpstreamValidationOptions(ctx context.Context, opts MCPUpstreamValidationOptions) context.Context {
+	return context.WithValue(ctx, mcpUpstreamValidationOptionsKey{}, opts)
+}
+
+func mcpUpstreamValidationOptionsFrom(ctx context.Context) MCPUpstreamValidationOptions {
+	opts, _ := ctx.Value(mcpUpstreamValidationOptionsKey{}).(MCPUpstreamValidationOptions)
+	return opts
+}
+
 func Validate(ctx context.Context, upstream *UpstreamServer, policyMode string, allowlist []string) error {
 	return ValidateMCPUpstream(ctx, upstream, policyMode, allowlist)
 }
@@ -74,9 +88,9 @@ func ValidateMCPUpstreamWithOptions(ctx context.Context, upstream *UpstreamServe
 
 // RevalidateMCPUpstreamAtUse re-resolves the upstream's hostname (or
 // re-parses its IP literal) and rejects the call if any current
-// resolution falls into the SSRF deny-set (loopback, RFC1918,
-// link-local incl. 169.254.169.254, IPv6 ULA, multicast, unspecified)
-// or if a cloud-metadata hostname is in play. Callers MUST invoke this
+// resolution falls into the SSRF deny-set (mcpIPUnsafe: loopback,
+// RFC1918, CGNAT, 0.0.0.0/8, link-local incl. 169.254.169.254, IPv6 ULA,
+// multicast, unspecified) or if a cloud-metadata hostname is in play. Callers MUST invoke this
 // immediately before dialing an upstream so that a hostname which
 // resolved to a public IP at registration but has since been rebound
 // to internal infrastructure is refused at connect time.
@@ -143,9 +157,10 @@ func validateMCPUpstreamURL(ctx context.Context, raw, policyMode string, opts MC
 	if _, denied := mcpCloudMetadataHosts[strings.ToLower(host)]; denied {
 		return ErrUnsafeEndpoint
 	}
-	// Internal-host SSRF rejection (RFC1918, link-local incl 169.254.169.254,
-	// IPv6 ULA + link-local, multicast, unspecified, loopback) runs in
-	// EVERY mode — these are SSRF vectors with no legitimate MCP use case.
+	// Internal-host SSRF rejection (mcpIPUnsafe: RFC1918, CGNAT,
+	// 0.0.0.0/8, link-local incl 169.254.169.254, IPv6 ULA + link-local,
+	// multicast, unspecified, loopback) runs in EVERY mode — these are SSRF
+	// vectors with no legitimate MCP use case.
 	unsafe, err := mcpHostResolvesUnsafe(ctx, host)
 	if err != nil {
 		// Fail-closed in strict mode; in observe/enforce, refuse only on
@@ -193,8 +208,11 @@ func mcpHostResolvesUnsafe(ctx context.Context, host string) (bool, error) {
 // classes that have no legitimate MCP upstream use case. Includes RFC1918
 // private (10/8, 172.16/12, 192.168/16), loopback (127/8, ::1), link-local
 // v4 (169.254/16, covers all cloud IMDS endpoints), link-local v6 (fe80::/10),
-// IPv6 ULA (fc00::/7), multicast (224.0.0.0/4, ff00::/8), and unspecified
-// (0.0.0.0, ::). Also handles IPv4-mapped IPv6 by unwrapping to v4.
+// IPv6 ULA (fc00::/7), multicast (224.0.0.0/4, ff00::/8), unspecified
+// (0.0.0.0, ::), "this network" (0.0.0.0/8) and carrier-grade NAT
+// (100.64.0.0/10, which is also where Tailscale puts tailnet addresses) —
+// the same ranges core/mcp/url_guard.go rejects. There is no private-upstream
+// escape hatch. Also handles IPv4-mapped IPv6 by unwrapping to v4.
 func mcpIPUnsafe(ip net.IP) bool {
 	if ip == nil {
 		return true
@@ -203,6 +221,9 @@ func mcpIPUnsafe(ip net.IP) bool {
 	// applies to the v4 class.
 	if v4 := ip.To4(); v4 != nil {
 		ip = v4
+		if mcpThisNetwork.Contains(ip) || mcpCarrierGradeNAT.Contains(ip) {
+			return true
+		}
 	}
 	if ip.IsLoopback() || ip.IsUnspecified() || ip.IsPrivate() ||
 		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() {
@@ -216,6 +237,11 @@ func mcpIPUnsafe(ip net.IP) bool {
 	}
 	return false
 }
+
+var (
+	_, mcpThisNetwork, _     = net.ParseCIDR("0.0.0.0/8")
+	_, mcpCarrierGradeNAT, _ = net.ParseCIDR("100.64.0.0/10")
+)
 
 func validateMCPUpstreamCommand(command []string) error {
 	if len(command) == 0 {

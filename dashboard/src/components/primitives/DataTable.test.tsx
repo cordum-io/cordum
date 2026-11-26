@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import type { ColumnDef } from "@tanstack/react-table";
+import type { DataTableColumn, DataTableSorting } from "./DataTable";
 import { DataTable, VIRTUALIZE_THRESHOLD, type DataTableProps, type DecisionTier } from "./DataTable";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -12,7 +12,7 @@ interface Row {
   decision?: DecisionTier;
 }
 
-const baseColumns: ColumnDef<Row, unknown>[] = [
+const baseColumns: DataTableColumn<Row>[] = [
   {
     accessorKey: "name",
     header: "Name",
@@ -129,7 +129,7 @@ describe("primitives/DataTable", () => {
   it("does NOT fire onRowClick when the click originates inside an interactive child", () => {
     const handler = vi.fn();
     const data: Row[] = [{ id: "r1", name: "Alpha" }];
-    const cols: ColumnDef<Row, unknown>[] = [
+    const cols: DataTableColumn<Row>[] = [
       {
         accessorKey: "name",
         header: "Name",
@@ -215,5 +215,118 @@ describe("primitives/DataTable", () => {
 
     expect(container.querySelector('[data-virtualized="true"]')).toBeNull();
     expect(bodyRows().length).toBe(100);
+  });
+});
+
+// Held-out characterization (task-722f3b29): the TanStack v9 slice (task-fa2b4cef) must pass it unchanged.
+describe("primitives/DataTable characterization", () => {
+  const unsorted: Row[] = [{ id: "r1", name: "Bravo" }, { id: "r2", name: "Alpha" }, { id: "r3", name: "Charlie" }];
+  const ORIGINAL = ["Bravo", "Alpha", "Charlie"];
+  const ASC = ["Alpha", "Bravo", "Charlie"];
+  const DESC = ["Charlie", "Bravo", "Alpha"];
+
+  const renderRows = (extra: Partial<DataTableProps<Row>> = {}) =>
+    render<Row>({ columns: baseColumns, data: unsorted, emptyState: <div>empty</div>, ...extra });
+  const headers = (): HTMLTableCellElement[] =>
+    Array.from(container.querySelectorAll<HTMLTableCellElement>("thead th"));
+  const firstColumnText = (): string[] =>
+    Array.from(bodyRows()).map((tr) => tr.querySelector("td")?.textContent ?? "");
+  const expectSorted = (th: HTMLElement, ariaSort: string, order: string[]) => {
+    expect(th.getAttribute("aria-sort")).toBe(ariaSort);
+    expect(firstColumnText()).toEqual(order);
+  };
+  const click = (el: HTMLElement) => act(() => void el.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  const press = (el: HTMLElement, key: string): KeyboardEvent => {
+    const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+    act(() => void el.dispatchEvent(event));
+    return event;
+  };
+
+  it("cycles aria-sort none → ascending → descending → none on header clicks, with matching row order", () => {
+    renderRows();
+    const nameHeader = headers()[0];
+    expectSorted(nameHeader, "none", ORIGINAL);
+    click(nameHeader);
+    expectSorted(nameHeader, "ascending", ASC);
+    click(nameHeader);
+    expectSorted(nameHeader, "descending", DESC);
+    click(nameHeader);
+    expectSorted(nameHeader, "none", ORIGINAL);
+  });
+
+  it("toggles sorting identically with Enter and Space on a focusable sortable header", () => {
+    renderRows();
+    const nameHeader = headers()[0];
+    expect(nameHeader.tabIndex).toBe(0);
+    expect(nameHeader.getAttribute("tabindex")).toBe("0");
+    expect(press(nameHeader, "Enter").defaultPrevented).toBe(true);
+    expectSorted(nameHeader, "ascending", ASC);
+    expect(press(nameHeader, " ").defaultPrevented).toBe(true);
+    expectSorted(nameHeader, "descending", DESC);
+    press(nameHeader, "Enter");
+    expectSorted(nameHeader, "none", ORIGINAL);
+    expect(press(nameHeader, "a").defaultPrevented).toBe(false);
+    expect(nameHeader.getAttribute("aria-sort")).toBe("none");
+  });
+
+  it("gives an enableSorting:false column no aria-sort, no tabIndex, and no reorder on click or key", () => {
+    renderRows();
+    const idHeader = headers()[1];
+    expect(idHeader.textContent).toBe("ID");
+    expect(idHeader.hasAttribute("aria-sort")).toBe(false);
+    expect(idHeader.hasAttribute("tabindex")).toBe(false);
+    click(idHeader);
+    press(idHeader, "Enter");
+    expect(idHeader.hasAttribute("aria-sort")).toBe(false);
+    expect(firstColumnText()).toEqual(ORIGINAL);
+  });
+
+  it("applies initialSorting on first paint with the matching aria-sort", () => {
+    const initialSorting: DataTableSorting = [{ id: "name", desc: true }];
+    renderRows({ initialSorting });
+    expectSorted(headers()[0], "descending", DESC);
+  });
+
+  it("right-aligns both the header and the cells of a meta.align:right column", () => {
+    const cols: DataTableColumn<Row>[] = [
+      { accessorKey: "name", header: "Name" },
+      { accessorKey: "id", header: "ID", meta: { align: "right" } },
+    ];
+    renderRows({ columns: cols });
+    const [nameHeader, idHeader] = headers();
+    expect(idHeader.classList.contains("text-right")).toBe(true);
+    expect(nameHeader.classList.contains("text-right")).toBe(false);
+    for (const tr of Array.from(bodyRows())) {
+      const [nameCell, idCell] = Array.from(tr.querySelectorAll("td"));
+      expect(idCell.classList.contains("text-right")).toBe(true);
+      expect(nameCell.classList.contains("text-right")).toBe(false);
+    }
+  });
+
+  it("renders a size:200 column header at width 200px and leaves default-size headers unstyled", () => {
+    const cols: DataTableColumn<Row>[] = [
+      { accessorKey: "name", header: "Name", size: 200 },
+      { accessorKey: "id", header: "ID" },
+    ];
+    renderRows({ columns: cols });
+    const [sizedHeader, defaultHeader] = headers();
+    expect(sizedHeader.style.width).toBe("200px");
+    expect(defaultHeader.style.width).toBe("");
+  });
+
+  it("renders function header and cell renderers with row.original values", () => {
+    const cols: DataTableColumn<Row>[] = [
+      {
+        id: "combined",
+        header: () => <span data-testid="fn-header">H</span>,
+        cell: ({ row }) => <span data-testid="fn-cell">{`${row.original.id}:${row.original.name}`}</span>,
+      },
+    ];
+    renderRows({ columns: cols });
+    const header = container.querySelector('[data-testid="fn-header"]');
+    expect(header?.textContent).toBe("H");
+    expect(headers()[0].contains(header)).toBe(true);
+    const cells = Array.from(container.querySelectorAll('[data-testid="fn-cell"]')).map((el) => el.textContent);
+    expect(cells).toEqual(["r1:Bravo", "r2:Alpha", "r3:Charlie"]);
   });
 });

@@ -9,9 +9,15 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
+
+// AgentdHookBudgetHeader carries how many milliseconds the hook will wait for
+// agentd's answer, so agentd can end an inline approval wait in time to return
+// the pending approval_ref instead of being cut off by the hook's timeout.
+const AgentdHookBudgetHeader = "X-Cordum-Hook-Budget-Ms"
 
 // AgentdClient is the hook-side client boundary to local cordum-agentd.
 type AgentdClient interface {
@@ -145,6 +151,15 @@ func (c *HTTPAgentdClient) EvaluateHook(ctx context.Context, req AgentdRequest) 
 	httpReq.Header.Set("Content-Type", "application/json")
 	if c.hookNonce != "" {
 		httpReq.Header.Set("X-Cordum-Agentd-Nonce", c.hookNonce)
+	}
+	budget := c.client.Timeout
+	if deadline, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(deadline); budget <= 0 || remaining < budget {
+			budget = remaining
+		}
+	}
+	if ms := budget.Milliseconds(); ms > 0 {
+		httpReq.Header.Set(AgentdHookBudgetHeader, strconv.FormatInt(ms, 10))
 	}
 	resp, err := c.client.Do(httpReq)
 	if err != nil {

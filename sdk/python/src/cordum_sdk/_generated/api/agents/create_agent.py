@@ -1,10 +1,10 @@
 from http import HTTPStatus
-from typing import Any, Dict, List, Optional, Union, cast
+from typing import Any, Dict, Optional, Union, cast
 
 import httpx
 
 from ...client import AuthenticatedClient, Client
-from ...types import Response, UNSET
+from ...types import Response
 from ... import errors
 
 from ...models.create_agent_body import CreateAgentBody
@@ -54,6 +54,9 @@ def _parse_response(
     if response.status_code == 409:
         response_409 = cast(Any, None)
         return response_409
+    if response.status_code == 500:
+        response_500 = cast(Any, None)
+        return response_500
     if response.status_code == 503:
         response_503 = cast(Any, None)
         return response_503

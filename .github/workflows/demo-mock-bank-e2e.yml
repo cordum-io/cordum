@@ -9,15 +9,17 @@ name: demo-mock-bank-e2e
 # scheduler, safety kernel, and worker fleet end-to-end.
 #
 # Kept separate from demo-quickstart-e2e so a failure in either
-# surface cannot mask a failure in the other, and so each can be
-# promoted to a required branch-protection check independently
-# when its flake rate is known.
+# surface cannot mask a failure in the other.
+#
+# Nightly tier: this suite boots the whole stack, so it runs on the
+# schedule below and on demand (`gh workflow run demo-mock-bank-e2e
+# --ref <branch>`), not on every PR. See the tier note in ci.yml.
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  schedule:
+    # 02:23 UTC daily. The odd minute avoids top-of-hour runner contention.
+    - cron: '23 2 * * *'
+  workflow_dispatch:
 
 permissions:
   contents: read

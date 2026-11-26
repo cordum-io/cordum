@@ -3,7 +3,7 @@
 (bounded, repo-confined, symlink-refusing): each jq credential field or generated credential must be registered for
 masking, fail-closed, before any use unless a reviewed exemption's guard and condition hold. Output carries no values."""
 import collections, pathlib, posixpath, re, shlex, sys, yaml  # noqa: E401
-MAX_DEPTH, MAX_VISITS, MAX_BYTES, UNKNOWN, ERREXIT, XTRACE = 10, 400, 256 * 1024, "\x00", ("e", "errexit"), ("x", "xtrace")  # UNKNOWN: set and non-empty, value unseen
+MAX_DEPTH, MAX_VISITS, MAX_DRY, MAX_BYTES, UNKNOWN, ERREXIT, XTRACE = 10, 400, 1000, 256 * 1024, "\x00", ("e", "errexit"), ("x", "xtrace")  # UNKNOWN: set and non-empty, value unseen
 HEREDOC, DOTENV = re.compile(r"(?<!<)<<-?\s*(['\"]?)([A-Za-z_]\w*)\1"), re.compile(r">\s*[\"']?(?:[^\s\"';&|<>]*/)?\.env[\"']?(?=[\s;&|<>]|$)")
 PLAIN, DQ, ANY = re.compile(r"[^\s'\"\\$`<>&|;()#]+"), re.compile(r"[^\"\\$`\n]+"), re.compile(r".", re.S)
 BRACE, REDIR, RWORD = re.compile(r"\$\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}"), re.compile(r"&?(?:<<<|<<-?|<>|<&|>&|>>|>\||<|>)[ \t]*"), re.compile(r"(?:\d+|&)?[<>]")
@@ -14,10 +14,25 @@ NAME, PREFIX = re.compile(r"(?i)^(?!.*idem).*(?:passw|secret|token|key|nonce)"),
 DEVNULL, TESTCMD, TOPLEVEL = re.compile(r"(?:^|\s)(?:1|&)?>>?\s*/dev/null(?=\s|$)"), re.compile(r"(?:(?:if|elif|while|until|then|do|else|!) )*(?:\[\[?|test) "), re.compile(r"\$\(\s*(?:pwd(?:\s+-P)?|git\s+rev-parse\s+--show-toplevel)\s*\)")
 DIRNAME, VAR = re.compile(r"\$\(\s*dirname\s+(?:--\s+)?\"?\$\{?(?:BASH_SOURCE(?:\[0\])?|0)\}?\"?\s*\)|\$\{BASH_SOURCE(?:\[0\])?%/\*\}"), re.compile(r"\$\{([A-Za-z_]\w*)(?:(:?[-=])((?:[^{}]|\{[^{}]*\})*))?\}|\$([A-Za-z_]\w*)")
 CDPWD, PREFIX_WORDS = re.compile(r"\$\(\s*cd\s+(?:--\s+)?(\"[^\"$]*\"|'[^']*'|[^\s;&|)$\"']+)\s*(?:>\s*/dev/null\s*)?(?:2>&1\s*)?&&\s*pwd(?:\s+-P)?\s*\)"), {"if", "then", "else", "elif", "do", "while", "until", "!", "time", "exec", "command", "builtin", "nohup", "env", "sudo", "timeout"}
-Cmd = collections.namedtuple("Cmd", "line words op sub stack func text", defaults=((), "", ""))
+LEAD = r"(?:(?:if|elif|while|until|then|do|else|!|builtin|command) )*"  # before a set or return: a reserved word, builtin or command; bash still runs it in this shell
+Cmd = collections.namedtuple("Cmd", "line words op sub stack func text sets", defaults=((), "", "", ""))  # sets: what a file sourced here leaves set, e (errexit off) or E (errexit on), x (tracing on) or X (tracing off); r or t: a function it defines may leave errexit off (r) or tracing on (t) after any later call
 def seeded(env: dict, name: str) -> bool: return (value := env.get(name, "")) != "" and (value[0] != "$" or value.startswith("$("))
 def literal(value: str) -> int: return len(re.match(r"[^$\x00]*", value).group())
-def flag(cmd: Cmd, on: bool, short: str, name: str) -> bool: return next((sign == "-" for sign in reversed(re.findall(r"(?<!\S)([-+])(?:[a-zA-Z]*" + short + r"[a-zA-Z]*|o\s+" + name + r")(?!\S)", cmd.text))), on) if cmd.words[cmd.words[:1] in (["then"], ["do"], ["else"]):][:1] == ["set"] else on  # after a `set`
+def flag(cmd: Cmd, on: bool, short: str, name: str) -> bool:
+    if short in cmd.sets: return short == "x"
+    if short.upper() in cmd.sets: return short == "e"
+    match = re.match(LEAD + r"set(?: |$)", cmd.text)
+    if not match: return on
+    try: words = iter(shlex.split(cmd.text[match.end():]))
+    except ValueError: return short == "x"  # unparsable shell must not establish safe options
+    for word in words:
+        # Bash stops option processing at -- or the first positional word.
+        if word == "--" or not re.fullmatch(r"[-+][a-zA-Z]+", word): break
+        for option in word[1:]:
+            if option == "o":
+                if next(words, "") == name: on = word[0] == "-"
+            elif option == short: on = word[0] == "-"
+    return on
 def pg_runs_gate_1(argv: list) -> bool: return "--skip-rebuild" not in argv and (not (gates := [v for f, v in zip(argv, argv[1:]) if f == "--gate"]) or not gates[-1].isdigit() or gates[-1] == "1")
 EXEMPT = {  # reviewed exemptions: the source, a block around it, or every call site of its function matches the guard; the entry env holds the condition
     ("tools/scripts/edge_fake_hook_e2e.sh", "AGENTD_NONCE"): ("if ! want_bypass_hook", lambda env: env.get("CORDUM_EDGE_E2E_BYPASS_HOOK", "").lower() in ("1", "true", "yes", "on")),
@@ -92,7 +107,7 @@ def exits(cmds: list, start: int, level: tuple, var: str, k: int) -> bool:  # ex
     fn, stop = next((s for s in reversed(cmds[k].stack) if cmds[s].op == "{" and cmds[s].words), -1), next((i for i in range(start, len(cmds)) if len(cmds[i].stack) < len(level) or cmds[i].stack == level and cmds[i].words[cmds[i].words[:1] == ["then"]:][:1] in (["else"], ["elif"], ["exit"], ["return"])), len(cmds))
     words = cmds[stop].words[cmds[stop].words[:1] == ["then"]:][:1] if stop < len(cmds) and cmds[stop].stack == level and runs(cmds, stop, start, cmds[k].sub) else []  # in the value's shell: not skipped, piped, backgrounded or captured
     held = fn >= 0 and any(c.stack[-1:] == (fn,) and c.words[:1] == ["local"] and var in [w.split("=")[0] for w in c.words[1:]] and runs(cmds, i) for i, c in enumerate(cmds[:k + 1]))  # the caller cannot read it after the return
-    return words == ["exit"] or words == ["return"] and (held or any(c.stack == level and re.fullmatch(r"(?:then )?(?:unset (?:-v )?" + var + "|" + var + r"=(?:\"\"|'')?)", c.text) and runs(cmds, i) and not any(re.match(r"(?:(?:then|do|else) )?return\b", d.text) for d in cmds[start:i]) for i, c in enumerate(cmds[start:stop], start)))  # cleared before any return
+    return words == ["exit"] or words == ["return"] and (held or any(c.stack == level and re.fullmatch(r"(?:then )?(?:unset (?:-v )?" + var + "|" + var + r"=(?:\"\"|'')?)", c.text) and runs(cmds, i) and not any(re.match(LEAD + r"return\b", d.text) for d in cmds[start:i]) for i, c in enumerate(cmds[start:stop], start)))  # cleared before any return
 def registered_at(cmds: list, j: int, k: int, var: str, errexit: bool, captured: set = frozenset()) -> bool:  # cmds[j] registers var; a failure stops before any use
     words, nxt = list(cmds[j].words), cmds[j + 1] if j + 1 < len(cmds) else Cmd(0, [], "", 0)
     lead = words.pop(0) if words[:1] in (["if"], ["then"], ["do"]) else ""; negated = words[:1] == ["!"] and bool(words.pop(0))  # noqa: E702
@@ -126,25 +141,35 @@ def shallow(text: str) -> str:  # the text without command substitutions nested 
 def callers(cmds: list, flags: list, prev: tuple, ign: set = frozenset()) -> tuple:  # names of functions called where bash ignores errexit (also in an ign block), called with errexit off, called inside a $(...); or called from such a function
     defs, found = {c.func for c in cmds} - {""}, (set(), set(), set())
     for i, c in enumerate(cmds):  # bash ignores errexit for a tested status, in the whole pipeline: in an && or || list but its last command, in an if, elif, while or until condition, or after `!`
-        if (name := (c.words + [""])[(lead := next((n for n, w in enumerate(c.words) if w not in PREFIX_WORDS and not WORD_ASSIGN.fullmatch(w)), len(c.words)))]) in defs:
+        if (name := (c.words + [""])[(lead := next((n for n, w in enumerate(c.words) if w not in PREFIX_WORDS and not WORD_ASSIGN.fullmatch(w) and not RWORD.match(w)), len(c.words)))]) in defs:  # a redirection word (</dev/null main) is not the command name
             for names, hit in zip(found, (ends(cmds, i) in ("&&", "||") or not {"if", "elif", "while", "until", "!"}.isdisjoint(c.words[:lead]) or cond(cmds, i) or c.func in prev[0] or not ign.isdisjoint(c.stack), not flags[i][0], c.sub or c.func in prev[2])): names.add(name) if hit else None
     return found
-def options(cmds: list, errexit: bool, quiet: set = frozenset(), cold: set = frozenset(), ign: set = frozenset()) -> list:  # [k]: (errexit, xtrace) at cmds[k]; a set applies in text order within its scope: top level, function body or subshell; quiet functions and ign blocks ignore errexit, cold functions start without it
-    scope = lambda c: next((s for s in reversed(c.stack) if cmds[s].op == "(" or cmds[s].op == "{" and cmds[s].words), -1)
-    shells, flat, fns = lambda c: {-1, *(s for s in c.stack if cmds[s].op == "(")}, lambda i: runs(cmds, i) and (cmds[i].stack[-1:] or (-1,))[0] == scope(cmds[i]), any(c.op == "{" and c.words for c in cmds)  # the subshells around it; runs in straight line in its scope; the file defines a function
-    def wide(i: int, c: Cmd, o: tuple, v: bool) -> bool:  # c sets o to v and may apply out of text order, throughout its innermost subshell: in a loop there, tracing where a function may run, or left by a function
+def scope(cmds: list, c: Cmd) -> int: return next((s for s in reversed(c.stack) if subshell(cmds, s) or cmds[s].op == "{" and cmds[s].words), -1)  # the innermost subshell or function body around c, -1 at the top level
+def flat(cmds: list, i: int) -> bool: return runs(cmds, i) and (cmds[i].stack[-1:] or (-1,))[0] == scope(cmds, cmds[i])  # runs in straight line in its scope
+def kept(cmds: list, i: int, o: tuple, v: bool) -> bool:  # cmds[i] sets o to v in a function body, and the function may return with it so: its next change of o, before any return, does not reset it in straight line
+    s = scope(cmds, cmds[i]); m = next((h for h in range(i + 1, len(cmds)) if not (d := cmds[h]).sub and scope(cmds, d) == s and (flag(d, True, *o) == flag(d, False, *o) or re.match(LEAD + r"return\b", d.text))), None)  # noqa: E702
+    return s >= 0 and cmds[s].op == "{" and not (m is not None and flat(cmds, m) and flag(cmds[m], v, *o) != v)
+def options(cmds: list, errexit: bool, quiet: set = frozenset(), cold: set = frozenset(), ign: set = frozenset(), xtrace: bool = False) -> list:  # [k]: (errexit, xtrace) at cmds[k]; a set applies in text order within its scope: top level, function body or subshell; quiet functions and ign blocks ignore errexit, cold functions start without it
+    shells, fns = lambda c: {-1, *(s for s in c.stack if subshell(cmds, s))}, any(c.op == "{" and c.words for c in cmds)  # the subshells around it; the file defines a function
+    def wide(i: int, c: Cmd, o: tuple, v: bool) -> bool:  # c sets o to v and may apply out of text order, throughout its innermost subshell: in a loop there, tracing where a function may run, or left by a function, here or in a file sourced here (t, r)
         if c.sub or flag(c, not v, *o) != v: return False
-        m = next((h for h in range(i + 1, len(cmds)) if not (d := cmds[h]).sub and scope(d) == scope(c) and (flag(d, True, *o) == flag(d, False, *o) or re.match(r"(?:(?:then|do|else) )?return\b", d.text))), None)
-        return any(cmds[s].words[:1] in (["while"], ["until"], ["for"], ["select"]) and s > max(shells(c)) for s in c.stack) or v and fns or scope(c) >= 0 and cmds[scope(c)].op == "{" and not (m is not None and flat(m) and flag(cmds[m], v, *o) != v)  # a function's next change of o, before any return, must reset it in straight line
-    off, on, traced, now, out = {max(shells(c)) for i, c in enumerate(cmds) if wide(i, c, ERREXIT, False)}, {max(shells(c)) for i, c in enumerate(cmds) if wide(i, c, XTRACE, True)}, any(c.sub and flag(c, False, *XTRACE) for c in cmds), {-1: (errexit, False)}, []  # traced: a $(...) turns tracing on, assumed in every $(...)
+        return any(cmds[s].words[:1] in (["while"], ["until"], ["for"], ["select"]) and s > max(shells(c)) for s in c.stack) or v and fns or kept(cmds, i, o, v) or ("t" if v else "r") in c.sets
+    off, on, traced, now, out = {max(shells(c)) for i, c in enumerate(cmds) if wide(i, c, ERREXIT, False)}, {max(shells(c)) for i, c in enumerate(cmds) if wide(i, c, XTRACE, True)}, any(c.sub and flag(c, False, *XTRACE) for c in cmds), {-1: (errexit, xtrace)}, []  # traced: a $(...) turns tracing on, assumed in every $(...)
     for i, c in enumerate(cmds):
-        e, x = now[s] if (s := scope(c)) in now else now.setdefault(s, ((p := now[scope(cmds[s])])[0] and not (cmds[s].op == "{" and c.func in cold), p[1])); out.append((e and not c.sub and not off & shells(c) and c.func not in quiet and ign.isdisjoint(c.stack), x or bool(on & shells(c)) or bool(c.sub) and traced))  # noqa: E702  # a subshell or function body starts from its parent; bash clears errexit in a $(...)
-        if not c.sub: now[s] = (flag(c, e, *ERREXIT), flag(c, x, *XTRACE)) if flat(i) else (e and flag(c, True, *ERREXIT), x or flag(c, False, *XTRACE))  # one that may not run, or runs in another shell, only disables errexit or starts tracing
-    return out
-def facts(text: str, line: int = 1, errexit: bool = False) -> tuple:  # (cmds, unparsable line, [(k, var, kind, state)], [(k, var, bytes)], options)
-    cmds, error = parse(text, line)
+        e, x = now[s] if (s := scope(cmds, c)) in now else now.setdefault(s, ((p := now[scope(cmds, cmds[s])])[0] and not (cmds[s].op == "{" and c.func in cold), p[1])); out.append((e and not c.sub and not off & shells(c) and c.func not in quiet and ign.isdisjoint(c.stack), x or bool(on & shells(c)) or bool(c.sub) and traced))  # noqa: E702  # a subshell or function body starts from its parent; bash clears errexit in a $(...)
+        if not c.sub: now[s] = (flag(c, e, *ERREXIT), flag(c, x, *XTRACE)) if flat(cmds, i) else (e and flag(c, True, *ERREXIT), x or flag(c, False, *XTRACE))  # one that may not run, or runs in another shell, only disables errexit or starts tracing
+    return out + [(now[-1][0] and -1 not in off, now[-1][1] or -1 in on)]  # then the top level after the last command
+def subshell(cmds: list, s: int) -> bool: return cmds[s].op == "(" and cmds[s].words[:1] != ["case"]  # a ( ) block; case x in (pattern) puts its first pattern's ( on the case line
+def left(cmds: list, flags: list) -> tuple:  # (errexit, xtrace) a sourced file may leave in its caller: its end state, merged with the state at each return bash runs in the file's own shell
+    ret = [flags[k] for k, c in enumerate(cmds) if re.match(LEAD + r"return\b", c.text) and not c.sub and not c.func and not any(subshell(cmds, s) for s in c.stack) and c.op not in ("|", "|&", "&") and next((d.op for d in reversed(cmds[:k]) if not d.sub), "") not in ("|", "|&")]
+    return all(e for e, _ in ret + flags[-1:]), any(x for _, x in ret + flags[-1:])
+def called(cmds: list) -> str:  # r or t: a function a sourced file leaves defined in its caller may leave errexit off (kept, or r from a file it sources) or turn tracing on (anywhere in its body, or t), at any later call
+    top = [(i, c) for i, c in enumerate(cmds) if not c.sub and not any(subshell(cmds, s) for s in c.stack)]  # a function defined in a $(...) or ( ) is gone when it ends
+    return "r" * any("r" in c.sets or not flag(c, True, *ERREXIT) and kept(cmds, i, ERREXIT, False) for i, c in top) + "t" * any("t" in c.sets or c.func and flag(c, False, *XTRACE) for _, c in top)
+def facts(text: str, line: int = 1, errexit: bool = False, parsed: tuple = (), xtrace: bool = False) -> tuple:  # (cmds, unparsable line, [(k, var, kind, state)], [(k, var, bytes)], options, errexit)
+    cmds, error = parsed or parse(text, line)
     ctx, seen, acqs, ign = (set(), set(), set()), None, [], hot(cmds)
-    while ctx != seen: seen, flags = ctx, options(cmds, errexit, *ctx[:2], ign); ctx = callers(cmds, flags, ctx, ign)  # noqa: E702  # each round only adds names, so it ends
+    while ctx != seen: seen, flags = ctx, options(cmds, errexit, *ctx[:2], ign, xtrace); ctx = callers(cmds, flags, ctx, ign)  # noqa: E702  # each round only adds names, so it ends
     for k, cmd in enumerate(cmds):
         var, rhs = (m.group(1), m.group(2)) if (m := ASSIGN.fullmatch(cmd.text)) else ("-", "")
         kind = "" if "idem" in var.lower() else "auth-response" if JQ.search(rhs) else "generated" if NAME.search(var) and GEN.search(shallow(rhs)) else ""
@@ -152,7 +177,7 @@ def facts(text: str, line: int = 1, errexit: bool = False) -> tuple:  # (cmds, u
             acqs.append((k, var, kind or "auth-response", state(cmds, k, var, flags, ctx[2]) if kind else "unregistered"))
         helper = re.fullmatch(r"gha_mask_env(?:_from_command((?: [A-Z][A-Z0-9_]*)+) --| ([A-Z][A-Z0-9_]*)) .+", cmd.text, re.S)  # fail-closed: masks, then exports
         acqs += [(k, name, "masked-env", "unregistered" if cmd.sub or cmd.func in ctx[2] else "late" if flags[k][1] else "registered") for name in (helper.group(1) or helper.group(2)).split()] if helper else []  # in a $(...), the mask is captured but the GITHUB_ENV write still lands
-    return cmds, error, acqs, [(k, m.group(1), int(m.group(2)) + int(m.group(3)) if m.group(2) else 10 ** 6) for k, c in enumerate(cmds) for m in PREFIX.finditer(c.text) if m.group(1) in {a[1] for a in acqs} or NAME.search(m.group(1))], flags
+    return cmds, error, acqs, [(k, m.group(1), int(m.group(2)) + int(m.group(3)) if m.group(2) else 10 ** 6) for k, c in enumerate(cmds) for m in PREFIX.finditer(c.text) if m.group(1) in {a[1] for a in acqs} or NAME.search(m.group(1))], flags, errexit
 def expand(word: str, table: dict, env: dict, here: str) -> str:  # script-dir and cd/pwd idioms, known variables, defaults; drops quotes
     def lookup(m: re.Match) -> str:
         name, op, default = m.group(1) or m.group(4), m.group(2), m.group(3); value = table[name] if name in table else env[name] if name in env else "." if name in ("GITHUB_WORKSPACE", "PWD") else None  # noqa: E702
@@ -160,13 +185,13 @@ def expand(word: str, table: dict, env: dict, here: str) -> str:  # script-dir a
     for _ in range(12):
         if word == (word := VAR.sub(lookup, TOPLEVEL.sub(".", CDPWD.sub(r"\1", DIRNAME.sub(here, word))))): break
     return word.replace('"', "").replace("'", "")
-def shell_operand(args: list) -> tuple:  # bash/sh: (script, argv, False, traced) or (-c program, [], True, traced); "" is stdin; -c takes the first operand after all options, over -s
-    i, traced, program, stdin = 0, False, False, False
+def shell_operand(args: list) -> tuple:  # bash/sh: (script, argv, False, traced, rc) or (-c program, [], True, traced, rc); "" is stdin; -c takes the first operand after all options, over -s; rc: the --rcfile/--init-file operand, kept only with -i
+    i, traced, program, stdin, rc, interactive = 0, False, False, False, "", False
     while i < len(args) and args[i][:1] in ("-", "+") and args[i] != "--":
-        short, traced = not args[i].startswith("--"), traced or bool(re.fullmatch(r"-[a-zA-Z]*x[a-zA-Z]*", args[i]) or re.fullmatch(r"-[a-zA-Z]*o", args[i]) and args[i + 1:i + 2] == ["xtrace"])
-        program, stdin, i = program or short and "c" in args[i], stdin or short and "s" in args[i], i + (2 if short and args[i][-1] in "oO" else 1)
-    i += args[i:i + 1] == ["--"]
-    return (args[i], [], True, traced) if program and i < len(args) else ("", [], False, traced) if program or stdin or i >= len(args) else (args[i], args[i + 1:], False, traced)
+        short, rc, traced = not args[i].startswith("--"), (args[i + 1:i + 2] or [""])[0] if args[i] in ("--rcfile", "--init-file") else rc, traced or bool(re.fullmatch(r"-[a-zA-Z]*x[a-zA-Z]*", args[i]) or re.fullmatch(r"-[a-zA-Z]*o", args[i]) and args[i + 1:i + 2] == ["xtrace"])
+        program, stdin, interactive, i = program or short and "c" in args[i], stdin or short and "s" in args[i], interactive or short and "i" in args[i], i + (2 if short and args[i][-1] in "oO" or args[i] in ("--rcfile", "--init-file") else 1)  # -o and -O take an option name, --rcfile and --init-file a file; bash 5.2 and 5.3 refuse the --rcfile=F form
+    i, rc = i + (args[i:i + 1] == ["--"]), rc if interactive else ""  # -i: bash runs the rcfile first; --norc, a login shell, --posix, +i and sh skip it, and scanning it there too fails closed
+    return (args[i], [], True, traced, rc) if program and i < len(args) else ("", [], False, traced, rc) if program or stdin or i >= len(args) else (args[i], args[i + 1:], False, traced, rc)
 def literal_env(node: object) -> dict: return {str(k): "" if v is None else str(v) for k, v in node.items()} if isinstance(node, dict) else {}
 def github_env_names(run: str) -> set: return set(re.findall(r"(?m)^\s*gha_mask_env\s+([A-Za-z_]\w*)", run)) | set(re.findall(r"(?m)^\s*(?:echo|printf)\s+(?:'[^']*'\s+)?[\"']?([A-Za-z_]\w*)=.*>>\s*[\"']?\$\{?GITHUB_ENV\b", run)) | {n for args in re.findall(r"(?m)^\s*gha_mask_env_from_command\s+(.+?)\s+--\s", run) for n in re.findall(r"[A-Za-z_]\w*", args)}  # names a run step writes to GITHUB_ENV (masked or plain)
 def run_lines(text: str) -> dict:  # (job id, step index) -> file line just before the step's run script, or of its uses
@@ -180,12 +205,20 @@ def run_lines(text: str) -> dict:  # (job id, step index) -> file line just befo
 def guarded(cmds: list, k: int, guard: str) -> bool:  # the source or a block around it, or every (>= 1) call site of its function
     def under(cmd: Cmd, own: tuple = ()) -> bool: return any(re.fullmatch(guard, cmds[s].text) for s in cmd.stack + own)
     return under(cmds[k], (k,)) or (bool(calls := [c for c in cmds if cmds[k].func and cmds[k].func in c.words]) and all(under(c) for c in calls))
+NATIVE = (b"\x7fELF", b"MZ", b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf", b"\xce\xfa\xed\xfe", b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe")  # ELF, PE, Mach-O (32- and 64-bit, both byte orders), fat Mach-O
+def native(path: pathlib.Path) -> bool:  # a native executable whose first line holds a NUL, which bash's own binary test refuses: the kernel runs it, bash never reads it as a script
+    try:
+        with path.open("rb") as handle: head = handle.read(80)  # bash tests at most the first 80 bytes
+    except OSError: return False  # unreadable: it stays oversized
+    return head.startswith(NATIVE) and b"\x00" in head.split(b"\n", 1)[0]
 class Scan:  # walks each job's run steps through their transitive shell and make edges
     def __init__(self, root: pathlib.Path) -> None: self.root, self.cache, self.issues, self.inventory, self.exec_skip, self.bang_x = root, {}, set(), set(), set(), set()
     def report(self, code: str, rel: str, line: int, source: bool = False) -> None: self.issues.add((self.wf, self.job, f"{code}@{rel}:{line}")) if self.credential or not source else None  # SOURCE_*: credential jobs only
     def read(self, rel: str) -> tuple:  # (text, refusal): a regular in-repo file, no symlinked component, <= MAX_BYTES
         path = self.root
-        if any((path := path / part).is_symlink() for part in rel.split("/")): return "", "SYMLINK"
+        for part in rel.split("/"):
+            if (path := (parent := path) / part).parent != parent: return "", "MISSING"  # a part that is not a direct child (a Windows drive part, C:) re-anchors the path, as load()'s root.joinpath(key) would: no such file, as on Linux
+            if path.is_symlink(): return "", "SYMLINK"
         refusal = "MISSING" if not path.is_file() else "ESCAPE" if not path.resolve().is_relative_to(self.root.resolve()) else "OVERSIZE" if path.stat().st_size > MAX_BYTES else ""
         return ("", refusal) if refusal else (path.read_bytes().decode("utf-8", "replace").replace("\r\n", "\n"), "")
     def rules(self) -> object:  # ({target: (line, prerequisites, [(line, recipe)])}, default goal), or a refusal
@@ -204,7 +237,7 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
     def load(self, key: str) -> object:  # facts for a script; for a make target, a list: its prerequisite rules as a make line, then each shell its recipe runs in
         if key not in self.cache and not key.startswith("Makefile#"):
             text, code = self.read(key); self.cache[key] = code or ("NOT_SHELL" if "\x00" in text else facts(text))  # noqa: E702  # source and bash read any text as shell
-            if not (code or key.endswith(".sh") or re.match(r"#!.*\b(?:ba)?sh\b", text) or not text.startswith("#!") and self.root.joinpath(key).stat().st_mode & 0o100): self.exec_skip.add(key)  # exec: sh #! or ENOEXEC
+            if not (code or key.endswith(".sh") or re.match(r"#!.*\b(?:ba)?sh\b", text) or not text.startswith("#!") and self.root.joinpath(key).stat().st_mode & 0o100) or code == "OVERSIZE" and native(self.root.joinpath(key)): self.exec_skip.add(key)  # exec: sh #! or ENOEXEC; an oversized native executable runs natively: an exec edge skips it, source and bash still report it
             if re.match(r"#![^\n]*?(?<!\S)-[a-zA-Z]*x", text): self.bang_x.add(key)  # a #! -x flag traces the file, assumed on every edge
         elif key not in self.cache:
             rules, found = self.rules(), self.rule(key[9:])
@@ -223,7 +256,7 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
             self.seen.add(memo); self.visits += 1  # noqa: E702
             for part in unit if isinstance(unit, list) else [unit]: self.visit(key.split("#")[0], part, env, argv, chain + (key,), quiet, ".")  # each shell of a make recipe starts from make's environment
     def visit(self, rel: str, unit: tuple, env: dict, argv: list, chain: tuple, quiet: bool, cwd: str) -> None:
-        cmds, error, acqs, prefixes, flags = unit
+        cmds, error, acqs, prefixes, flags, _ = unit = self.settle(rel, unit, env, argv, chain, quiet, cwd, unit[5])
         if error: self.report("SOURCE_DYNAMIC", rel, error, True)
         for k, var, kind, status in acqs:
             status = "late" if status == "registered" and "xtrace" in env.get("SHELLOPTS", "") else "exempt" if status != "registered" and (exempt := EXEMPT.get((rel, var))) and exempt[1](env) and guarded(cmds, k, exempt[0]) else status
@@ -231,10 +264,22 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
             if status in ("unregistered", "late"): self.report("CREDENTIAL_UNREGISTERED" if status == "unregistered" else "CREDENTIAL_USE_BEFORE_REGISTRATION", rel, cmds[k].line)
         for k, var, need in prefixes:
             if not ((allowed := PREFIX_EXEMPT.get((rel, var))) and allowed(env, quiet and ">&2" not in cmds[k].text, need)): self.report("CREDENTIAL_PREFIX_PRINT", rel, cmds[k].line)
-        table, env, traced = {}, dict(env), "xtrace" in env.get("SHELLOPTS", "")
-        for cmd, (_, on) in zip(cmds, flags):  # xtrace in force at an edge reaches its child, as if SHELLOPTS were exported
+        self.walk(rel, unit, env, argv, chain, quiet, cwd, False)
+    def walk(self, rel: str, unit: tuple, env: dict, argv: list, chain: tuple, quiet: bool, cwd: str, dry: bool) -> dict:  # follows every edge; dry: only {k: what the file sourced at cmds[k] leaves set}
+        table, env, traced, sets = {}, dict(env), "xtrace" in env.get("SHELLOPTS", ""), {}
+        for k, (cmd, (_, on)) in enumerate(zip(unit[0], unit[4])):  # xtrace in force at an edge reaches its child, as if SHELLOPTS were exported
             if not traced and on != ("xtrace" in env.get("SHELLOPTS", "")): env["SHELLOPTS"] = "xtrace" * on
-            self.track(cmd.words, table, env, posixpath.dirname(rel) or "."); self.edge(cmd, rel, table, env, argv, chain, quiet, cwd)  # noqa: E702
+            self.track(cmd.words, table, env, posixpath.dirname(rel) or "."); sets[k] = self.edge(cmd, rel, table, env, argv, chain, quiet, cwd, dry) if not dry or {"source", "."} & {w.strip("\"'") for w in cmd.words} or "$" in cmd.text else ""  # noqa: E702  # dry: only a source or . word, or an expansion, can name a source
+        return {k: s for k, s in sets.items() if s}
+    def settle(self, rel: str, unit: tuple, env: dict, argv: list, chain: tuple, quiet: bool, cwd: str, errexit: bool) -> tuple:  # the unit with each sourced file's leftover options applied at its source command, as a set there is
+        sets = self.walk(rel, unit, env, argv, chain, quiet, cwd, True)
+        return facts("", 0, errexit, ([c._replace(sets=sets.get(k, "")) for k, c in enumerate(unit[0])], unit[1])) if sets or errexit != unit[5] else unit
+    def effect(self, key: str, env: dict, argv: list, chain: tuple, quiet: bool, rel: str, line: int) -> str:  # what a file run in its caller's shell leaves set there, at its end or a return: e (errexit may be off) or E (on at every exit), x (tracing may be on) or X (off at every exit), plus r or t (called()); exrt if unparsable or past the job's dry budget; a refused, cyclic or too-deep file leaves nothing (its edge reports it)
+        if posixpath.isabs(key) or key == ".." or key.startswith("../") or not isinstance(unit := "CYCLE" if key in chain else "LIMIT" if len(chain) >= MAX_DEPTH else self.load(key), tuple): return ""  # an absolute or escaping file is refused unread, as edge() refuses a sourced one; the rcfile call reaches here without that check
+        if (request := (key, tuple(sorted(env.items())), tuple(argv), chain, quiet)) in self.dry: return self.dry[request]  # this job's analyses; chain keeps cycle and depth context
+        if len(self.dry) >= MAX_DRY: return self.dry.get(None) or self.report("SOURCE_LIMIT", rel, line, True) or self.dry.setdefault(None, "exrt")  # the job's dry budget, apart from MAX_VISITS, is spent: report once, then fail closed with every letter
+        if (memo := ("effect", key, tuple(sorted(self.walk(key, unit, env, argv, chain + (key,), quiet, ".", True).items())))) not in self.cache: parsed = ([c._replace(sets=dict(memo[2]).get(k, "")) for k, c in enumerate(unit[0])], unit[1]); (e1, x1), (e0, x0) = (left(parsed[0], facts("", 0, s, parsed, not s)[4]) for s in (True, False)); self.cache[memo] = "exrt" if unit[1] else ("e" if not e1 else "E" if e0 else "") + ("x" if x1 else "X" if not x0 else "") + called(parsed[0])  # noqa: E702
+        self.dry[request] = self.cache[memo]; return self.cache[memo]  # noqa: E702
     def track(self, words: list, table: dict, env: dict, here: str) -> None:  # a pure assignment, export, declaration or unset
         keyword = words[0] if words[:1] and words[0] in ("export", "local", "declare", "typeset", "readonly", "unset") else ""
         items = [w for w in words[bool(keyword):] if not w.startswith("-")]
@@ -244,18 +289,19 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
             if keyword == "unset": table.pop(name, None); env.pop(name, None); continue  # noqa: E702
             if m: table[name] = expand(m.group(2), table, env, here)
             if keyword == "export" or (keyword == "declare" and "-x" in words) or (m and name in env and keyword != "local"): env[name] = table.get(name, env.get(name, ""))
-    def edge(self, cmd: Cmd, rel: str, table: dict, env: dict, argv: list, chain: tuple, quiet: bool, cwd: str) -> None:
+    def edge(self, cmd: Cmd, rel: str, table: dict, env: dict, argv: list, chain: tuple, quiet: bool, cwd: str, dry: bool = False) -> object:
         here, words, child = posixpath.dirname(rel) or ".", list(cmd.words), dict(env)
+        quiet, words = quiet or any(re.fullmatch(r"(?:1|&)?>>?/dev/null", w) for w in words), [w for w in words if not RWORD.match(w)]  # a redirection word is neither a prefix nor the command name (</dev/null env FOO=1 bash x.sh)
         while words and (words[0] in PREFIX_WORDS or WORD_ASSIGN.fullmatch(words[0])):
             if m := WORD_ASSIGN.fullmatch(word := words.pop(0)): child[m.group(1)] = expand(m.group(2), table, env, here)
             while word in ("env", "sudo", "timeout") and words and (words[0][:1] == "-" or (word == "timeout" and re.fullmatch(r"[\d.]+[smhd]?", words[0]))):
                 if words.pop(0) in ("-u", "--unset") and words: child.pop(words.pop(0), None)
-        quiet, words = quiet or any(re.fullmatch(r"(?:1|&)?>>?/dev/null", w) for w in words), [w for w in words if not RWORD.match(w)]
-        name, program, dynamic = expand(words[0], table, env, here) if words else "", False, lambda: self.report("SOURCE_DYNAMIC", rel, cmd.line, True)
+        name, program, dynamic = expand(words[0], table, env, here) if words else "", False, lambda: None if dry else self.report("SOURCE_DYNAMIC", rel, cmd.line, True)
+        if dry and name not in ("source", "."): return ""
         if name == "eval": return dynamic()
         if name in ("make", "gmake"): return self.make([expand(w, table, env, here) for w in words[1:]], rel, cmd.line, child, chain, quiet)
         if name in ("source", "."): target, rest, kind = (words + [""])[1], words[2:], "source"  # no literal operand (<(...)) is dynamic
-        elif posixpath.basename(name) in ("bash", "sh"): (target, rest, program, traced), kind = shell_operand(words[1:]), "shell"; child.update({"SHELLOPTS": "xtrace"} if traced else {})  # noqa: E702
+        elif posixpath.basename(name) in ("bash", "sh"): (target, rest, program, traced, rc), kind = shell_operand(words[1:]), "shell"; child.update({"SHELLOPTS": "xtrace"} if traced else {}); (dynamic() if "$" in (rcpath := expand(rc, table, env, here)) else (self.edge(cmd._replace(words=[name, rcpath]), rel, table, child, argv, chain, quiet, cwd), child.update({"SHELLOPTS": "xtrace"} if "x" in self.effect(posixpath.normpath(posixpath.join(cwd, rcpath)), child, [], chain, quiet, rel, cmd.line) else {}))) if rc else None  # noqa: E702  # an interactive shell runs its rcfile first, in that same shell, so tracing the rcfile leaves on traces the program too; the caller expands its name, as for the script, so one it cannot resolve is dynamic
         elif "/" in name: target, rest, kind = words[0], words[1:], "exec"
         else: return dynamic() if any(w.strip("\"'").endswith(".sh") for w in words[1:]) and ("$" in name or any(posixpath.basename(w.strip("\"'")) in ("bash", "sh") for w in words[1:])) else None  # a wrapper or variable command runs a script
         if program:  # a literal -c program is scanned inline; one whose command word (after assignments, redirections and prefix words) expands is dynamic
@@ -265,8 +311,8 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
         if not target or re.search(r"[$`\x00]", path): return dynamic() if kind != "exec" or path.endswith(".sh") else None
         key = posixpath.normpath(posixpath.join(cwd, path))
         if kind == "exec" and posixpath.isabs(path) and not path.endswith(".sh"): return None
-        if posixpath.isabs(key) or key == ".." or key.startswith("../"): return self.report("SOURCE_ESCAPE", rel, cmd.line, True)
-        if GATES.get((rel, cmd.func, key), lambda _: True)(argv): self.follow(key, child, [expand(w, table, env, here) for w in rest], chain, quiet, rel, cmd.line, kind == "exec" and not key.endswith(".sh"))
+        if posixpath.isabs(key) or key == ".." or key.startswith("../"): return None if dry else self.report("SOURCE_ESCAPE", rel, cmd.line, True)
+        if GATES.get((rel, cmd.func, key), lambda _: True)(argv): return self.effect(key, child, [expand(w, table, env, here) for w in rest], chain, quiet, rel, cmd.line) if dry else self.follow(key, child, [expand(w, table, env, here) for w in rest], chain, quiet, rel, cmd.line, kind == "exec" and not key.endswith(".sh"))
         return None
     def make(self, args: list, rel: str, line: int, env: dict, chain: tuple, quiet: bool) -> None:
         targets, skip, rules = [], False, self.rules()
@@ -277,7 +323,7 @@ class Scan:  # walks each job's run steps through their transitive shell and mak
         for target in targets or [rules[1]]: self.follow("Makefile#" + target, env, [], chain, quiet, rel, line)
         return None
     def run_job(self, wf: str, job_id: str, job: dict, workflow: dict, lines: dict, credential: bool) -> None:
-        self.wf, self.job, self.credential, self.seen, self.visits, exported = wf, job_id, credential, set(), 0, set()
+        self.wf, self.job, self.credential, self.seen, self.visits, self.dry, exported = wf, job_id, credential, set(), 0, {}, set()
         rel, base, defaults = ".github/workflows/" + wf, {**literal_env(workflow.get("env")), **literal_env(job.get("env"))}, [(node.get("defaults") or {}).get("run") or {} for node in (job, workflow)]
         for index, step in enumerate(job.get("steps") or []):
             if isinstance(step, dict) and "run" not in step and str(step.get("uses", "")).startswith("./"): self.report("SOURCE_DYNAMIC", rel, lines.get((job_id, index), 0) + 1, True)  # unscanned local action

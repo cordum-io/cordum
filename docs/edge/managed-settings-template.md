@@ -10,11 +10,24 @@ Use managed Claude Code settings for enterprise enforcement where users must not
 
 - `allowManagedHooksOnly: true` so only managed hooks, SDK hooks, and managed force-enabled plugin hooks are loaded.
 - `disableBypassPermissionsMode: "disable"` to prevent bypass mode.
-- `allowManagedMcpServersOnly: true` with `allowedMcpServers` set exactly to `[{ "serverName": "cordum-edge" }]` so users cannot add a parallel MCP server.
+- `allowManagedMcpServersOnly: true` with `allowedMcpServers` set exactly to `[{ "serverUrl": "<--mcp-gateway-url>" }]`, the same URL `managed-mcp.json` gives `cordum-edge`, so users cannot add a parallel MCP server. The entry matches by URL because a `serverName` entry is not a security control: users pick server names, and a name entry would also admit any stdio server given that name while the allowlist has no `serverCommand` entries. The `cordum-edge` server itself is defined in `managed-mcp.json`, which takes exclusive control and needs no allowlist entry; the `serverUrl` entry keeps the allowlist tight wherever `managed-mcp.json` is not deployed.
 - `allowedHttpHookUrls: []` because HTTP hooks are spike-only and production enforcement must use the local command-hook boundary.
 - command hooks that call a canonical Cordum hook binary (`/opt/cordum/bin/cordum-hook`, `/usr/local/bin/cordum-hook`, `/Applications/Cordum Edge/cordum-hook`, or `C:\Program Files\Cordum\cordum-hook.exe`); the hook talks only to local `cordum-agentd`.
+- `"onFailure": "block"` on the `PreToolUse`, `UserPromptSubmit`, and `ConfigChange` hooks, so a `cordum-hook` that cannot start, crashes, times out, or prints invalid output blocks the action instead of letting it through. This requires Claude Code v2.1.295 or later; older versions do not honor it. `cordumctl edge doctor --policy-mode enterprise-strict` fails its `claude_code_version` check on an older version. The other hooks cannot block, so they do not carry it.
+
+Both locks are safe for Cordum's own entries: the Cordum hooks live in this managed file and the `cordum-edge` server in `managed-mcp.json`, so `allowManagedHooksOnly` and `allowManagedMcpServersOnly` only shut out user, project, and plugin additions.
 
 There is no settings-file flag that weakens those boundaries. Any future power-user exception must be delivered as a separately verified, signed trusted-config input; managed settings bytes alone are not trusted to enable HTTP hooks, alternate MCP servers, or arbitrary hook commands.
+
+## MCP gateway endpoint validation
+
+The MCP gateway URL is a separate endpoint. Export requires an absolute
+HTTP(S) URL with a non-root path, such as `https://mcp.cordum.example/mcp`;
+host-only patterns would allow every path on that host. Credentials,
+wildcards and variable placeholders are rejected. Private hosts and custom
+ingress paths are supported without DNS validation. The standalone verifier
+and doctor also require that endpoint as an independent `--mcp-gateway-url`
+baseline; copying a URL out of the file being checked does not establish trust.
 
 ## Provider base URL validation
 
@@ -39,7 +52,7 @@ work and are not claimed by this template.
   "allowManagedHooksOnly": true,
   "allowManagedMcpServersOnly": true,
   "allowedHttpHookUrls": [],
-  "allowedMcpServers": [{ "serverName": "cordum-edge" }],
+  "allowedMcpServers": [{ "serverUrl": "https://mcp.cordum.example/mcp" }],
   "disableBypassPermissionsMode": "disable",
   "forceRemoteSettingsRefresh": true,
   "apiKeyHelper": "/opt/cordum/bin/cordum-agentd claude api-key-helper",
@@ -60,7 +73,8 @@ work and are not claimed by this template.
           {
             "type": "command",
             "command": "/opt/cordum/bin/cordum-hook claude pre-tool-use",
-            "timeout": 5
+            "timeout": 5,
+            "onFailure": "block"
           }
         ]
       }
@@ -72,7 +86,8 @@ work and are not claimed by this template.
           {
             "type": "command",
             "command": "/opt/cordum/bin/cordum-hook claude config-change",
-            "timeout": 5
+            "timeout": 5,
+            "onFailure": "block"
           }
         ]
       }
@@ -109,12 +124,12 @@ work and are not claimed by this template.
 
 ## Platform rollout notes
 
-- **macOS/Jamf or Kandji:** deploy managed preferences for the `com.anthropic.claudecode` domain, or file-based templates under `/Library/Application Support/ClaudeCode/`.
-- **Windows/Intune or Group Policy:** deploy policy JSON through `HKLM\SOFTWARE\Policies\ClaudeCode` or file-based templates under `C:\Program Files\ClaudeCode\`.
+- **macOS/Jamf or Kandji:** deploy managed preferences for the `com.anthropic.claudecode` domain, or file-based templates under `/Library/Application Support/ClaudeCode/`. Either way, deploy `managed-mcp.json` as a file in that directory: it has no managed-preferences domain and cannot be delivered via server-managed settings.
+- **Windows/Intune or Group Policy:** deploy policy JSON through `HKLM\SOFTWARE\Policies\ClaudeCode` or file-based templates under `C:\Program Files\ClaudeCode\` (Claude Code does not read the legacy `C:\ProgramData\ClaudeCode\` path). Either way, deploy `managed-mcp.json` as a file in `C:\Program Files\ClaudeCode\`.
 - **Linux and WSL:** deploy file-based `managed-settings.json` and `managed-mcp.json` under `/etc/claude-code/`.
 - **System policy:** keep managed settings controlled by administrators. User/project settings must not weaken hook, MCP, or permission enforcement.
 - **Managed precedence:** the template emits `CORDUM_EDGE_MANAGED_POLICY_MODE=enterprise-strict` and `CORDUM_EDGE_MANAGED_HOOKS_ONLY=true`; the hook runtime treats the managed policy value as higher precedence than any local/dev `CORDUM_EDGE_MODE` value, and dev settings generation rejects `CORDUM_EDGE_MANAGED_*` overrides.
-- **Hook timeout:** keep the internal `CORDUM_AGENTD_HOOK_TIMEOUT` strictly below Claude Code's 5s hook deadline. The recommended `4.5s` value matches the generated default and leaves a `500ms` response-write reserve; the Claude command-hook `"timeout": 5` entries above are Claude-side command deadlines and should not be copied into `CORDUM_AGENTD_HOOK_TIMEOUT`.
+- **Hook timeout:** keep the internal `CORDUM_AGENTD_HOOK_TIMEOUT` strictly below the `"timeout": 5` Cordum sets on each command hook (Claude Code's own default is 600 seconds). The recommended `4.5s` value matches the generated default and leaves a `500ms` response-write reserve; the Claude command-hook `"timeout": 5` entries above are Claude-side command deadlines and should not be copied into `CORDUM_AGENTD_HOOK_TIMEOUT`.
 
 ## Token tradeoff
 

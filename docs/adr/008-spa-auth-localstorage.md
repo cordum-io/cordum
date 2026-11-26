@@ -35,7 +35,7 @@ The following controls reduce the XSS-based token theft risk to acceptable level
 | No `dangerouslySetInnerHTML` | Grep verified: zero occurrences across all dashboard source |
 | No `eval()` / `new Function()` | Grep verified: zero occurrences |
 | No `.innerHTML` assignment | Grep verified: zero occurrences |
-| CSP: `default-src 'none'` | `middleware.go` — blocks all inline scripts, external scripts, and plugin content |
+| CSP: `default-src 'none'` | `middleware.go` sets it on gateway HTTP responses that pass through `corsMiddleware` (`TestCSPHeader`); dashboard pages served by `dashboard/nginx.conf` carry their own, broader policy (CLM-050 in the [claim register](../contract/claims.yaml)) |
 | `frame-ancestors 'none'` | Prevents clickjacking and framing attacks |
 | `X-Frame-Options: DENY` | Defense-in-depth against framing |
 | `X-Content-Type-Options: nosniff` | Prevents MIME-type confusion attacks |

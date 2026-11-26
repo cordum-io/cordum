@@ -54,14 +54,6 @@ def _requires_tenant_id(operation: Any) -> bool:
     return "x_tenant_id" in inspect.signature(operation).parameters
 
 
-def _to_httpx_response(response: Any) -> httpx.Response:
-    return httpx.Response(
-        int(response.status_code),
-        headers=response.headers,
-        content=response.content,
-    )
-
-
 def _parse_httpx_response(response: httpx.Response) -> RequestResponse:
     content = response.content
     text = response.text
@@ -211,29 +203,21 @@ class CordumClient(_ClientCommon):
                 "use AsyncCordumClient"
             )
 
-    def _invoke_detailed(self, module: ModuleType, *args: Any, **kwargs: Any) -> Any:
-        operation = module.sync_detailed
-        prepared_kwargs = self._prepare_operation_kwargs(operation, kwargs)
-
+    def _send(self, request_kwargs: Dict[str, Any]) -> httpx.Response:
         try:
-            response = operation(*args, client=self._generated_client, **prepared_kwargs)
-        except CordumError:
-            raise
+            return self._httpx_client.request(**request_kwargs)
         except httpx.HTTPError as exc:
             raise map_httpx_error(exc) from exc
 
-        raw_response = _to_httpx_response(response)
-        if response.status_code == 401 and self._refresh_auth_if_needed(raw_response):
-            try:
-                response = operation(*args, client=self._generated_client, **prepared_kwargs)
-            except CordumError:
-                raise
-            except httpx.HTTPError as exc:
-                raise map_httpx_error(exc) from exc
-            raw_response = _to_httpx_response(response)
-
-        _raise_for_status(raw_response)
-        return response
+    def _invoke_detailed(self, module: ModuleType, *args: Any, **kwargs: Any) -> Any:
+        # The generated sync_detailed parses documented error bodies as the Error schema and
+        # raises on any other shape, so map the status from the raw response first.
+        prepared_kwargs = self._prepare_operation_kwargs(module.sync_detailed, kwargs)
+        response = self._send(module._get_kwargs(*args, **prepared_kwargs))
+        if response.status_code == 401 and self._refresh_auth_if_needed(response):
+            response = self._send(module._get_kwargs(*args, **prepared_kwargs))
+        _raise_for_status(response)
+        return module._build_response(client=self._generated_client, response=response)
 
     def _invoke_operation(self, module: ModuleType, *args: Any, **kwargs: Any) -> Any:
         return self._invoke_detailed(module, *args, **kwargs).parsed
@@ -394,29 +378,20 @@ class AsyncCordumClient(_ClientCommon):
         if inspect.isawaitable(result):
             await result
 
-    async def _invoke_detailed(self, module: ModuleType, *args: Any, **kwargs: Any) -> Any:
-        operation = module.asyncio_detailed
-        prepared_kwargs = self._prepare_operation_kwargs(operation, kwargs)
-
+    async def _send(self, request_kwargs: Dict[str, Any]) -> httpx.Response:
         try:
-            response = await operation(*args, client=self._generated_client, **prepared_kwargs)
-        except CordumError:
-            raise
+            return await self._httpx_client.request(**request_kwargs)
         except httpx.HTTPError as exc:
             raise map_httpx_error(exc) from exc
 
-        raw_response = _to_httpx_response(response)
-        if response.status_code == 401 and self._refresh_auth_if_needed(raw_response):
-            try:
-                response = await operation(*args, client=self._generated_client, **prepared_kwargs)
-            except CordumError:
-                raise
-            except httpx.HTTPError as exc:
-                raise map_httpx_error(exc) from exc
-            raw_response = _to_httpx_response(response)
-
-        _raise_for_status(raw_response)
-        return response
+    async def _invoke_detailed(self, module: ModuleType, *args: Any, **kwargs: Any) -> Any:
+        # Same order as the sync client: map the status before the generated parser runs.
+        prepared_kwargs = self._prepare_operation_kwargs(module.asyncio_detailed, kwargs)
+        response = await self._send(module._get_kwargs(*args, **prepared_kwargs))
+        if response.status_code == 401 and self._refresh_auth_if_needed(response):
+            response = await self._send(module._get_kwargs(*args, **prepared_kwargs))
+        _raise_for_status(response)
+        return module._build_response(client=self._generated_client, response=response)
 
     async def _invoke_operation(self, module: ModuleType, *args: Any, **kwargs: Any) -> Any:
         response = await self._invoke_detailed(module, *args, **kwargs)

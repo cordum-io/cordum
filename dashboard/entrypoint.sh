@@ -43,6 +43,15 @@ fi
 # --- Resolve API upstream scheme (http for dev, https for prod) ---
 export CORDUM_UPSTREAM_SCHEME="${CORDUM_API_UPSTREAM_SCHEME:-http}"
 
+# --- Gateway HTTP port (the Helm chart passes gateway.service.httpPort) ---
+export CORDUM_API_UPSTREAM_PORT="${CORDUM_API_UPSTREAM_PORT:-8081}"
+case "${CORDUM_API_UPSTREAM_PORT}" in
+  ''|*[!0-9]*)
+    echo "entrypoint: CORDUM_API_UPSTREAM_PORT must be a port number, got '${CORDUM_API_UPSTREAM_PORT}'" >&2
+    exit 1
+    ;;
+esac
+
 if [ "${CORDUM_UPSTREAM_SCHEME}" = "https" ] && [ -f "/etc/cordum/tls/ca/ca.crt" ]; then
   export CORDUM_PROXY_SSL_VERIFY="on"
   export CORDUM_PROXY_SSL_TRUSTED_CA="proxy_ssl_trusted_certificate /etc/cordum/tls/ca/ca.crt;"
@@ -51,7 +60,7 @@ else
   export CORDUM_PROXY_SSL_TRUSTED_CA=""
 fi
 
-envsubst '$CORDUM_DNS_RESOLVER $CORDUM_API_UPSTREAM_HOST $CORDUM_UPSTREAM_SCHEME $CORDUM_PROXY_SSL_VERIFY $CORDUM_PROXY_SSL_TRUSTED_CA' \
+envsubst '$CORDUM_DNS_RESOLVER $CORDUM_API_UPSTREAM_HOST $CORDUM_API_UPSTREAM_PORT $CORDUM_UPSTREAM_SCHEME $CORDUM_PROXY_SSL_VERIFY $CORDUM_PROXY_SSL_TRUSTED_CA' \
   < /etc/nginx/templates/nginx.conf.template \
   > /etc/nginx/conf.d/default.conf
 

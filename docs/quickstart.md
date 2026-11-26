@@ -57,6 +57,7 @@ restarting the gateway.
 
 **API key:** in `.env` as `CORDUM_API_KEY`. Attach to every request:
 
+<!-- docscheck: endpoints -->
 ```bash
 source .env && export CORDUM_API_KEY
 curl -sS --cacert ./certs/ca/ca.crt \

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -142,6 +143,17 @@ func validateAndResolveOutboundURL(ctx context.Context, target *url.URL, allowed
 		}
 	}
 	return ips, nil
+}
+
+// pinnedClient returns a copy of client that dials only pinnedIPs. It keeps
+// the client's timeout, redirect policy and TLS settings, so a CA the caller
+// trusts (cordum-mcp --cacert) still verifies the pinned connection.
+func pinnedClient(client *http.Client, pinnedIPs []net.IP) *http.Client {
+	transport := &http.Transport{DialContext: pinnedDialer(pinnedIPs)}
+	if base, ok := client.Transport.(*http.Transport); ok && base.TLSClientConfig != nil {
+		transport.TLSClientConfig = base.TLSClientConfig.Clone()
+	}
+	return &http.Client{Timeout: client.Timeout, CheckRedirect: client.CheckRedirect, Transport: transport}
 }
 
 // pinnedDialer returns a DialContext function that connects to one of the

@@ -76,8 +76,8 @@ func TestMapHookInputBashTest(t *testing.T) {
 	if !containsRisk(got.RiskTags, "exec") || !containsRisk(got.RiskTags, "test") {
 		t.Errorf("RiskTags = %v, want exec+test", got.RiskTags)
 	}
-	if got.Labels["command.class"] != "safe" {
-		t.Errorf("Labels[command.class] = %q, want safe; labels=%v", got.Labels["command.class"], got.Labels)
+	if got.Labels["command.class"] != "arbitrary_code" {
+		t.Errorf("Labels[command.class] = %q, want arbitrary_code; labels=%v", got.Labels["command.class"], got.Labels)
 	}
 	if got.Labels["command.family"] != "test" {
 		t.Errorf("Labels[command.family] = %q, want test", got.Labels["command.family"])
@@ -518,8 +518,8 @@ func TestAgentdRequestCarriesMappedActionFields(t *testing.T) {
 	if !strings.HasPrefix(req.ActionHash, "sha256:") {
 		t.Errorf("AgentdRequest.ActionHash = %q, want sha256: prefix", req.ActionHash)
 	}
-	if req.Labels["command.class"] != "safe" {
-		t.Errorf("AgentdRequest.Labels[command.class] = %q, want safe", req.Labels["command.class"])
+	if req.Labels["command.class"] != "arbitrary_code" {
+		t.Errorf("AgentdRequest.Labels[command.class] = %q, want arbitrary_code", req.Labels["command.class"])
 	}
 	if !containsRisk(req.RiskTags, "test") {
 		t.Errorf("AgentdRequest.RiskTags = %v, want test present", req.RiskTags)

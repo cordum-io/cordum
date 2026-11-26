@@ -1,11 +1,10 @@
 # Local development overlay for Docker Desktop / kind / minikube K8s.
-# Usage: kubectl kustomize deploy/k8s/local | kubectl apply -f -
-#   or:  kustomize build --load-restrictor LoadRestrictionsNone deploy/k8s/local | kubectl apply -f -
+# Usage: kubectl apply -k deploy/k8s/local
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-  - ../base.yaml
+  - ../base
 
 patches:
   # --- imagePullPolicy: Never for all cordum services (locally built images) ---

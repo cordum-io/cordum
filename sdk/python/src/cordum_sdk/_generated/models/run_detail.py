@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 from typing import List
 
@@ -18,10 +18,10 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
-    from ..models.run_detail_input import RunDetailInput
-    from ..models.run_summary_error_type_0 import RunSummaryErrorType0
     from ..models.run_detail_output_type_0 import RunDetailOutputType0
+    from ..models.run_summary_error_type_0 import RunSummaryErrorType0
     from ..models.run_detail_steps import RunDetailSteps
+    from ..models.run_detail_input import RunDetailInput
 
 
 T = TypeVar("T", bound="RunDetail")
@@ -58,10 +58,8 @@ class RunDetail:
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.run_detail_input import RunDetailInput
-        from ..models.run_summary_error_type_0 import RunSummaryErrorType0
         from ..models.run_detail_output_type_0 import RunDetailOutputType0
-        from ..models.run_detail_steps import RunDetailSteps
+        from ..models.run_summary_error_type_0 import RunSummaryErrorType0
 
         id = self.id
 
@@ -141,10 +139,10 @@ class RunDetail:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.run_detail_input import RunDetailInput
-        from ..models.run_summary_error_type_0 import RunSummaryErrorType0
         from ..models.run_detail_output_type_0 import RunDetailOutputType0
+        from ..models.run_summary_error_type_0 import RunSummaryErrorType0
         from ..models.run_detail_steps import RunDetailSteps
+        from ..models.run_detail_input import RunDetailInput
 
         d = src_dict.copy()
         id = d.pop("id", UNSET)

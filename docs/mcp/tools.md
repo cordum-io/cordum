@@ -117,7 +117,7 @@ when the job does not exist.
 **Admin-only** for cross-tenant queries.
 
 ### `cordum_audit_verify`
-**Purpose:** Walk the tenant's Merkle audit chain and report integrity.
+**Purpose:** Walk the tenant's audit hash chain and report integrity.
 **Input:** `{tenant?}`.
 **Output:** `{status: "ok"|"compromised"|"partial", total_events, verified_events, gaps}`.
 **Admin-only.**
@@ -133,7 +133,7 @@ when the job does not exist.
 
 Every tools/call emits a `mcp.tool_called` SIEMEvent with
 `Extra = {tool_name, agent_id, tenant, duration_ms, result_size}` —
-landing in the per-tenant Merkle audit chain via the existing
+landing in the per-tenant audit hash chain via the existing
 `core/audit` pipeline. Denied calls emit `mcp.tool_denied` instead; see
 [docs/mcp/scope-filtering.md](./scope-filtering.md).
 

@@ -14,6 +14,8 @@ import (
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	gnats "github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -309,12 +311,10 @@ func TestWatchConfigChangesUpdatesRouting(t *testing.T) {
 	defer cancel()
 
 	go watchConfigChanges(ctx, svc, nil, nil, strategy, reconciler, nil, nil)
-	time.Sleep(20 * time.Millisecond)
 
-	routing := strategy.CurrentRouting()
-	if len(routing.Topics) == 0 || routing.Topics["job.test"][0] != "pool-a" {
-		t.Fatalf("expected routing update, got %#v", routing.Topics)
-	}
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.Equal(c, []string{"pool-a"}, strategy.CurrentRouting().Topics["job.test"])
+	}, 2*time.Second, 5*time.Millisecond, "expected routing update")
 }
 
 func startEmbeddedNATS(t *testing.T) *gnats.Server {
@@ -469,10 +469,8 @@ func TestWatchConfigChangesFallbackPoll(t *testing.T) {
 	defer cancel()
 
 	go watchConfigChanges(ctx, svc, nil, nil, strategy, reconciler, nil, nil)
-	time.Sleep(50 * time.Millisecond)
 
-	routing := strategy.CurrentRouting()
-	if len(routing.Topics) == 0 || routing.Topics["job.fallback"] == nil {
-		t.Fatalf("expected poll-based config reload, got %#v", routing.Topics)
-	}
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.Equal(c, []string{"pool-fb"}, strategy.CurrentRouting().Topics["job.fallback"])
+	}, 2*time.Second, 5*time.Millisecond, "expected poll-based config reload")
 }

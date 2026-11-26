@@ -62,7 +62,7 @@ func TestFailModeResolver_SystemDefault(t *testing.T) {
 	assert.False(t, resolver.AsyncFailOpen("default"), "default orgID should use system default (closed)")
 
 	// Set system default to open.
-	resolver.SetSystemInputMode("open")
+	resolver.SetSystemInput("open", nil)
 	resolver.SetSystemAsyncMode("open")
 	assert.True(t, resolver.InputFailOpen(""), "system default set to open")
 	assert.True(t, resolver.AsyncFailOpen(""), "system default set to open")
@@ -82,7 +82,7 @@ func TestFailModeResolver_TenantOverride(t *testing.T) {
 
 	resolver := NewFailModeResolver(provider, 1*time.Hour)
 	// System default is closed.
-	resolver.SetSystemInputMode("closed")
+	resolver.SetSystemInput("closed", nil)
 
 	// Pre-populate cache by direct refresh (synchronous).
 	ctx := context.Background()
@@ -101,7 +101,7 @@ func TestFailModeResolver_TenantInheritsSystemWhenNoOverride(t *testing.T) {
 	provider.configs["org-basic"] = map[string]any{}
 
 	resolver := NewFailModeResolver(provider, 1*time.Hour)
-	resolver.SetSystemInputMode("open")
+	resolver.SetSystemInput("open", nil)
 	resolver.SetSystemAsyncMode("closed")
 
 	resolver.RefreshTenant(context.Background(), "org-basic")
@@ -139,7 +139,7 @@ func TestFailModeResolver_Invalidate(t *testing.T) {
 	provider.setTenantConfig("org-inv", "open", "open")
 
 	resolver := NewFailModeResolver(provider, 1*time.Hour)
-	resolver.SetSystemInputMode("closed")
+	resolver.SetSystemInput("closed", nil)
 	resolver.RefreshTenant(context.Background(), "org-inv")
 
 	assert.True(t, resolver.InputFailOpen("org-inv"), "cached tenant should be open")
@@ -154,7 +154,7 @@ func TestFailModeResolver_Invalidate(t *testing.T) {
 
 func TestFailModeResolver_NilProvider(t *testing.T) {
 	resolver := NewFailModeResolver(nil, 30*time.Second)
-	resolver.SetSystemInputMode("open")
+	resolver.SetSystemInput("open", nil)
 
 	// With nil provider, tenant lookups should gracefully fall back to system default.
 	assert.True(t, resolver.InputFailOpen("any-org"), "nil provider should not panic, should return system default")
@@ -168,13 +168,13 @@ func TestFailModeResolver_EmptyOrgID(t *testing.T) {
 	provider := newMockFailModeProvider()
 	resolver := NewFailModeResolver(provider, 30*time.Second)
 
-	resolver.SetSystemInputMode("open")
+	resolver.SetSystemInput("open", nil)
 	resolver.SetSystemAsyncMode("open")
 
 	assert.True(t, resolver.InputFailOpen(""), "empty orgID should use system default")
 	assert.True(t, resolver.AsyncFailOpen(""), "empty orgID should use system default")
 
-	resolver.SetSystemInputMode("closed")
+	resolver.SetSystemInput("closed", nil)
 	assert.False(t, resolver.InputFailOpen(""), "empty orgID should track system default changes")
 }
 
@@ -184,7 +184,7 @@ func TestFailModeResolver_NilReceiver(t *testing.T) {
 	// All methods on a nil receiver should be safe no-ops.
 	assert.False(t, resolver.InputFailOpen("org"))
 	assert.False(t, resolver.AsyncFailOpen("org"))
-	resolver.SetSystemInputMode("open")
+	resolver.SetSystemInput("open", nil)
 	resolver.SetSystemAsyncMode("open")
 	resolver.Invalidate("org")
 	resolver.RefreshTenant(context.Background(), "org")
@@ -195,7 +195,7 @@ func TestFailModeResolver_ProviderError(t *testing.T) {
 	provider.err = fmt.Errorf("redis connection refused")
 
 	resolver := NewFailModeResolver(provider, 30*time.Second)
-	resolver.SetSystemInputMode("open")
+	resolver.SetSystemInput("open", nil)
 
 	// Synchronous refresh should not panic, just log the error.
 	resolver.RefreshTenant(context.Background(), "org-err")
@@ -232,12 +232,12 @@ func TestFailModeResolver_SystemModeUpdatesAffectCachedTenants(t *testing.T) {
 	}
 
 	resolver := NewFailModeResolver(provider, 1*time.Hour)
-	resolver.SetSystemInputMode("closed")
+	resolver.SetSystemInput("closed", nil)
 	resolver.RefreshTenant(context.Background(), "org-inherit")
 
 	assert.False(t, resolver.InputFailOpen("org-inherit"), "inherit system closed")
 
 	// Update system default — tenant with empty override should follow.
-	resolver.SetSystemInputMode("open")
+	resolver.SetSystemInput("open", nil)
 	assert.True(t, resolver.InputFailOpen("org-inherit"), "inherit system open after update")
 }

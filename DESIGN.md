@@ -77,8 +77,9 @@ The Safety Kernel returns `PolicyCheckResponse` with `PolicyConstraints`:
 - `DiffConstraints`: max files/lines + path filters
 - `remediations`: optional safer alternatives with replacement topic/capability
 
-The scheduler merges these constraints into dispatch behavior (timeouts,
-retry limits, concurrency caps).
+The scheduler enforces the retry limit (`max_retries`) and the concurrency cap
+(`max_concurrent_jobs`). The other constraint fields are advisory; see the
+[enforcement support matrix](docs/contract/enforcement-matrix.yaml).
 
 ### 3.5 JobResult / JobProgress / JobCancel
 
@@ -126,7 +127,7 @@ to dereference pointers when needed (`GET /api/v1/memory?ptr=...`).
 1. Gateway writes context JSON to Redis, sets `context_ptr`, publishes
    `BusPacket{JobRequest}` to `sys.job.submit`.
 2. Scheduler receives `JobRequest`, records state, calls Safety Kernel, and
-   applies `PolicyConstraints`.
+   enforces the retry and concurrency limits in `PolicyConstraints`.
 3. Scheduler selects a pool and/or direct worker subject using heartbeats
    and publishes to `job.*` or `worker.<id>.jobs`.
 4. Worker fetches `context_ptr`, executes, writes result to Redis, publishes

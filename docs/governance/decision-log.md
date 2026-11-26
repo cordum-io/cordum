@@ -77,7 +77,7 @@ GET /api/v1/governance/decisions
 Set these once:
 
 ```bash
-export BASE=http://localhost:8081
+export BASE=https://localhost:8081   # default stack; curl gets --cacert ./certs/ca/ca.crt
 export TENANT=acme
 export AUTH="X-API-Key: $CORDUM_API_KEY"
 ```
@@ -85,7 +85,7 @@ export AUTH="X-API-Key: $CORDUM_API_KEY"
 ### List the last 24 hours of policy decisions
 
 ```bash
-curl -sS "$BASE/api/v1/governance/decisions" \
+curl -sS --cacert ./certs/ca/ca.crt "$BASE/api/v1/governance/decisions" \
   -H "X-Tenant-ID: $TENANT" \
   -H "$AUTH"
 ```
@@ -93,7 +93,7 @@ curl -sS "$BASE/api/v1/governance/decisions" \
 ### Filter by verdict + topic + time window
 
 ```bash
-curl -sS "$BASE/api/v1/governance/decisions?verdict=require_approval&topic=payments.transfer&since=2026-04-13T00:00:00Z&until=2026-04-20T00:00:00Z&limit=100" \
+curl -sS --cacert ./certs/ca/ca.crt "$BASE/api/v1/governance/decisions?verdict=require_approval&topic=payments.transfer&since=2026-04-13T00:00:00Z&until=2026-04-20T00:00:00Z&limit=100" \
   -H "X-Tenant-ID: $TENANT" \
   -H "$AUTH"
 ```
@@ -101,7 +101,7 @@ curl -sS "$BASE/api/v1/governance/decisions?verdict=require_approval&topic=payme
 ### Continue pagination
 
 ```bash
-curl -sS "$BASE/api/v1/governance/decisions?cursor=<next_cursor>&limit=100" \
+curl -sS --cacert ./certs/ca/ca.crt "$BASE/api/v1/governance/decisions?cursor=<next_cursor>&limit=100" \
   -H "X-Tenant-ID: $TENANT" \
   -H "$AUTH"
 ```
@@ -179,9 +179,12 @@ falls back to `go run ./cmd/cordumctl-governance-helper ...`.
 
 ## Performance expectations
 
-The store is designed to keep a 7-day query under **500 ms** on the task
-benchmark gate. The benchmark seeds 50k records and exercises the query
-path with time-index scans plus secondary indexes.
+`BenchmarkQueryDecisions7Day` in `core/infra/store` seeds 50,000 records
+into an in-process miniredis server, queries a 7-day window for deny
+verdicts through the time and verdict indexes, and fails if the average
+query takes 500 ms or more. CI runs it only in the advisory nightly
+benchmark step. The 500 ms figure is that benchmark's threshold, not a
+result measured for the current release and not a performance commitment.
 
 Operationally:
 

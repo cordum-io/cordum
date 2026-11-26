@@ -41,10 +41,14 @@ type ProductionPipelineOptions struct {
 	// DestructiveMutationFieldGlobs lists GraphQL mutation field globs treated as
 	// destructive. Unset => the gate's built-in defaults.
 	DestructiveMutationFieldGlobs []string
-	// FailClosedDestructiveOnTaintLookupError forwards the default-off rollout
-	// flag for requiring human approval when a destructive MCP call cannot prove
-	// the session is clean because the taint lookup errored.
+	// FailClosedDestructiveOnTaintLookupError and TaintFailClosedApprover are
+	// forwarded to the MCPGate: whether a destructive MCP call fails closed when
+	// the session-taint lookup errored, and whether it is then held for an
+	// approver instead of denied. The gateway resolves them from the
+	// environment (ResolveFailClosedDestructiveOnTaintLookupError,
+	// ApproverConfiguredForTaintFailClosed).
 	FailClosedDestructiveOnTaintLookupError bool
+	TaintFailClosedApprover                 bool
 }
 
 // BuildProductionPipeline constructs the canonical Tenant→File→URL→MCP→
@@ -72,6 +76,7 @@ func BuildProductionPipeline(opts ProductionPipelineOptions) *Pipeline {
 			DestructiveMutationArgKeys:              opts.DestructiveMutationArgKeys,
 			DestructiveMutationFieldGlobs:           opts.DestructiveMutationFieldGlobs,
 			FailClosedDestructiveOnTaintLookupError: opts.FailClosedDestructiveOnTaintLookupError,
+			TaintFailClosedApprover:                 opts.TaintFailClosedApprover,
 		}),
 		NewMutationGate(MutationGateOptions{
 			Approvals: opts.Approvals,

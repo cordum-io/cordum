@@ -169,6 +169,11 @@ func (s *server) handleExportEdgeSession(w http.ResponseWriter, r *http.Request)
 		writeEdgeInternalError(w, r, "assemble edge session export", err)
 		return
 	}
+	if err := deriveEdgeSessionAssurance(r.Context(), store, &bundle.Session); err != nil {
+		emitEdgeExportAudit(s, tenantID, sessionID, "failed")
+		writeEdgeInternalError(w, r, "read edge session heartbeat", err)
+		return
+	}
 
 	// Marshal once so we can both check size and serve the same bytes —
 	// re-marshaling would race against any time.Now()-touching field. If

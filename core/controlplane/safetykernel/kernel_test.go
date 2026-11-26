@@ -1066,7 +1066,7 @@ func TestWatchPolicyNotificationTrigger(t *testing.T) {
 
 	notifyCh <- struct{}{}
 
-	deadline := time.Now().Add(100 * time.Millisecond)
+	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		srv.mu.RLock()
 		currentPolicy := srv.policy

@@ -1,0 +1,18 @@
+# Known mismatches between the cordum docs and the product, found by
+# tools/docscheck. Each entry is owned by PR2-15-DOCS, which corrects the doc
+# and deletes the entry; an entry that no longer matches a failure fails the
+# check (STALE).
+- file: docs/configuration-reference.md
+  kind: env-default
+  key: CORDUM_TENANT_ID
+  reason: >-
+    Both rows document no default, but cmd/cordumctl/main.go reads it with
+    envOr("CORDUM_TENANT_ID", "default"); cordum-mcp and cordum-agentd read it
+    with no default.
+  owner: PR2-15-DOCS
+- file: docs/configuration-reference.md
+  kind: env-name
+  key: CORDUM_RBAC_ROLE_DEFS
+  reason: >-
+    No file outside docs/ names this variable, so the product never reads it.
+  owner: PR2-15-DOCS

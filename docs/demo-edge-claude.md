@@ -14,7 +14,8 @@ make build SERVICE=cordumctl
 make build SERVICE=cordum-hook
 make build SERVICE=cordum-agentd
 
-export CORDUM_GATEWAY=http://localhost:8081
+export CORDUM_GATEWAY=https://localhost:8081
+export CORDUM_TLS_CA=<cordum-checkout>/certs/ca/ca.crt
 export CORDUM_API_KEY=<cordum-api-key>
 export CORDUM_TENANT_ID=default
 export CORDUM_PRINCIPAL_ID=<your-user-id>

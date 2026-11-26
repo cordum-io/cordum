@@ -37,7 +37,7 @@ Cordum uses three configuration layers:
 | `config/safety.yaml` | Safety kernel input/output rules, MCP allow/deny lists | Yes (JSON Schema) |
 | `config/output_scanners.yaml` | Output content scanner regex patterns (secret, PII, injection) | No |
 | `config/system.yaml` | System-wide config (budgets, rate limits, models, SLOs) — stored via config service | No |
-| `config/nats.conf` | NATS server config (JetStream `sync_interval`) | N/A |
+| `config/nats.dev-tls.conf` | NATS server config that Compose mounts as `/etc/nats/nats.conf` (JetStream `sync_interval`, TLS with client certificates). `config/nats.conf` is a no-TLS variant for local runs; `docker-compose.release.yml` uses `config/nats.release.conf` | N/A |
 
 The control plane validates pools, timeouts, and safety files against embedded JSON schemas in `core/infra/config/schema/`. Invalid configs return errors; for timeouts, the system falls back to defaults.
 
@@ -306,8 +306,8 @@ Config changes propagate to all replicas through two mechanisms:
 To force a config reload from files:
 
 ```bash
-# Delete the Redis config key
-redis-cli DEL cfg:system:default
+# Delete the Redis config key (Compose stack: TLS-only Redis with a password)
+docker compose exec redis redis-cli --tls --cacert /etc/cordum/tls/ca/ca.crt -a "$REDIS_PASSWORD" DEL cfg:system:default
 
 # The next scheduler tick (or restart) will re-bootstrap from files
 ```
@@ -484,13 +484,12 @@ rules:
 
   - id: auto-allow-validators
     match:
-      capabilities: ["validate.*"]
+      topics: ["job.validate.*"]   # topics take globs; capabilities match exact names only
     decision: allow
     reason: "Read-only validation is always safe"
 
 output_policy:
-  enabled: false
-  fail_mode: open          # open = allow on scanner error, closed = deny
+  enabled: true            # runs the output_rules below; see Output Policy Section
 
 output_rules:
   - id: secret_leak
@@ -508,34 +507,34 @@ output_rules:
 tenants:
   acme-corp:
     mcp:
-      allow: ["github", "slack"]
-      deny: ["*"]
-  default:
-    mcp:
-      allow: ["*"]
-      deny: []
+      allow_servers: ["github", "slack"]   # a non-empty allow list denies every other server
+  default: {}                              # empty lists: no MCP restriction
 ```
 
-### Rules Section (Input Policy)
+### Rules Section (Dispatch Rules)
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `rules[].id` | string | Unique rule identifier |
-| `rules[].match.capabilities` | string[] | Capability patterns to match (supports `*` wildcard) |
-| `rules[].match.risk_tags` | string[] | Risk tag patterns to match |
-| `rules[].match.metadata` | map | Key-value metadata conditions |
-| `rules[].decision` | string | `allow`, `deny`, `require_approval`, `throttle` |
+| `rules[].match.topics` | string[] | Topic globs (`path.Match` syntax, e.g. `job.validate.*`) |
+| `rules[].match.capabilities` | string[] | Exact capability names (case-insensitive, no wildcards) |
+| `rules[].match.risk_tags` | string[] | Matches when the job carries any of these risk tags |
+| `rules[].match.labels` | map | Exact label key/value pairs; all must match |
+| `rules[].match.label_threshold` | map | Label key to number. Matches when any listed label is a number above its threshold. A missing label is skipped. A value that does not parse as a number (`15,000`, `$15000`, `NaN`) makes a `deny`, `require_approval` or `throttle` rule match and an `allow` or `allow_with_constraints` rule not match |
+| `rules[].decision` | string | `allow`, `deny`, `require_approval`, `throttle`, `allow_with_constraints` |
 | `rules[].reason` | string | Human-readable reason |
-| `rules[].throttle_duration` | duration | Required if decision is `throttle` |
+| `rules[].constraints` | object | Returned with `allow_with_constraints` (see [safetykernel-constraints.md](operations/safetykernel-constraints.md)) |
 
-Rules are evaluated top-to-bottom; first match wins.
+Other `match` keys: `tenants`, `requires`, `pack_ids`, `actor_ids`, `actor_types`, `agent_risk_tiers`, `agent_data_classifications`, `label_allowlist`, `secrets_present`, `predicate`, `delegation`, `mcp`. All keys in one `match` must hold for the rule to match.
+
+Rules are evaluated top-to-bottom; first match wins. A job that matches no rule gets `default_decision` (deny when unset). `throttle` has no per-rule duration: the scheduler requeues a throttled job after a fixed 5s delay. Use a `velocity` block (below) for rate-based rules.
 
 ### Velocity Rule Fragments
 
 Velocity rules are regular `rules[]` entries stored as dedicated policy bundle
 fragments at `cfg:system:policy -> bundles -> velocity/{id}`. They do **not**
 change the safety-kernel evaluator; they only add managed rule fragments that
-use the existing `velocity` block on input rules.
+use the existing `velocity` block on `rules[]` entries.
 
 Example fragment:
 
@@ -574,8 +573,8 @@ default_decision: deny
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `output_policy.enabled` | bool | `false` | Enable output scanning |
-| `output_policy.fail_mode` | string | `"closed"` | `open` = allow on scanner error, `closed` = quarantine on scanner error (recommended for production) |
+| `output_policy.enabled` | bool | `false` | Set `true` to run `output_rules`. When it is `false` or omitted, the rules run only if `fail_mode` is unset too (legacy policies without an `output_policy` block), so `enabled: false` with any `fail_mode` turns output rules off. The scheduler checks output only when `OUTPUT_POLICY_ENABLED=true`. |
+| `output_policy.fail_mode` | string | unset | `open` or `closed`. It does not change what happens when an output check fails; the scheduler handles that (see [Output Policy](output-policy.md#32-fail-mode)). Its only effect is on `enabled`, above. |
 
 ### Output Rules Section
 
@@ -593,12 +592,19 @@ default_decision: deny
 
 ### Tenants Section
 
-Per-tenant MCP tool access control.
+Per-tenant MCP access control. The Safety Kernel applies it after rule
+evaluation and turns the decision into `deny` when the request's MCP server,
+tool, resource or action is not allowed. Values are exact names
+(case-insensitive, no wildcards). A deny entry always blocks; a non-empty
+allow list blocks every value not in it.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `tenants.*.mcp.allow` | string[] | Allowed MCP tool/resource patterns |
-| `tenants.*.mcp.deny` | string[] | Denied MCP tool/resource patterns |
+| `tenants.*.mcp.allow_servers` / `deny_servers` | string[] | MCP server names |
+| `tenants.*.mcp.allow_tools` / `deny_tools` | string[] | MCP tool names |
+| `tenants.*.mcp.allow_resources` / `deny_resources` | string[] | MCP resource names |
+| `tenants.*.mcp.allow_actions` / `deny_actions` | string[] | MCP action names |
+| `tenants.*.allow_topics` / `deny_topics` | string[] | Legacy topic globs; used only when `rules` is empty |
 
 ### Schema
 
@@ -670,6 +676,7 @@ scanners:
 
 ### Global / Shared
 
+<!-- docscheck: env endpoints -->
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
 | `CORDUM_ENV` | — | No | Set to `production` or `prod` for strict security defaults |
@@ -678,7 +685,7 @@ scanners:
 | `CORDUM_LOG_FORMAT` | `text` | No | Log format: `json` or `text` |
 | `CORDUM_GRPC_REFLECTION` | — | No | Set to `1` to enable gRPC reflection (dev only) |
 | `NATS_URL` | `nats://localhost:4222` | Yes | NATS server URL |
-| `REDIS_URL` | `redis://localhost:6379` | Yes | Redis URL (Compose: `redis://:${REDIS_PASSWORD}@redis:6379` — password required) |
+| `REDIS_URL` | `redis://localhost:6379` | Yes | Redis URL (Compose: `rediss://:${REDIS_PASSWORD}@redis:6379` over TLS with `REDIS_TLS_*` — password required) |
 | `NATS_USE_JETSTREAM` | `0` | No | Enable NATS JetStream: `0` or `1` |
 | `POOL_CONFIG_PATH` | `config/pools.yaml` | No | Path to pools config |
 | `TIMEOUT_CONFIG_PATH` | `config/timeouts.yaml` | No | Path to timeouts config. **Production mode**: if explicitly set and the file cannot be loaded or parsed, the scheduler exits with an error. In dev mode, falls back to built-in defaults with a warning. |
@@ -693,7 +700,7 @@ scanners:
 | `CORDUM_AGENTD_GATEWAY_TIMEOUT` | `5s` | No | Per-call timeout for `cordum-agentd` Gateway lifecycle/evaluate/approval/evidence requests. |
 | `CORDUM_AGENTD_URL` | `http://127.0.0.1:8765/v1/edge/hooks/claude` | No | Loopback-only local agentd decision endpoint used by `cordum-hook`; remote hosts are rejected. |
 | `CORDUM_AGENTD_SOCKET` | `http://127.0.0.1:8765/v1/edge/hooks/claude` | No | `cordum-agentd` local bind URL. P0 accepts loopback HTTP only; Unix socket / named-pipe paths fail fast instead of silently disabling enforcement. |
-| `CORDUM_AGENTD_FAIL_CLOSED` | `false` | No | When true, `cordum-hook` blocks/fails closed if local agentd is unavailable or returns an invalid response. |
+| `CORDUM_AGENTD_FAIL_CLOSED` | `false` | No | When true, `cordum-hook` fails closed for every hook event except `FileChanged` if local agentd is unavailable, times out or returns an invalid response, and `cordum-agentd` fails closed instead of continuing degraded when the Gateway times out during its startup session or heartbeats keep failing. `enforce` mode denies `PreToolUse` in those cases without it. See [cordum-hook fail modes](edge/cordum-hook.md#fail-modes). |
 | `CORDUM_AGENTD_STATE_DIR` | `~/.cordum/edge/sessions` | No | Root directory for small local agentd state files; never stores API keys, hook nonces, raw hook payloads, transcripts, or authorization headers. |
 | `CORDUM_EDGE_POLICY_MODE` | `observe` | No | `cordum-agentd` session/evaluate policy mode: `observe`, `enforce`, or `enterprise-strict`. Enterprise-strict denies/fails closed when Cordum governance is unavailable. |
 | `CORDUM_EDGE_MODE` | `observe` | No | Edge local hook mode: `observe`, `local-dev-enforce`, or `enterprise-strict`. |
@@ -703,7 +710,7 @@ scanners:
 | `CORDUM_AGENTD_SAFE_ALLOW_CACHE_TTL` | `5m` | No | Safe-allow cache TTL when the cache is enabled; bounded and validated by agentd. |
 | `CORDUM_AGENTD_SAFE_ALLOW_CACHE_MAX_ENTRIES` | `128` | No | Safe-allow cache entry cap when the cache is enabled; invalid non-positive or very large values are rejected. |
 | `CORDUM_AGENTD_INLINE_APPROVAL_WAIT` | `false` | No | Local/demo-only inline approval wait for Gateway `REQUIRE_APPROVAL`. Default behavior returns an approval ref/URL and asks the user to approve then retry. |
-| `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` | `30s` | No | Strict inline approval wait budget. Approval allows the action; rejection, timeout, pending, or wait errors return `DENY` and do not consume/cache an allow. |
+| `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` | `30s` | No | Upper bound on the inline approval wait. For hook requests agentd ends the wait 1s before `cordum-hook`'s agentd budget (`4s` by default), so the wait lasts about 3s and the `30s` default never applies there. Approval allows the action and rejection denies it. An approval still pending when the wait ends, or a failed wait, gets the usual deny with `approval_ref` and retry guidance, and never consumes or caches an allow. |
 | `CORDUM_EDGE_HEARTBEAT_TTL` | `30s` | No | Agentd Gateway heartbeat TTL for active Edge sessions. |
 | `CORDUM_EDGE_HEARTBEAT_INTERVAL` | `TTL/2` | No | Agentd heartbeat interval; must be positive and no greater than half the TTL. |
 | `CORDUM_EDGE_APPROVAL_WAIT_TIMEOUT` | — | No | Legacy/settings-generator placeholder for approval-wait UX. Agentd runtime inline wait uses `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT`. |
@@ -722,6 +729,7 @@ signed URLs, IDs, or token values. See [edge-observability.md](edge-observabilit
 
 ### Licensing
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_LICENSE_FILE` | — | Path to license JSON file. If not set, checks `~/.cordum/license.json` and `/etc/cordum/license.json` |
@@ -747,6 +755,7 @@ No license = Community tier (3 workers, 3 concurrent jobs, 500 RPS, 7-day audit 
 > restore fully local, zero-outbound-call telemetry. `local_only` no longer
 > means "no remote calls"; it now means "no *ongoing* remote reporting."
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_TELEMETRY_MODE` | `local_only` | Telemetry mode: `off` (no collection, no pings — the only mode with zero outbound calls), `local_only` (collect to Redis; no ongoing reporting, but the two one-time pings below still fire), `anonymous` (collect and report aggregate stats every 24h, in addition to the two one-time pings) |
@@ -765,6 +774,7 @@ Telemetry is independent from licensing. It never collects PII, prompts, secrets
 
 ### NATS TLS
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `NATS_TLS_CA` | — | CA certificate path for NATS TLS |
@@ -775,6 +785,7 @@ Telemetry is independent from licensing. It never collects PII, prompts, secrets
 
 ### NATS JetStream
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `NATS_JS_ACK_WAIT` | `10m` | JetStream ack wait duration |
@@ -783,6 +794,7 @@ Telemetry is independent from licensing. It never collects PII, prompts, secrets
 
 ### Redis TLS
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `REDIS_TLS_CA` | — | CA certificate path for Redis TLS |
@@ -794,6 +806,7 @@ Telemetry is independent from licensing. It never collects PII, prompts, secrets
 
 ### Redis Data TTL
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `REDIS_DATA_TTL_SECONDS` | — | Data TTL in seconds (takes precedence) |
@@ -801,6 +814,7 @@ Telemetry is independent from licensing. It never collects PII, prompts, secrets
 
 ### Redis Connection Pool
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `REDIS_POOL_SIZE` | `20` | Max connections per Redis node. Each service replica opens up to this many connections. |
@@ -812,6 +826,7 @@ Invalid values (non-numeric, zero, negative) are silently replaced with defaults
 
 ### Gateway
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GATEWAY_GRPC_ADDR` | `:8080` | gRPC listen address (the dev `docker-compose.yml` host-maps this to `9080`; the release compose maps `8080:8080`) |
@@ -827,28 +842,51 @@ Invalid values (non-numeric, zero, negative) are silently replaced with defaults
 | `TENANT_ID` | — | Single-tenant default ID |
 | `ARTIFACT_MAX_BYTES` | — | Max artifact upload/download size |
 | `WORKFLOW_FOREACH_MAX_ITEMS` | — | Max items in workflow for-each expansion |
-| `POLICY_CHECK_FAIL_MODE` | `closed` | Behavior when Safety Kernel is unreachable during policy evaluation (both gateway submit-time and scheduler dispatch-time). `closed` (default): reject the job. `open`: allow with warning log. |
+| `POLICY_CHECK_FAIL_MODE` | `closed` | Gateway submit-time pre-check behavior when the Safety Kernel is unreachable. `closed` (default): reject the submit. `open`: accept it. The scheduler's dispatch-time mode is the config-service key `scheduler.input_fail_mode` ([safety-kernel.md](safety-kernel.md#10-input-policy-fail-mode)). |
+
+### Gateway — MCP
+
+Read by the gateway's built-in MCP server (`/mcp/*`). The standalone
+`cordum-mcp` bridge has its own variables under [MCP Server](#mcp-server).
+
+<!-- docscheck: env -->
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CORDUM_MCP_ENABLED` | `false` | Turns the gateway's MCP server on when the stored system config does not set `mcp.enabled`. A stored `mcp.enabled` always wins, so the variable is only a fallback. Accepts `1`, `true`, `yes` or `on` and `0`, `false`, `no` or `off`; any other value is ignored. A failed config read keeps MCP disabled and skips the variable. A stored `mcp.enabled` the gateway cannot read keeps MCP disabled, whatever the variable says. `docker-compose.dev.yml` defaults it to `true`, and `cordumctl up --dev` writes `true` to `.env` when no `CORDUM_MCP_ENABLED` is set, then stores `mcp.enabled=true` through the gateway when it reads `true`, after which the stored key wins |
+| `CORDUM_MCP_TRANSPORT` | `http` | MCP transport used when the stored system config does not set `mcp.transport`; a stored `mcp.transport`, even an empty one, wins. A blank value is ignored. A failed config read keeps MCP disabled and skips the variable. No compose file sets it; `cordumctl up --dev` stores `mcp.transport=http` when the key is missing |
+| `CORDUM_MCP_POLICY_GATE_ENABLED` | `false` | Turns the MCP policy gate on when the stored system config does not set `mcp.policy_gate_enabled`. A stored key always wins, and a stored value the gateway cannot read turns the gate on. Accepted values are those of `CORDUM_MCP_ENABLED`. A failed config read keeps MCP disabled and skips the variable. `docker-compose.dev.yml` defaults it to `true`, and `cordumctl up --dev` writes `true` to `.env` when it is unset and stores `mcp.policy_gate_enabled=true` when the key is missing, after which the stored key wins |
+| `CORDUM_MCP_DESTRUCTIVE_TOOL_GLOBS` | `*delete*,*remove*,*archive*` | Comma-separated `path.Match` globs for tool names the MCP gate treats as destructive. A destructive call in a session that an earlier tool result tainted with a prompt injection is denied; the globs only scope that deny and never deny on their own. See [Session-taint destructive scope](edge/mcp-tool-policy.md#session-taint-destructive-scope) |
+| `CORDUM_MCP_DESTRUCTIVE_MUTATION_ARG_KEYS` | `query,mutation,gql,graphql` | Comma-separated string arguments scanned for a GraphQL `mutation` document, so a passthrough tool that carries a destructive mutation counts as destructive |
+| `CORDUM_MCP_DESTRUCTIVE_MUTATION_GLOBS` | `delete_*,archive_*,remove_*,delete,archive,remove` | Comma-separated globs for GraphQL mutation field names treated as destructive |
+| `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` | On in production (`CORDUM_ENV=production` or `prod`, or `CORDUM_PRODUCTION=true`), off elsewhere | Whether a destructive call fails closed when the session-taint lookup fails, since the session cannot be confirmed clean (reason `taint_lookup_unavailable_failclosed`). Failing closed denies the call (`service_unavailable`) unless `CORDUM_MCP_TAINT_FAILCLOSED_APPROVER` is `true`. An explicit `true` or `false` overrides the profile default; an unrecognized value logs a warning and keeps it |
+| `CORDUM_MCP_TAINT_FAILCLOSED_APPROVER` | `false` | Set to `true` when a reviewer acts on approval holds: a call that fails closed under `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` is then held for human approval instead of denied |
+| `CORDUM_MCP_TAINT_BACKEND` | `redis` when the gateway has Redis | Session-taint store: `redis` (shared by gateway replicas) or `memory` (per process). An unknown value, or `redis` without Redis, selects `memory` |
+| `CORDUM_MCP_TAINT_TTL` | `3600` | Seconds a session taint lasts in Redis. Keep it longer than an agent session: once the taint expires, a destructive call goes through. Invalid or non-positive values use the default |
+| `CORDUM_MCP_DEDUPE_BACKEND` | `redis` when the gateway has Redis | Store behind the tools/call [retry dedupe](mcp-server.md#retry-dedupe): `redis` (shared by gateway replicas) or `memory` (per process). An unknown value, or `redis` without Redis, selects `memory` |
+| `CORDUM_MCP_INBOUND_TRUSTED_KEY_<ID>` | — | ECDSA P-256 public key (base64 SPKI or PEM) that `POST /api/v1/mcp/verify-signature` trusts for key id `<ID>`; one variable per key. With no key, or a malformed one, the endpoint answers `503`. See [MCP outbound signing](mcp/outbound-signing.md) |
 
 ### Gateway — API Keys
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_API_KEY` | — | Single API key |
 | `API_KEY` | — | Fallback if `CORDUM_API_KEY` not set |
 | `CORDUM_API_KEYS` | — | Multiple keys: comma-separated or JSON array |
 | `CORDUM_API_KEYS_PATH` | — | Path to keys file (reloads on change) |
-| `CORDUM_ALLOW_INSECURE_NO_AUTH` | — | Set to `1` for no-auth mode (dev only) |
-| `CORDUM_ALLOW_HEADER_PRINCIPAL` | — | Set to `true` for header-based principal (disabled in production) |
+| `CORDUM_ALLOW_INSECURE_NO_AUTH` | — | Set to `1` for no-auth mode (dev only). In production the gateway refuses to start with it set. |
+| `CORDUM_ALLOW_HEADER_PRINCIPAL` | — | Set to `true` to honour `X-Principal-Id` in production, for static keys without `principal_id` and for managed keys (always honoured outside production). A header principal is recorded for attribution only and never binds identity |
 
 ### Gateway — Rate Limiting
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `API_RATE_LIMIT_RPS` | `30` | Per-tenant rate limit (requests/sec) |
 | `API_RATE_LIMIT_BURST` | `50` | Per-tenant burst size |
 | `API_PUBLIC_RATE_LIMIT_RPS` | `20` | Public (unauthenticated) rate limit |
 | `API_PUBLIC_RATE_LIMIT_BURST` | `40` | Public burst size |
-| `REDIS_RATE_LIMIT` | `true` | Enable Redis-backed distributed rate limiting. When `true`, rate limits are enforced globally across all gateway replicas via Redis sliding-window counters (key format: `cordum:rl:{key}:{unix_second}`). When `false` or Redis unavailable, falls back to per-process in-memory token buckets (effective limit = N × configured limit with N replicas). |
+| `REDIS_RATE_LIMIT` | `true` | Enable Redis-backed distributed rate limiting. When `true`, rate limits are enforced globally across all gateway replicas via Redis sliding-window counters (key format: `cordum:rl:{key}:{unix_second}`). When `false`, the gateway uses per-process in-memory token buckets (effective limit = N × configured limit with N replicas). While Redis is unreachable, the Redis-backed limiter denies requests (measured at the limiter only; see the [failure and partition behavior contract](contract/failure-behavior.md)). |
 
 > **Horizontal scaling note**: With multiple gateway replicas, Redis-backed rate
 > limiting (`REDIS_RATE_LIMIT=true`) is strongly recommended. Without it, each
@@ -857,6 +895,7 @@ Invalid values (non-numeric, zero, negative) are silently replaced with defaults
 
 ### Gateway — CORS
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_ALLOWED_ORIGINS` | — | Allowed CORS origins |
@@ -865,6 +904,7 @@ Invalid values (non-numeric, zero, negative) are silently replaced with defaults
 
 ### Gateway — JWT Authentication
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_JWT_HMAC_SECRET` | — | HMAC secret for JWT signing |
@@ -878,6 +918,7 @@ Invalid values (non-numeric, zero, negative) are silently replaced with defaults
 
 ### Gateway — OIDC Authentication
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_OIDC_ISSUER` | — | OIDC issuer URL |
@@ -899,6 +940,7 @@ If Redis is unavailable, replicas fall back to direct IdP fetches (same behavior
 
 ### Gateway — OIDC Authentication
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_OIDC_ENABLED` | `false` | Enable OIDC JWT validation for bearer tokens |
@@ -924,12 +966,13 @@ If Redis is unavailable, replicas fall back to direct IdP fetches (same behavior
 
 ### Gateway — SAML Authentication
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_SAML_ENABLED` | `false` | Enable the SAML service-provider endpoints on the gateway |
 | `CORDUM_SAML_IDP_METADATA_URL` | — | Remote IdP metadata URL the gateway should fetch on startup |
 | `CORDUM_SAML_IDP_METADATA` | — | Inline IdP metadata XML (use instead of the URL for air-gapped installs) |
-| `CORDUM_SAML_BASE_URL` | `http://localhost:8081` | External gateway base URL used to publish metadata, ACS, and login endpoints |
+| `CORDUM_SAML_BASE_URL` | `http://localhost:8081` | External gateway base URL used to publish metadata, ACS, and login endpoints. The compose stack needs `https://localhost:8081` (or its external HTTPS URL) |
 | `CORDUM_SAML_CERT_PATH` | — | PEM certificate path for the service-provider signing / TLS cert |
 | `CORDUM_SAML_KEY_PATH` | — | PEM private-key path paired with `CORDUM_SAML_CERT_PATH` |
 | `CORDUM_SAML_ENTITY_ID` | metadata URL | Explicit SAML entity ID override for the service provider |
@@ -944,6 +987,7 @@ If Redis is unavailable, replicas fall back to direct IdP fetches (same behavior
 
 ### Gateway — SCIM Provisioning
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_SCIM_BEARER_TOKEN` | — | Shared bearer token required by all SCIM 2.0 provisioning endpoints under `/api/v1/scim/v2/*` |
@@ -962,6 +1006,7 @@ Advanced RBAC provides role hierarchy with permission-based access control, gate
 
 RBAC roles are stored in Redis (key prefix `rbac:role:`). Default roles (admin, operator, viewer) are bootstrapped on startup if not present.
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_RBAC_ROLE_DEFS` | — | JSON array of custom role definitions to seed on startup (optional) |
@@ -972,6 +1017,7 @@ RBAC roles are stored in Redis (key prefix `rbac:role:`). Default roles (admin, 
 
 ### Gateway — User Authentication
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_USER_AUTH_ENABLED` | `false` | Enable user/password auth (Redis-backed) |
@@ -981,6 +1027,7 @@ RBAC roles are stored in Redis (key prefix `rbac:role:`). Default roles (admin, 
 
 ### Gateway — Pack Marketplace
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_PACK_CATALOG_URL` | (built-in) | Official catalog URL |
@@ -992,6 +1039,7 @@ RBAC roles are stored in Redis (key prefix `rbac:role:`). Default roles (admin, 
 
 ### Scheduler
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SCHEDULER_METRICS_ADDR` | `:9090` | Metrics listen address |
@@ -1001,7 +1049,7 @@ RBAC roles are stored in Redis (key prefix `rbac:role:`). Default roles (admin, 
 | `JOB_META_TTL_SECONDS` | — | Job metadata TTL in seconds (takes precedence) |
 | `WORKER_SNAPSHOT_INTERVAL` | — | Worker state snapshot interval |
 | `OUTPUT_POLICY_ENABLED` | `false` | Enable output policy: `true`, `1` |
-| `POLICY_CHECK_FAIL_MODE` | `closed` | Behavior when safety kernel is unreachable during pre-dispatch input policy checks. `closed` (default): requeue with backoff. `open`: allow through with warning log and metric. See [safety-kernel.md](safety-kernel.md) for risk implications. |
+| `POLICY_CHECK_FAIL_MODE` | `closed` | Does not select the scheduler's input fail mode. That mode is the config-service key `scheduler.input_fail_mode`: closed when unset, and `open` admits only topics listed in `scheduler.input_fail_open_scope`. Under the CAP-PRODUCTION profile, `open` here makes the scheduler refuse to start (exit 1): the scheduler sets its input fail-open flag from this variable, and the production startup check (`ValidateProductionStartup`) rejects that flag. A `scheduler.input_fail_mode` value overrides the flag only on config reloads, which start after that check, so it cannot avoid the refusal. See [safety-kernel.md](safety-kernel.md#10-input-policy-fail-mode) for the risk implications. |
 
 ### Gateway + Scheduler — Boundary Hardening
 
@@ -1010,6 +1058,7 @@ identity, and readiness gating described in
 [ADR 009](adr/009-control-plane-boundary-hardening.md). The authenticated
 worker protocol is documented in [SDK handshake](sdk/handshake.md).
 
+<!-- docscheck: env endpoints -->
 | Variable | Default | Type | Service | Description |
 |----------|---------|------|---------|-------------|
 | `SCHEMA_ENFORCEMENT` | `warn` | string (`off`, `warn`, `enforce`) | gateway + scheduler | Controls how registered topic schemas are enforced. The gateway uses it at submit time for `POST /api/v1/jobs`; the scheduler uses the same mode before dispatch. `warn` logs violations and continues, `enforce` rejects/failed-jobs on schema mismatch, `off` skips schema validation. |
@@ -1027,6 +1076,7 @@ worker protocol is documented in [SDK handshake](sdk/handshake.md).
 
 Recommended rollout pairs:
 
+<!-- docscheck: skip reason="rollout pair matrix of values, not an env variable table" -->
 | Rollout phase | `CORDUM_SDK_HANDSHAKE` | `CORDUM_HEARTBEAT_MODE` |
 |---|---|---|
 | Compatibility/default | `off` | `authority` |
@@ -1056,6 +1106,7 @@ that authority. Tokenless JobRequest traffic is rejected in enforce mode.
 
 ### Workflow Engine
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `WORKFLOW_ENGINE_HTTP_ADDR` | — | HTTP listen address |
@@ -1065,6 +1116,7 @@ that authority. Tokenless JobRequest traffic is rejected in enforce mode.
 
 ### Safety Kernel
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SAFETY_KERNEL_ADDR` | `localhost:50051` | gRPC listen address |
@@ -1075,7 +1127,7 @@ that authority. Tokenless JobRequest traffic is rejected in enforce mode.
 | `SAFETY_POLICY_MAX_BYTES` | — | Max policy file size |
 | `SAFETY_KERNEL_TLS_CERT` | — | TLS server certificate |
 | `SAFETY_KERNEL_TLS_KEY` | — | TLS server private key |
-| `SAFETY_KERNEL_TLS_CA` | — | Client TLS CA (for mTLS) |
+| `SAFETY_KERNEL_TLS_CA` | — | CA bundle the scheduler and gateway use to verify the Safety Kernel's TLS server certificate |
 | `SAFETY_KERNEL_TLS_REQUIRED` | — | Require TLS for kernel connections |
 | `SAFETY_KERNEL_INSECURE` | — | Skip TLS verification (dev only) |
 | `SAFETY_DECISION_CACHE_TTL` | — | Decision cache TTL (e.g., `5s`, `250ms`) |
@@ -1083,6 +1135,7 @@ that authority. Tokenless JobRequest traffic is rejected in enforce mode.
 
 ### Safety Kernel — Policy Signature Verification
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SAFETY_POLICY_PUBLIC_KEY` | — | Public key for signature verification (PEM) |
@@ -1092,6 +1145,7 @@ that authority. Tokenless JobRequest traffic is rejected in enforce mode.
 
 ### Safety Kernel — Policy Reload / Overlays
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SAFETY_POLICY_RELOAD_INTERVAL` | — | Policy file reload interval |
@@ -1102,6 +1156,7 @@ that authority. Tokenless JobRequest traffic is rejected in enforce mode.
 
 ### Context Engine
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CONTEXT_ENGINE_ADDR` | `:50070` | gRPC listen address |
@@ -1115,20 +1170,39 @@ that authority. Tokenless JobRequest traffic is rejected in enforce mode.
 
 ### MCP Server
 
+The standalone `cordum-mcp` bridge. Where a flag is named, the flag wins over
+the variable.
+
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `CORDUM_GATEWAY_ADDR` | `http://localhost:8081` | Gateway the tools call (`--addr`). The compose stack serves `https://localhost:8081`, which also needs `CORDUM_MCP_ALLOW_PRIVATE_GATEWAY` |
 | `CORDUM_API_KEY` | — | API key for gateway-backed MCP handlers |
-| `CORDUM_TENANT_ID` | — | Tenant ID for MCP bridge/resource operations |
+| `CORDUM_TENANT_ID` | `default` | Tenant ID for MCP bridge/resource operations and signed calls. Outbound audit events record the value as set, with no fallback |
+| `CORDUM_MCP_AGENT_ID` | — | Agent identity that scopes a stdio session (`--agent-id`). Resolved once at boot through `GET /api/v1/agents/<id>`; startup fails if it cannot be resolved. Unset, no scope filter applies. See [MCP scope filtering](mcp/scope-filtering.md#stdio-transport-cordum-mcp) |
+| `CORDUM_MCP_GATEWAY_ALLOWLIST` | — | Comma-separated hosts or domains the gateway host must match (`--gateway-allowlist`); a domain also matches its subdomains. Unset, any host passes the allowlist check. See [Endpoint validation](mcp-server.md#endpoint-validation) |
+| `CORDUM_MCP_ALLOW_PRIVATE_GATEWAY` | `false` | Allow a gateway on `localhost` or a private or loopback address (`--allow-private-gateway`). Accepts `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off`; any other value keeps the default |
 | `MCP_TRANSPORT` | `stdio` | Transport mode: `stdio` (default) or `http` |
-| `MCP_HTTP_ADDR` | `:8090` | HTTP listen address (only used when `MCP_TRANSPORT=http`) |
+| `MCP_HTTP_ADDR` | `127.0.0.1:8090` | HTTP listen address (only used when `MCP_TRANSPORT=http`) |
+| `CORDUM_MCP_HTTP_AUTH_TOKEN` | — | Bearer token every `/sse` and `/message` request must send (`--http-auth-token`). Required for a non-loopback `MCP_HTTP_ADDR` unless `--allow-unauthenticated-http` is passed |
+| `CORDUM_TLS_CA` | — | PEM CA certificate(s) to trust for the gateway's TLS in addition to the system roots (`--cacert`), for example the compose stack's `./certs/ca/ca.crt`. Startup fails if the file cannot be read or holds no certificate |
+| `CORDUM_MCP_OUTBOUND_SIGNING_KEY` | — | ECDSA P-256 private key (PEM, or base64 DER) that signs every gateway call. Unset along with `_PATH`, calls go unsigned and startup logs a warning; a malformed key fails startup. See [MCP outbound signing](mcp/outbound-signing.md) |
+| `CORDUM_MCP_OUTBOUND_SIGNING_KEY_PATH` | — | File holding the signing key, read when `CORDUM_MCP_OUTBOUND_SIGNING_KEY` is unset |
+| `CORDUM_MCP_OUTBOUND_SIGNING_KEY_ID` | `default` | Key ID sent in `X-Cordum-Key-Id`; verifiers look the public key up under it |
+| `CORDUM_MCP_OUTBOUND_AGENT_ID` | `--agent-id` | Agent ID recorded on outbound audit events and sent in `X-Cordum-Agent-Id` on signed calls, where an empty value falls back to the tenant |
+| `CORDUM_NATS_URL` | — | Sends `mcp.tool_outbound_invocation` audit events over NATS to the gateway's audit chain. Unset, or when NATS cannot be reached at startup, they are logged to stderr |
 
 **HA note — HTTP transport**: Set `MCP_TRANSPORT=http` to enable HTTP mode, which exposes
 `/sse` (SSE stream) and `/message` (POST JSON-RPC) endpoints. This allows running multiple
 MCP server replicas behind a load balancer. The default `stdio` mode supports only a single
-instance and is intended for local CLI integrations.
+instance and is intended for local CLI integrations. HTTP mode calls the gateway with this
+server's `CORDUM_API_KEY`, so it listens on loopback by default; to serve a load balancer,
+set `MCP_HTTP_ADDR` (for example `:8090`) and `CORDUM_MCP_HTTP_AUTH_TOKEN`, or the process
+refuses to start.
 
 ### Audit Export
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_AUDIT_EXPORT_TYPE` | — | Export type: `webhook`, `syslog`, `datadog`, `cloudwatch` |
@@ -1161,12 +1235,14 @@ The consumer calls the configured SIEM exporter (`CORDUM_AUDIT_EXPORT_TYPE`) for
 
 ### DLQ
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_DLQ_ENTRY_TTL_DAYS` | — | DLQ entry TTL in days |
 
 ### Worker SDK
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `NATS_URL` | `nats://localhost:4222` | NATS URL for worker connections |
@@ -1174,6 +1250,7 @@ The consumer calls the configured SIEM exporter (`CORDUM_AUDIT_EXPORT_TYPE`) for
 
 ### CLI TLS
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_TLS_CA` | — | CA certificate path for CLI TLS verification |
@@ -1181,6 +1258,7 @@ The consumer calls the configured SIEM exporter (`CORDUM_AUDIT_EXPORT_TYPE`) for
 
 ### Dashboard
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORDUM_API_UPSTREAM_SCHEME` | `http` | Set to `https` when gateway serves TLS |
@@ -1188,6 +1266,7 @@ The consumer calls the configured SIEM exporter (`CORDUM_AUDIT_EXPORT_TYPE`) for
 
 ### Docker Compose Helpers
 
+<!-- docscheck: env -->
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `COMPOSE_HTTP_TIMEOUT` | — | Docker Compose HTTP timeout |

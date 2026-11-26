@@ -14,7 +14,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQueryState, parseAsString } from "nuqs";
 import { parseAsSearchTerm } from "@/lib/url-state";
-import type { ColumnDef } from "@tanstack/react-table";
 import { get } from "@/api/client";
 import {
   useInfiniteAuditEvents,
@@ -33,6 +32,7 @@ import { Drawer } from "@/components/ui/Drawer";
 import { ChainIntegrityWidget } from "@/components/ChainIntegrityWidget";
 import {
   DataTable,
+  type DataTableColumn,
   type DecisionTier,
 } from "@/components/primitives/DataTable";
 import {
@@ -378,7 +378,7 @@ export default function AuditLogPage() {
     }
   };
 
-  const columns = useMemo<ColumnDef<AuditEntry>[]>(
+  const columns = useMemo<DataTableColumn<AuditEntry>[]>(
     () => [
       {
         id: "time",
@@ -1114,7 +1114,7 @@ function ChainSignatureVerdict({
         <StatusBadge variant="muted">Pending</StatusBadge>
         <p className="text-xs text-muted-foreground">
           This entry has no chain seq — policy-only audit entries are not
-          included in the Merkle chain.
+          included in the hash chain.
         </p>
       </div>
     );
@@ -1189,7 +1189,7 @@ function ChainSignatureVerdict({
         Verified
       </StatusBadge>
       <p className="text-xs text-muted-foreground">
-        Chain seq #{event.seq} is signed and present in the verified Merkle
+        Chain seq #{event.seq} is hash-linked and present in the verified chain
         window ({chain.verified_events} of {chain.total_events} events).
       </p>
     </div>

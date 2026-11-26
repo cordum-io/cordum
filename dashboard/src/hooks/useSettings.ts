@@ -476,7 +476,6 @@ const DEFAULT_MCP_CONFIG: McpConfig = {
   enabled: false,
   transport: "http",
   port: 3001,
-  requireAuth: true,
   allowedOrigins: [], // Empty by default — operator must configure allowed origins explicitly
   tools: {},
   resources: {},
@@ -668,10 +667,6 @@ function resolveMcpConfig(config: SystemConfig | undefined): McpConfig {
     enabled: asBool(readMcpValue(raw, "enabled"), DEFAULT_MCP_CONFIG.enabled),
     transport: normalizeMcpTransport(readMcpValue(raw, "transport")),
     port: asNumber(readMcpValue(raw, "port"), DEFAULT_MCP_CONFIG.port),
-    requireAuth: asBool(
-      readMcpValue(raw, "requireAuth") ?? readMcpValue(raw, "require_auth"),
-      DEFAULT_MCP_CONFIG.requireAuth,
-    ),
     allowedOrigins: allowedOrigins.length > 0 ? allowedOrigins : DEFAULT_MCP_CONFIG.allowedOrigins,
     apiKeyMasked:
       asString(readMcpValue(raw, "apiKeyMasked") ?? readMcpValue(raw, "api_key_masked")) || undefined,
@@ -696,7 +691,6 @@ function toMcpPayload(config: McpConfig): Record<string, unknown> {
       enabled: config.enabled,
       transport: config.transport,
       port: config.port,
-      requireAuth: config.requireAuth,
       allowedOrigins: config.allowedOrigins,
       tools: config.tools,
       resources: config.resources,

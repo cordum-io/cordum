@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -190,6 +191,58 @@ func TestHandleDelegateAgentCrossTenantAndScopeErrors(t *testing.T) {
 	scopeRec := httptest.NewRecorder()
 	s.handleDelegateAgent(scopeRec, scopeReq)
 	assertOperatorErrorCode(t, scopeRec, http.StatusBadRequest, "DELEGATION_SCOPE_EXCEEDED")
+}
+
+func TestHandleDelegateAgentParentTenantMismatch(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableTestAuth(s)
+	setTestEntitlements(t, s, licensing.PlanEnterprise, func(entitlements *licensing.Entitlements) {
+		entitlements.AgentIdentity = true
+	})
+	setDelegationKeys(t)
+	for _, id := range []string{"agent-a", "agent-b"} {
+		createDelegationAgent(t, s, "default", id, []string{"read"}, []string{"job.alpha"})
+	}
+	parentToken, _ := issueDelegationTokenForTests(t, s, delegation.IssueRequest{
+		Tenant: "default", DelegatingAgentID: "agent-a", TargetAgentID: "agent-b",
+		AllowedActions: []string{"read"}, AllowedTopics: []string{"job.alpha"},
+	}, "agent-b")
+	for _, id := range []string{"agent-b", "agent-c"} {
+		createDelegationAgent(t, s, "other", id, []string{"read"}, []string{"job.alpha"})
+	}
+	before := delegationTenantRecords(t, s, "other")
+	if len(before.Items) != 0 || before.NextCursor != "" {
+		t.Fatal("expected no initial delegations for other tenant")
+	}
+	req := adminCtx(httptest.NewRequest(http.MethodPost, "/api/v1/agents/agent-b/delegate", strings.NewReader(`{"target_agent_id":"agent-c","allowed_actions":["read"],"allowed_topics":["job.alpha"],"parent_token":"`+parentToken+`"}`)))
+	req.SetPathValue("id", "agent-b")
+	req.Header.Set("X-Tenant-ID", "other")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleDelegateAgent(rec, req)
+	assertOperatorErrorCode(t, rec, http.StatusBadRequest, "DELEGATION_REQUEST_INVALID")
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if string(body["error"]) != `"tenant_mismatch"` {
+		t.Fatalf("error=%s, want tenant_mismatch", body["error"])
+	}
+	if _, issued := body["token"]; issued {
+		t.Fatal("response contains a token")
+	}
+	if after := delegationTenantRecords(t, s, "other"); !reflect.DeepEqual(before, after) {
+		t.Fatalf("delegation records changed: before=%+v after=%+v", before, after)
+	}
+}
+
+func delegationTenantRecords(t *testing.T, s *server, tenant string) delegation.DelegationListPage {
+	t.Helper()
+	page, err := s.delegationListStore().ListAll(context.Background(), tenant, delegation.DelegationListFilter{Status: "all"}, "", 100)
+	if err != nil {
+		t.Fatalf("ListAll(%s): %v", tenant, err)
+	}
+	return page
 }
 
 func TestEvaluateGovernance_FiresOnDelegation(t *testing.T) {
