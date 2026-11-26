@@ -294,6 +294,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Retry-layer contract: `docs/contract/retry-layers.md` lists each retry layer on the job and
+  workflow-step paths (client, bus, scheduler, worker handler, workflow step, manual DLQ retry)
+  with its trigger, whether it runs the job handler again, its limit and default, the setting
+  that changes it and code references, and states each path's cap on handler runs per original
+  request as a product of the layer limits. `TestRetryLayersContract` in `tests/contract` checks
+  that the references resolve, the quoted defaults match the code and each cap equals its
+  product (task-f55862da).
 - `POST /api/v1/edge/calibration-reports` summarizes the policy decisions recorded in
   observe-mode Edge sessions for a time window, repositories and labels: deny and
   require-approval counts per rule, policy rules with no matching event, the most affected
