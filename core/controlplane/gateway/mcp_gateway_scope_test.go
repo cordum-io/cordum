@@ -102,7 +102,11 @@ func checkMCPGatewaySSE(t *testing.T, url, key string, status int) {
 	if err != nil {
 		t.Fatalf("SSE: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			t.Errorf("close SSE response: %v", err)
+		}
+	}()
 	if resp.StatusCode != status {
 		t.Fatalf("SSE status %d, want %d", resp.StatusCode, status)
 	}
