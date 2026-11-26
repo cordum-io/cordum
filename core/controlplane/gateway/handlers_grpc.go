@@ -242,7 +242,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		if policyResult.Reason != "" {
 			reason = policyResult.Reason
 		}
-		s.appendSubmitSafetyDecisionAudit(ctx, "submit_denied", jobID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit-time policy denied: "+reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
+		s.appendSubmitSafetyDecisionAudit(ctx, "submit_denied", jobID, orgID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit-time policy denied: "+reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
 		return nil, status.Error(codes.PermissionDenied, reason)
 	}
 	if policyResult.Throttled {
@@ -250,7 +250,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		if policyResult.Reason != "" {
 			reason = policyResult.Reason
 		}
-		s.appendSubmitSafetyDecisionAudit(ctx, "submit_throttled", jobID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit-time policy throttled: "+reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
+		s.appendSubmitSafetyDecisionAudit(ctx, "submit_throttled", jobID, orgID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit-time policy throttled: "+reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
 		return nil, status.Error(codes.ResourceExhausted, reason)
 	}
 	if policyResult.ApprovalRequired {
@@ -369,7 +369,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 			}
 			s.syncApprovalQueueDepth(ctx)
 		}
-		s.appendSubmitSafetyDecisionAudit(ctx, "submit_approval_required", jobID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit-time policy requires approval: "+policyResult.Reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
+		s.appendSubmitSafetyDecisionAudit(ctx, "submit_approval_required", jobID, orgID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit-time policy requires approval: "+policyResult.Reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
 		return &pb.SubmitJobResponse{
 			JobId:   jobID,
 			TraceId: traceID,
@@ -515,7 +515,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		"traceId", traceID,
 		"topic", payloadReq.Topic,
 	)
-	s.appendSubmitSafetyDecisionAudit(ctx, "submit", jobID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit job "+jobID, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
+	s.appendSubmitSafetyDecisionAudit(ctx, "submit", jobID, orgID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit job "+jobID, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
 	return &pb.SubmitJobResponse{JobId: jobID, TraceId: traceID}, nil
 }
 

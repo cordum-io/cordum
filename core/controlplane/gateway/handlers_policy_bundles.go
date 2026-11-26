@@ -884,8 +884,12 @@ func (s *server) handleListPolicyAudit(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(w, r, "policy operation", err)
 		return
 	}
+	scopeTenant, scoped := s.policyAuditListScope(r)
 	filtered := make([]policybundles.PolicyAuditEntry, 0, len(entries))
 	for _, entry := range entries {
+		if scoped && (entry.Tenant == "" || entry.Tenant != scopeTenant) {
+			continue
+		}
 		if ruleID != "" && !strings.EqualFold(strings.TrimSpace(entry.ResourceID), ruleID) {
 			continue
 		}
@@ -1273,6 +1277,40 @@ func (s *server) loadPolicyAudit(ctx context.Context) ([]policybundles.PolicyAud
 	return entries, nil
 }
 
+// policyAuditTenant returns the tenant to record on entry: the job's stored
+// tenant for a job entry, otherwise the tenant of a caller whose access does
+// not span all tenants. It returns "" when neither is known.
+func (s *server) policyAuditTenant(ctx context.Context, entry policybundles.PolicyAuditEntry) string {
+	if entry.ResourceType == "job" {
+		if s.jobStore == nil {
+			return ""
+		}
+		tenant, err := s.jobStore.GetTenant(ctx, entry.ResourceID)
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(tenant)
+	}
+	if authCtx := auth.FromContext(ctx); authCtx != nil && !authCtx.AllowCrossTenant {
+		return strings.TrimSpace(authCtx.Tenant)
+	}
+	return ""
+}
+
+// policyAuditListScope returns the tenant r's caller may list entries of and
+// true, or false when auth is off or the caller's access spans all tenants. A
+// caller with no auth context is scoped to "", which no entry matches.
+func (s *server) policyAuditListScope(r *http.Request) (string, bool) {
+	if s.auth == nil {
+		return "", false
+	}
+	authCtx := auth.FromRequest(r)
+	if authCtx == nil {
+		return "", true
+	}
+	return strings.TrimSpace(authCtx.Tenant), !authCtx.AllowCrossTenant
+}
+
 func (s *server) appendPolicyAudit(ctx context.Context, entry policybundles.PolicyAuditEntry) error {
 	doc, err := s.configSvc.Get(ctx, configsvc.Scope(policybundles.PolicyAuditScope), policybundles.PolicyAuditID)
 	if err != nil {
@@ -1298,6 +1336,9 @@ func (s *server) appendPolicyAudit(ctx context.Context, entry policybundles.Poli
 		payload := entry.Action + "|" + entry.ResourceType + "|" + entry.ResourceID + "|" + strings.Join(entry.BundleIDs, ",") + "|" + entry.CreatedAt
 		sum := sha256.Sum256([]byte(payload))
 		entry.ID = entry.CreatedAt + "-" + hex.EncodeToString(sum[:6])
+	}
+	if entry.Tenant == "" {
+		entry.Tenant = s.policyAuditTenant(ctx, entry)
 	}
 	entries = append([]policybundles.PolicyAuditEntry{entry}, entries...)
 	if len(entries) > 500 {

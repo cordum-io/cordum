@@ -46,6 +46,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Policy audit: each entry records a tenant: the job's tenant for job entries,
+  otherwise the tenant of a caller bound to one tenant. For callers bound to one
+  tenant, `GET /api/v1/policy/audit` lists only entries recorded for their own
+  tenant. Entries recorded before this release carry no tenant and are listed
+  only to callers whose access spans all tenants (`allow_cross_tenant`)
+  (task-6eda46e2).
+
 - `DELETE /api/v1/topics/{name}` removes the caller's registration. The topic's
   pool mapping is removed only by a caller with platform authority (no auth
   provider, an auth context that spans all tenants, or the gateway's own
