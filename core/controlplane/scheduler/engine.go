@@ -1857,7 +1857,10 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 		return err
 	}
 	// The slot goes back on every return below unless the job was published,
-	// or a failed publish could not be rolled back and may still run.
+	// or a failed publish could not be rolled back and may still run. Once the
+	// lock fence is lost (errLockAbandoned, or an engine stop) the release
+	// writes nothing (CRD-14), and the job keeps the slot until it is
+	// processed again or a terminal state removes it.
 	keepSlot := false
 	if reserved {
 		defer func() {
@@ -2125,9 +2128,13 @@ func (e *Engine) reserveTenantSlot(ctx context.Context, tenant, jobID string, co
 }
 
 // releaseTenantSlot gives back a slot reserveTenantSlot took for a job that
-// was not dispatched. It runs even when the job lock's context is done.
+// was not dispatched. It writes under the job lock's fence, like every other
+// store write there: once the fence is lost (errLockAbandoned, or an engine
+// stop) the release writes nothing (CRD-14), because a successor may hold the
+// job's slot. The job then keeps the slot until it is processed again or a
+// terminal state removes it.
 func (e *Engine) releaseTenantSlot(ctx context.Context, tenant, jobID string) {
-	storeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), storeOpTimeout)
+	storeCtx, cancel := context.WithTimeout(ctx, storeOpTimeout)
 	defer cancel()
 	if err := e.jobStore.ReleaseTenantSlot(storeCtx, tenant, jobID); err != nil {
 		slog.Warn("tenant slot release failed; the job holds it until a terminal state",

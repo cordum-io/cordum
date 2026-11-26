@@ -3642,3 +3642,53 @@ func TestProcessJobReservedSlotReleasedWhenDispatchRollsBack(t *testing.T) {
 		})
 	}
 }
+
+// fenceLossSlotStore reserves for the old attempt, then drops that attempt's
+// lock fence and lets a successor reserve the same job and run it, as happens
+// after the old attempt's lock renewal is abandoned. It records its own errors
+// for the test to check after processJob returns.
+type fenceLossSlotStore struct {
+	*infraStore.RedisJobStore
+	abandon context.CancelCauseFunc
+	errs    []error
+}
+
+func (s *fenceLossSlotStore) ReserveTenantSlot(ctx context.Context, tenant, jobID string, limit int64) (bool, int, error) {
+	reserved, others, err := s.RedisJobStore.ReserveTenantSlot(ctx, tenant, jobID, limit)
+	if err != nil || !reserved {
+		s.errs = append(s.errs, fmt.Errorf("old attempt reservation = %v, %v; want admitted", reserved, err))
+	}
+	s.abandon(errLockAbandoned)
+	if ok, _, err := s.RedisJobStore.ReserveTenantSlot(context.Background(), tenant, jobID, limit); err != nil || !ok {
+		s.errs = append(s.errs, fmt.Errorf("successor reservation = %v, %v; want admitted", ok, err))
+	}
+	if err := s.RedisJobStore.SetState(context.Background(), jobID, JobStateRunning); err != nil {
+		s.errs = append(s.errs, fmt.Errorf("successor SetState(RUNNING): %w", err))
+	}
+	return reserved, others, err
+}
+
+// Once the lock fence is lost a successor may hold the job's slot, so the old
+// attempt's deferred release must write nothing (CRD-14): the running job
+// keeps its slot and another job of the tenant stays out at cap 1.
+func TestProcessJobReservedSlotKeptWhenLockFenceIsLost(t *testing.T) {
+	js := newTenantSlotTestStore(t)
+	lockCtx, abandon := context.WithCancelCause(testCtx(t))
+	defer abandon(nil)
+	store := &fenceLossSlotStore{RedisJobStore: js, abandon: abandon}
+	engine := NewEngine(&fakeBus{}, capOneSafety, newTestRegistry(t), &errStrategy{err: ErrNoWorkers}, store, nil)
+	req := submitTenantJob(t, js, "job-a")
+	if err := engine.processJob(lockCtx, req, "trace-job-a"); err == nil {
+		t.Fatal("processJob = nil, want a requeue after the fence was lost")
+	}
+	if err := errors.Join(store.errs...); err != nil {
+		t.Fatalf("successor setup: %v", err)
+	}
+	if active, err := js.CountActiveByTenant(context.Background(), "tenant-a"); err != nil || active != 1 {
+		t.Fatalf("CountActiveByTenant = %d, %v; want 1 (the successor's running job-a)", active, err)
+	}
+	submitTenantJob(t, js, "job-b")
+	if ok, _, err := js.ReserveTenantSlot(context.Background(), "tenant-a", "job-b", 1); err != nil || ok {
+		t.Fatalf("ReserveTenantSlot(job-b, cap 1) = %v, %v; want refused while job-a runs", ok, err)
+	}
+}
