@@ -53,6 +53,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   topic; otherwise the mapping stays for the pool routes to manage
   (task-e2277e8a).
 
+- Scheduler: in compat mode, a session-authenticated sender's `JobCancel`
+  or `JobResult` applies only to jobs in its own tenant, as in production.
+  Service identities and unauthenticated compat traffic are unchanged
+  (task-24d20bca).
+
+- Legal-hold routes and the audit export test act on the caller's own tenant.
+  Naming or releasing another tenant's hold, or listing every tenant, requires
+  platform authority: no auth provider, an auth context that spans all tenants,
+  or the gateway's own tenant (task-c3414b7a).
+
 - Custom roles belong to the tenant that creates them; role names remain unique
   deployment-wide. Custom roles stored without a tenant belong to the gateway's
   own tenant (`TENANT_ID`, or `default` when unset); other tenants must re-create

@@ -85,6 +85,7 @@ func TestHandlePacket_JobResult_ValidTypedTokenReachesSucceeded(t *testing.T) {
 	store.mu.Lock()
 	store.states["job-live"] = JobStateRunning
 	store.topics["job-live"] = "job.default"
+	store.tenants["job-live"] = "tenant-live"
 	store.mu.Unlock()
 
 	engine := NewEngine(newCountingBus(), NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil)
@@ -194,6 +195,7 @@ func TestWithSessionMiddleware_BuilderEnforcesThroughHandlePacket(t *testing.T) 
 	store.mu.Lock()
 	store.states["job-bld"] = JobStateRunning
 	store.topics["job-bld"] = "job.default"
+	store.tenants["job-bld"] = "tenant-bld"
 	store.mu.Unlock()
 
 	engine := NewEngine(newCountingBus(), NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), store, nil).
@@ -303,6 +305,7 @@ func TestHandlePacket_JobCancel_TokenGated(t *testing.T) {
 	storeOK := newFakeJobStore()
 	storeOK.mu.Lock()
 	storeOK.states["job-cxl-ok"] = JobStateRunning
+	storeOK.tenants["job-cxl-ok"] = "tenant-cxl"
 	storeOK.mu.Unlock()
 	engOK := NewEngine(newCountingBus(), NewSafetyBasic(), newTestRegistry(t), NewNaiveStrategy(), storeOK, nil)
 	engOK.sessionMiddleware = NewSessionTokenMiddleware(issuer, HandshakeModeEnforce, NewHandshakeMissingTracker())
