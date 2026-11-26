@@ -67,7 +67,6 @@ var crossTenantExistingCoverage = map[string][]string{
 var crossTenantOpenFindings = map[string]string{}
 
 var crossTenantPending = map[string][]string{
-	"PR1-02-WF": {"/api/v1/workflows", "/api/v1/workflow-runs", "/api/v1/artifacts", "/api/v1/memory", "/api/v1/traces", "/api/v1/locks", "/api/v1/schemas", "/api/v1/topics"},
 	// Slice separator: keep unchanged when removing a pending block.
 	// Slice separator: keep unchanged when removing a pending block.
 	// Slice separator: keep unchanged when removing a pending block.
