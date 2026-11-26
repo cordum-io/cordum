@@ -293,6 +293,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Retention contract (PR2-08): a deletion-proof map, `TestRetentionProofMapContract`
+  checker and Redis `tracescan` helper, plus `TestRetentionBackupWindow` pinning
+  the 9-day backup window in `deploy/k8s/production` when jobs run on schedule.
+  Pending cleanup proofs land in PR2-08-EDGE, PR2-08-JOBS, PR2-08-DATA and
+  PR2-08-SERVICES; this map claims no deletion guarantee beyond the cited tests.
+
 - `POST /api/v1/edge/calibration-reports` summarizes the policy decisions recorded in
   observe-mode Edge sessions for a time window, repositories and labels: deny and
   require-approval counts per rule, policy rules with no matching event, the most affected
