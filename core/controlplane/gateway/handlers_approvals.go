@@ -710,7 +710,7 @@ func approvalHandlerErrorCode(status int) string {
 	}
 }
 
-func (s *server) appendApprovalDecisionAudit(ctx context.Context, action, jobID, topic, actorID, role, identitySource, identityLabel, reason, note, agentID, agentName, agentRiskTier string) {
+func (s *server) appendApprovalDecisionAudit(ctx context.Context, action, jobID, topic, actorID, role, identitySource, identityLabel, reason, note, agentID, agentName, agentRiskTier string) error {
 	extra := map[string]string{}
 	if note = strings.TrimSpace(note); note != "" {
 		extra["note"] = note
@@ -718,7 +718,7 @@ func (s *server) appendApprovalDecisionAudit(ctx context.Context, action, jobID,
 	if len(extra) == 0 {
 		extra = nil
 	}
-	_ = s.appendPolicyAudit(ctx, policybundles.PolicyAuditEntry{
+	return s.appendPolicyAudit(ctx, policybundles.PolicyAuditEntry{
 		Action:         action,
 		ResourceType:   "job",
 		ResourceID:     jobID,
@@ -977,7 +977,10 @@ func (s *server) handleRepairApproval(w http.ResponseWriter, r *http.Request) {
 			"target_state", repaired.State,
 			"publish_target", finalApproval.PublishTarget,
 			"publish_status", finalApproval.PublishStatus)
-		s.appendAuditEntryNamed(ctx, "repair", "job", jobID, snapshot.Topic, actorID, policybundles.PolicyRole(r), "repair approval "+jobID+" ("+string(plan.Kind)+")")
+		if err := s.appendNamedAuditEntry(ctx, "repair", "job", jobID, snapshot.Topic, actorID, policybundles.PolicyRole(r), "repair approval "+jobID+" ("+string(plan.Kind)+")"); err != nil {
+			result = handlerResult{http.StatusInternalServerError, "approval repair applied but its audit entry was not stored"}
+			return nil
+		}
 		if s.approvalMetrics != nil {
 			s.approvalMetrics.IncApprovalDecision("repaired")
 		}
@@ -1403,6 +1406,16 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 		if note != "" {
 			labelUpdates["approval_note"] = note
 		}
+		// Store the audit entry first: a persisted approval can be dispatched by the pending replayer.
+		approveAgentID, approveAgentName, approveAgentRiskTier := "", "", ""
+		if req != nil && req.Labels != nil {
+			approveAgentID, approveAgentName, approveAgentRiskTier = s.resolveAgentForAudit(ctx, req.Labels["agent_id"])
+		}
+		approveActorID, approveIdentitySource, approveIdentityLabel := policybundles.PolicyActorIdentity(r)
+		if err := s.appendApprovalDecisionAudit(ctx, "approve", jobID, req.GetTopic(), approveActorID, policybundles.PolicyRole(r), approveIdentitySource, approveIdentityLabel, reason, note, approveAgentID, approveAgentName, approveAgentRiskTier); err != nil {
+			result = handlerResult{http.StatusInternalServerError, "approval not applied: its audit entry was not stored"}
+			return nil
+		}
 		resolved, err := s.jobStore.ResolveApproval(ctx, store.ApprovalResolutionParams{
 			JobID:          jobID,
 			Decision:       model.ApprovalDecisionApprove,
@@ -1415,6 +1428,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 			LabelUpdates:   labelUpdates,
 		})
 		if err != nil {
+			s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, req.GetTopic(), approveActorID, approvalRole, fmt.Sprintf("approval resolution failed: %v", err))
 			var conflict *store.ApprovalConflictError
 			if errors.As(err, &conflict) {
 				result = handlerResult{http.StatusConflict, approvalConflictPayload(http.StatusConflict, conflict.Code, conflict.Message)}
@@ -1443,13 +1457,6 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 			"job_id", jobID, "trace_id", resolved.TraceID,
 			"topic", resolved.Request.GetTopic(), "actor", policybundles.PolicyActorID(r),
 			"role", policybundles.PolicyRole(r))
-		// Include the submitted job's agent context in the approval audit event.
-		approveAgentID, approveAgentName, approveAgentRiskTier := "", "", ""
-		if resolved.Request != nil && resolved.Request.Labels != nil {
-			approveAgentID, approveAgentName, approveAgentRiskTier = s.resolveAgentForAudit(ctx, resolved.Request.Labels["agent_id"])
-		}
-		approveActorID, approveIdentitySource, approveIdentityLabel := policybundles.PolicyActorIdentity(r)
-		s.appendApprovalDecisionAudit(ctx, "approve", jobID, resolved.Request.GetTopic(), approveActorID, policybundles.PolicyRole(r), approveIdentitySource, approveIdentityLabel, reason, note, approveAgentID, approveAgentName, approveAgentRiskTier)
 		result = handlerResult{http.StatusOK, map[string]string{"job_id": jobID, "trace_id": resolved.TraceID}}
 		return nil
 	})
