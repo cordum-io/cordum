@@ -54,6 +54,15 @@ var crossTenantExistingCoverage = map[string][]string{
 	"POST /api/v1/edge/mcp/upstreams":                   {"TestHandlerCreateRejectsCrossTenantBody"},
 	"GET /api/v1/edge/sessions/{session_id}/events":     {"TestGatewayEdgeEventRoutesDenyCrossTenantWithoutLeakingIDs", "TestEdgeCrossTenantListSessionEventsRejectsForeignSession"},
 	"GET /api/v1/edge/executions/{execution_id}/events": {"TestGatewayEdgeEventRoutesDenyCrossTenantWithoutLeakingIDs", "TestEdgeCrossTenantListExecutionEventsRejectsForeignExecution"},
+	// PR1-02-FLEET
+	"GET /api/v1/workers/credentials":                {"TestWorkerCredentials_ScopedToTenant"},
+	"DELETE /api/v1/workers/credentials/{worker_id}": {"TestWorkerCredentials_ScopedToTenant"},
+	"GET /api/v1/agents":                             {"TestHandleListAgentsTenantScoped"},
+	"GET /api/v1/agents/{id}":                        {"TestHandleAgentByID_RejectsCrossTenant"},
+	"PUT /api/v1/agents/{id}":                        {"TestHandleAgentByID_RejectsCrossTenant"},
+	"DELETE /api/v1/agents/{id}":                     {"TestHandleAgentByID_RejectsCrossTenant"},
+	"GET /api/v1/agents/{id}/stats":                  {"TestHandleAgentByID_RejectsCrossTenant"},
+	"GET /api/v1/agents/{id}/tools":                  {"TestHandleAgentToolVisibility_CrossTenantReturns404"},
 }
 
 var crossTenantOpenFindings = map[string]string{}
@@ -61,7 +70,6 @@ var crossTenantOpenFindings = map[string]string{}
 var crossTenantPending = map[string][]string{
 	"PR1-02-WF": {"/api/v1/workflows", "/api/v1/workflow-runs", "/api/v1/artifacts", "/api/v1/memory", "/api/v1/traces", "/api/v1/locks", "/api/v1/schemas", "/api/v1/topics"},
 	// Slice separator: keep unchanged when removing a pending block.
-	"PR1-02-FLEET": {"/api/v1/workers", "/api/v1/pools", "/api/v1/agents", "/api/v1/delegations"},
 	// Slice separator: keep unchanged when removing a pending block.
 	// Slice separator: keep unchanged when removing a pending block.
 	"PR1-02-IDENTITY": {"/api/v1/auth", "/api/v1/users"},
