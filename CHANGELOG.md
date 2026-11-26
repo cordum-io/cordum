@@ -53,6 +53,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   list holds only that tenant's jobs. A worker without a credential record is
   listed only to callers with cross-tenant access (task-fa19ec96).
 
+- Mock-bank demo: `demo/mock-bank/integration_test.sh` issues worker
+  credentials in the API key's tenant for `megacorp-transfer-agent-01` and
+  `megacorp-transfer-agent-02` (`cordumctl worker credential create`, with
+  the printed token discarded) before it waits for their heartbeats, so
+  `GET /api/v1/workers` lists both agents. A rerun replaces both credentials.
+  The demo's other workers stay without credentials (task-50828e1f).
+
 - MCP approval resume: a call resumed with `_approval_ref` is refused with
   `-32096` `policy_snapshot_changed` when policy was published between the
   approval claim and the call's `mcp.tool.pre` stamp. Nothing runs and the
