@@ -19,10 +19,12 @@ import (
 
 // fakeSource mimics the Redis store's list semantics: pages through a
 // numeric cursor, filters by tenant (unless ignoreTenant), session and an
-// inclusive [Since, Until].
+// inclusive [Since, Until]. A heartbeat is alive only for sessions in alive.
 type fakeSource struct {
 	sessions     []edge.EdgeSession
 	events       []edge.AgentActionEvent
+	alive        map[string]bool
+	aliveErr     error
 	ignoreTenant bool
 	calls        int
 }
@@ -62,6 +64,14 @@ func (f *fakeSource) ListEvents(_ context.Context, q edge.ListEventsQuery) (edge
 	}
 	out, next := page(items, q.Cursor, q.Limit)
 	return edge.EventPage{Items: out, NextCursor: next}, nil
+}
+
+func (f *fakeSource) HeartbeatAlive(_ context.Context, _, sessionID string) (bool, error) {
+	f.calls++
+	if f.aliveErr != nil {
+		return false, f.aliveErr
+	}
+	return f.alive[sessionID], nil
 }
 
 var (
@@ -116,6 +126,8 @@ func TestCalibrationBuildCountsSeededDataset(t *testing.T) {
 		TopTools:          []NameCount{{"Bash", 3}, {"Edit", 1}, {"Write", 1}},
 		TopCommandClasses: []NameCount{{"git push", 2}, {"rm", 2}, {"write_file", 1}},
 		ApprovalsPerDay:   []DayCount{{"2026-03-01", 1}, {"2026-03-02", 0}, {"2026-03-03", 1}},
+		ShadowRules:       []ShadowRuleCount{},
+		Assurance:         map[edge.AssuranceState]int{"compatibility": 0, "hook-mediated": 0, "executor-enforced": 0, "unsupported": 0, "stale": 2},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("report mismatch\n got: %+v\nwant: %+v", got, want)
@@ -283,5 +295,70 @@ func TestCalibrationBuildTruncatesAtSessionCap(t *testing.T) {
 					n, got.Truncated, got.SessionsObserved, got.EventsScanned, n > 1000)
 			}
 		})
+	}
+}
+
+func TestCalibrationShadowRulesCounts(t *testing.T) {
+	const secret = "AKIAIOSFODNN7EXAMPLE"
+	req := Request{TenantID: "t1", Since: since, Until: until, Repos: []string{"org/none"}, Shadow: []ShadowVerdict{
+		{"b1", "r.deny", "deny", since}, // exactly Since: counted
+		{"b1", "r.deny", "DENY", at(2, 9)},
+		{"b1", "r.approve", "require_approval", at(2, 10)},
+		{"b1", "r.deny", "deny", until},                   // exactly Until: excluded
+		{"b1", "r.deny", "deny", since.Add(-time.Second)}, // before Since: excluded
+		{"b1", "r.allow", "allow", at(2, 11)},             // allow: not counted
+		{"b2", "r.deny", "deny", at(3, 11)},
+		{"b2", "r.approve", "REQUIRE_APPROVAL", at(1, 13)},
+		{"b2", "r.approve", "require_approval", at(2, 13)},
+		{"b2", secret, "deny", at(2, 12)},
+	}}
+	got := build(t, &fakeSource{}, req)
+	want := []ShadowRuleCount{
+		{"b1", "r.approve", 0, 1},
+		{"b1", "r.deny", 2, 0},
+		{"b2", "[redacted]", 1, 0},
+		{"b2", "r.approve", 0, 2},
+		{"b2", "r.deny", 1, 0},
+	}
+	if !reflect.DeepEqual(got.ShadowRules, want) {
+		t.Fatalf("shadow_rules = %+v, want %+v", got.ShadowRules, want)
+	}
+	if got.Truncated {
+		t.Fatalf("truncated = true without a capped scan")
+	}
+	req.ShadowTruncated = true
+	if capped := build(t, &fakeSource{}, req); !capped.Truncated || capped.ID == got.ID {
+		t.Fatalf("ShadowTruncated gave truncated=%v id %q, want true and an id other than %q", capped.Truncated, capped.ID, got.ID)
+	}
+}
+
+func TestCalibrationAssuranceCounts(t *testing.T) {
+	hook := edge.EnforcementLayers{"hook": true}
+	compat := observe("s-compat", "org/api", nil)
+	compat.EnforcementLayers = hook
+	endedAt := at(2, 12)
+	ended := observe("s-ended", "org/api", nil)
+	ended.EnforcementLayers, ended.Status, ended.EndedAt = hook, edge.SessionStatusEnded, &endedAt
+	lost := observe("s-lost", "org/api", nil) // running, heartbeat not alive
+	lost.EnforcementLayers, lost.Status = hook, edge.SessionStatusRunning
+	src := &fakeSource{
+		sessions: []edge.EdgeSession{compat, ended, lost, observe("s-idle", "org/api", nil)},
+		events: []edge.AgentActionEvent{
+			event("e1", "s-compat", at(2, 8), edge.DecisionAllow, "r", "Bash", "ls"),
+			event("e2", "s-ended", at(2, 9), edge.DecisionAllow, "r", "Bash", "ls"),
+			event("e3", "s-lost", at(2, 10), edge.DecisionAllow, "r", "Bash", "ls"),
+		},
+		// s-idle has no counted event, so it is not observed and not counted.
+		alive: map[string]bool{"s-compat": true, "s-ended": true, "s-idle": true},
+	}
+	req := Request{TenantID: "t1", Since: since, Until: until}
+	got := build(t, src, req)
+	want := map[edge.AssuranceState]int{"compatibility": 1, "hook-mediated": 0, "executor-enforced": 0, "unsupported": 0, "stale": 2}
+	if !reflect.DeepEqual(got.Assurance, want) {
+		t.Fatalf("assurance = %v, want %v", got.Assurance, want)
+	}
+	src.aliveErr = errors.New("heartbeat store down")
+	if _, err := Build(context.Background(), src, req); !errors.Is(err, src.aliveErr) {
+		t.Fatalf("Build with a HeartbeatAlive error = %v, want it wrapped", err)
 	}
 }

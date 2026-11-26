@@ -64,9 +64,15 @@ func (s *server) handleCreateEdgeCalibrationReport(w http.ResponseWriter, r *htt
 		writeEdgeInternalError(w, r, "load policy rules for calibration report", err)
 		return
 	}
+	shadow, shadowTruncated, err := edgeCalibrationShadowVerdicts(r.Context(), client, tenantID, body.Since, body.Until)
+	if err != nil {
+		writeEdgeInternalError(w, r, "read shadow results for calibration report", err)
+		return
+	}
 	report, err := calibration.Build(r.Context(), store, calibration.Request{
 		TenantID: tenantID, Since: body.Since, Until: body.Until,
 		Repos: body.Repos, Labels: body.Labels, RuleIDs: ruleIDs,
+		Shadow: shadow, ShadowTruncated: shadowTruncated,
 	})
 	if errors.Is(err, edgecore.ErrValidation) {
 		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, err.Error(), nil)
@@ -139,6 +145,25 @@ func (s *server) activePolicyRuleIDs(ctx context.Context) ([]string, error) {
 		}
 	}
 	return ids, nil
+}
+
+// edgeCalibrationShadowVerdicts reads the tenant's shadow_eval events of
+// every bundle in the window. They carry no session or repository, so the
+// report counts them for the whole tenant.
+func edgeCalibrationShadowVerdicts(
+	ctx context.Context, client redis.UniversalClient, tenantID string, since, until time.Time,
+) ([]calibration.ShadowVerdict, bool, error) {
+	events, truncated, err := scanShadowEvents(ctx, client, shadowStreamKey(tenantID), "", since.UnixMilli(), until.UnixMilli(), 0)
+	if err != nil {
+		return nil, false, err
+	}
+	verdicts := make([]calibration.ShadowVerdict, 0, len(events))
+	for _, ev := range events {
+		verdicts = append(verdicts, calibration.ShadowVerdict{
+			BundleID: ev.Extra["bundle_id"], RuleID: ev.Extra["shadow_rule_id"], Verdict: ev.Extra["shadow_verdict"], At: ev.Timestamp,
+		})
+	}
+	return verdicts, truncated, nil
 }
 
 func writeEdgeCalibrationUnavailable(w http.ResponseWriter, r *http.Request) {
