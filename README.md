@@ -692,10 +692,16 @@ Cordum core and CAP release independently, each with its own tags
 - **Cordum core (`v<major>.<minor>.<patch>` tags, currently 1.x).** A `v*` tag builds and signs the container
   images for api-gateway, scheduler, safety-kernel, workflow-engine,
   context-engine, mcp, dashboard and the demo quickstart worker, and publishes
-  the Helm chart ([docker.yml](.github/workflows/docker.yml)). The separate
-  [desktop binary workflow](.github/workflows/release.yml) builds
-  `cordum-hook`, `cordum-agentd` and `cordum-claude`; publication requires its
-  canonical `docker.yml` publish-binaries gate to find `SHA256SUMS.asc`; no signed release set is qualified. `cordumctl` is built from
+  the Helm chart ([docker.yml](.github/workflows/docker.yml)). That workflow calls
+  the reusable [desktop binary workflow](.github/workflows/release.yml) to build
+  `cordum-hook`, `cordum-agentd` and `cordum-claude` for five targets. One
+  `qualification-record` artifact binds the source SHA to eight image and
+  15 binary digests, gates and exceptions. Image signing/tagging and binary
+  publication use `release-qual publish`; the canonical `publish-binaries`
+  job also requires `SHA256SUMS.asc`. The record explicitly notes that no
+  release-time test or scan runs against the binaries; no signed release set
+  is qualified here. See [the release checklist](RELEASING.md) for gate coverage
+  and dry-run limits. `cordumctl` is built from
   source (`make build`). The default `docker compose` stack runs api-gateway,
   scheduler, safety-kernel, workflow-engine, context-engine and dashboard with
   NATS and Redis. Cordum's own Python and TypeScript SDKs use separate

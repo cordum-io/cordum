@@ -350,6 +350,53 @@ func TestSetWithRetryPreservesMissingSystemDefaultKeys(t *testing.T) {
 	}
 }
 
+func TestReplaceWithRetryDropsDeletedNestedKeys(t *testing.T) {
+	svc := newSvc(t)
+	defer func() { _ = svc.Close() }()
+
+	ctx := context.Background()
+	if err := svc.Set(ctx, &Document{
+		Scope:   ScopeSystem,
+		ScopeID: "default",
+		Data: map[string]any{
+			"pools": map[string]any{
+				"topics": map[string]any{"job.keep": "pool-a", "job.drop": "pool-b"},
+			},
+			"bundles": map[string]any{"pack/default": map[string]any{"content": "package policy"}},
+		},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if err := svc.ReplaceWithRetry(ctx, ScopeSystem, "default", 3, func(doc *Document) error {
+		pools, _ := doc.Data["pools"].(map[string]any)
+		topics, _ := pools["topics"].(map[string]any)
+		delete(topics, "job.drop")
+		return nil
+	}); err != nil {
+		t.Fatalf("ReplaceWithRetry: %v", err)
+	}
+
+	final, err := svc.Get(ctx, ScopeSystem, "default")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	pools, _ := final.Data["pools"].(map[string]any)
+	topics, ok := pools["topics"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected pools.topics map, got %v", final.Data["pools"])
+	}
+	if _, ok := topics["job.drop"]; ok {
+		t.Fatalf("expected job.drop deleted, got %v", topics)
+	}
+	if topics["job.keep"] != "pool-a" {
+		t.Fatalf("expected job.keep kept, got %v", topics)
+	}
+	if bundles, ok := final.Data["bundles"].(map[string]any); !ok || bundles["pack/default"] == nil {
+		t.Fatalf("expected bundles kept, got %v", final.Data["bundles"])
+	}
+}
+
 func TestSetNewDocument(t *testing.T) {
 	svc := newSvc(t)
 	ctx := context.Background()

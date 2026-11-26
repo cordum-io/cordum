@@ -54,7 +54,7 @@ non-empty `Pool`, the engine schedules a non-blocking flush via
 
 ### Observability
 
--   **Metric**: `cordum_scheduler_dispatch_flush_on_worker_online_total{pool}`
+-   **Metric**: `cordum_scheduler_scheduler_dispatch_flush_on_worker_online_total{pool}`
     — counts flushes that resulted in at least one pending job
     being dispatched. No-op flushes (worker online but queue empty)
     do not increment the counter; use the INFO log below to count

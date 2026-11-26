@@ -156,7 +156,7 @@ See `AGENTS.md` § "Control Plane Boundary Hardening (recent)" for the operator-
 Cordum validates incoming `BusPacket` payloads at the bus ingress using CAP SDK helpers:
 - `ValidateJobRequest`: rejects packets with empty `job_id` or `topic`.
 - `ValidateJobResult`: rejects packets with empty `job_id`, `worker_id`, or unspecified status.
-- Invalid packets are logged, counted (`validation_rejections_total` metric), and dropped silently.
+- Invalid packets are logged, counted (`cordum_scheduler_validation_rejections_total` metric), and dropped silently.
 
 ## Python Guard SDK
 
