@@ -2,8 +2,7 @@ package identity
 
 // The coverage guard reads the module's source, not its build, so it also
 // sees runners in packages this test does not import. It checks that the two
-// lists match the declared consts and that every Entry has exactly one runner
-// (see the package comment).
+// lists match the declared consts and every Entry has one runner (see package comment).
 
 import (
 	"fmt"
