@@ -15,6 +15,7 @@ import (
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	"github.com/cordum/cordum/core/infra/registry"
 	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/model"
 )
 
 const fleetWorkerID, fleetPool, fleetTopic = "fleet-worker-b", "fleet-pool-b", "job.fleet-b"
@@ -22,13 +23,26 @@ const fleetCapability = "private-fleet-capability-b"
 
 func init() {
 	registerCrossTenantFamily("PR1-02-FLEET",
+		crossTenantCase{Route: "GET /api/v1/workers", Name: "workers-list", Run: crossTenantFleetWorkersList},
 		crossTenantCase{Route: "GET /api/v1/workers/{id}", Name: "worker-detail", Run: crossTenantFleetWorkerDetail},
 		crossTenantCase{Route: "GET /api/v1/workers/{id}/jobs", Name: "worker-jobs", Run: crossTenantFleetWorkerJobs},
 		crossTenantCase{Route: "POST /api/v1/workers/{id}/revoke-session", Name: "worker-session", Run: crossTenantFleetWorkerSession},
 		crossTenantCase{Route: "POST /api/v1/workers/credentials", Name: "worker-credential", Run: crossTenantFleetWorkerCredential},
-		crossTenantCase{Route: "PUT /api/v1/pools/{name}", Name: "pool-create", Run: crossTenantFleetPoolCreate},
 	)
+	registerFleetPoolCases()
 	registerFleetAgentCases()
+}
+
+// withFleetPlatformKey adds poolPlatformAdmin, whose access spans all tenants:
+// pool routes refuse every tenant-bound caller, so it seeds and controls pools.
+func withFleetPlatformKey(t *testing.T, sw *crossTenantSweep) {
+	t.Helper()
+	a, b, p := sw.tenantA, sw.tenantB, poolPlatformAdmin
+	sw.server.auth = newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": fmt.Sprintf(`[{"key":%q,"tenant":%q,"role":"admin","principal_id":%q},{"key":%q,"tenant":%q,"role":"admin","principal_id":%q},{"key":%q,"tenant":%q,"role":"admin","principal_id":%q,"allow_cross_tenant":true}]`,
+			a.apiKey, a.tenantID, a.principalID, b.apiKey, b.tenantID, b.principalID, p.apiKey, p.tenantID, p.principalID),
+	})
+	sw.handler = apiKeyMiddleware(sw.server.auth, tenantMiddleware(sw.server.auth, maxBodyMiddleware(sw.mux, sw.server.entitlements)))
 }
 
 func TestCrossTenantSweepFleet(t *testing.T) { runCrossTenantFamily(t, "PR1-02-FLEET") }
@@ -50,9 +64,10 @@ func seedCrossTenantFleet(t *testing.T, sw *crossTenantSweep) crossTenantFleetSe
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	t.Cleanup(cancel)
 	seed := crossTenantFleetSeed{ctx: ctx}
+	withFleetPlatformKey(t, sw)
 	seedWorkerCredentialAccessConfig(t, sw.server)
-	rr := sw.as(t, sw.tenantB, http.MethodPut, "/api/v1/pools/"+fleetPool, `{"description":"private-fleet-description-b"}`)
-	assertCrossTenantAbsent(t, rr, "owner pool seed")
+	rr := sw.as(t, poolPlatformAdmin, http.MethodPut, "/api/v1/pools/"+fleetPool, `{"description":"private-fleet-description-b"}`)
+	assertCrossTenantAbsent(t, rr, "platform pool seed")
 	rr = sw.as(t, sw.tenantB, http.MethodPost, "/api/v1/topics", fmt.Sprintf(`{"name":%q,"pool":%q,"status":"active"}`, fleetTopic, fleetPool))
 	assertCrossTenantAbsent(t, rr, "owner topic seed")
 	rr = sw.as(t, sw.tenantB, http.MethodPost, "/api/v1/workers/credentials", fleetCredentialBody())
@@ -121,6 +136,27 @@ func assertFleetUnchanged(t *testing.T, sw *crossTenantSweep, seed crossTenantFl
 	}
 }
 
+func crossTenantFleetWorkersList(t *testing.T, sw *crossTenantSweep) {
+	seedCrossTenantFleet(t, sw)
+	marker := fleetCapability
+	owner := sw.as(t, sw.tenantB, http.MethodGet, "/api/v1/workers", "")
+	assertCrossTenantAbsent(t, owner, "owner worker seed")
+	if !strings.Contains(owner.Body.String(), marker) {
+		t.Fatal("owner worker seed missing private capability")
+	}
+	rr := sw.as(t, sw.tenantA, http.MethodGet, "/api/v1/workers", "")
+	if rr.Code == http.StatusForbidden || rr.Code == http.StatusNotFound {
+		assertCrossTenantRefused(t, rr, "A worker list", marker)
+	} else {
+		assertCrossTenantAbsent(t, rr, "A worker list", marker)
+	}
+	owner = sw.as(t, sw.tenantB, http.MethodGet, "/api/v1/workers", "")
+	assertCrossTenantAbsent(t, owner, "owner worker list")
+	if !strings.Contains(owner.Body.String(), marker) {
+		t.Fatal("owner worker list missing private capability")
+	}
+}
+
 func crossTenantFleetWorkerDetail(t *testing.T, sw *crossTenantSweep) {
 	seedCrossTenantFleet(t, sw)
 	path := "/api/v1/workers/" + fleetWorkerID
@@ -170,20 +206,66 @@ func crossTenantFleetWorkerCredential(t *testing.T, sw *crossTenantSweep) {
 	}
 }
 
-func crossTenantFleetPoolCreate(t *testing.T, sw *crossTenantSweep) {
-	seed := seedCrossTenantFleet(t, sw)
-	before, mark := fleetState(t, sw, seed), sw.publishMark()
-	path, body := "/api/v1/pools/"+fleetPool, `{"description":"replacement"}`
-	rr := sw.as(t, sw.tenantA, http.MethodPut, path, body)
-	assertFleetUnchanged(t, sw, seed, before, mark)
-	assertCrossTenantNoLeaks(t, rr, "A duplicate pool", "private-fleet-description-b")
-	if rr.Code != http.StatusForbidden && rr.Code != http.StatusNotFound && rr.Code != http.StatusConflict {
-		t.Errorf("A duplicate pool: status=%d, want refusal", rr.Code)
+func registerFleetPoolCases() {
+	const desc = "private-fleet-description-b"
+	for _, tc := range []struct{ route, name, path, body, marker string }{
+		{"GET /api/v1/pools", "pools-list", "/api/v1/pools", "", fleetPool},
+		{"GET /api/v1/pools/{name}", "pool-detail", "/api/v1/pools/" + fleetPool, "", fleetCapability},
+		{"PUT /api/v1/pools/{name}", "pool-create", "/api/v1/pools/" + fleetPool, `{"description":"replacement"}`, desc},
+		{"PATCH /api/v1/pools/{name}", "pool-update", "/api/v1/pools/" + fleetPool, `{"description":"replacement"}`, desc},
+		{"DELETE /api/v1/pools/{name}", "pool-delete", "/api/v1/pools/" + fleetPool + "?force=true", "", desc},
+		{"POST /api/v1/pools/{name}/drain", "pool-drain", "/api/v1/pools/" + fleetPool + "/drain", `{"timeout_seconds":60}`, desc},
+		{"PUT /api/v1/pools/{name}/topics/{topic}", "pool-add-topic", "/api/v1/pools/" + fleetPool + "/topics/job.fleet-extra", "", desc},
+		{"DELETE /api/v1/pools/{name}/topics/{topic}", "pool-remove-topic", "/api/v1/pools/" + fleetPool + "/topics/" + fleetTopic, "", desc},
+	} {
+		registerCrossTenantFamily("PR1-02-FLEET", crossTenantCase{Route: tc.route, Name: tc.name, Run: func(t *testing.T, sw *crossTenantSweep) {
+			seed := seedCrossTenantFleet(t, sw)
+			prepareFleetPool(t, sw, seed, tc.name)
+			method, paths := strings.Fields(tc.route)[0], []string{tc.path}
+			if tc.name == "pool-create" {
+				paths = append(paths, "/api/v1/pools/fleet-pool-free")
+			}
+			// Pools serve every tenant, so a tenant-bound caller is refused: B as well as A.
+			for _, who := range []crossTenantSweepTenant{sw.tenantA, sw.tenantB} {
+				for _, path := range paths {
+					before, mark := fleetState(t, sw, seed), sw.publishMark()
+					rr := sw.as(t, who, method, path, tc.body)
+					assertFleetUnchanged(t, sw, seed, before, mark)
+					assertCrossTenantRefused(t, rr, who.tenantID+" pool", tc.marker)
+					if rr.Code != http.StatusForbidden {
+						t.Errorf("%s pool: status=%d, want 403", who.tenantID, rr.Code)
+					}
+				}
+			}
+			owner := newCrossTenantSweep(t)
+			withFleetPlatformKey(t, owner)
+			if tc.name == "pool-create" {
+				seedWorkerCredentialAccessConfig(t, owner.server)
+			} else {
+				prepareFleetPool(t, owner, seedCrossTenantFleet(t, owner), tc.name)
+			}
+			rr := owner.as(t, poolPlatformAdmin, method, tc.path, tc.body)
+			assertCrossTenantAbsent(t, rr, "platform pool control")
+			if method == http.MethodGet && !strings.Contains(rr.Body.String(), tc.marker) {
+				t.Fatal("platform pool response missing seeded marker")
+			}
+		}})
 	}
-	// Creation needs an unused name; the B control starts with the same name absent.
-	owner := newCrossTenantSweep(t)
-	seedWorkerCredentialAccessConfig(t, owner.server)
-	assertCrossTenantAbsent(t, owner.as(t, owner.tenantB, http.MethodPut, path, body), "B pool creation")
+}
+
+func prepareFleetPool(t *testing.T, sw *crossTenantSweep, seed crossTenantFleetSeed, name string) {
+	t.Helper()
+	if name == "pool-delete" {
+		if err := sw.server.jobStore.SetState(seed.ctx, seed.jobID, model.JobStateSucceeded); err != nil {
+			t.Fatal(err)
+		}
+		rr := sw.as(t, poolPlatformAdmin, http.MethodPatch, "/api/v1/pools/"+fleetPool, `{"status":"inactive"}`)
+		assertCrossTenantAbsent(t, rr, "platform deactivate pool")
+	}
+	if name == "pool-remove-topic" {
+		rr := sw.as(t, poolPlatformAdmin, http.MethodPut, "/api/v1/pools/"+fleetPool+"/topics/"+fleetTopic, "")
+		assertCrossTenantAbsent(t, rr, "platform topic mapping")
+	}
 }
 
 type crossTenantFleetAgentSeed struct {
@@ -225,6 +307,8 @@ func seedFleetAgents(t *testing.T, sw *crossTenantSweep) crossTenantFleetAgentSe
 	if err := json.Unmarshal(rr.Body.Bytes(), &seed.token); err != nil || seed.token.JTI == "" || seed.token.Token == "" {
 		t.Fatalf("owner delegation decode: %v", err)
 	}
+	sw.server.mcpDenyRing.record(denyEventRecord{Timestamp: time.Now().UTC(), AgentID: seed.source.ID,
+		ToolName: "private-denied-tool-b", SubReason: "private-denied-reason-b"})
 	fleetAgentState(t, sw, seed)
 	return seed
 }
@@ -269,7 +353,9 @@ func registerFleetAgentCases() {
 		{"POST /api/v1/agents", "agent-create"},
 		{"GET /api/v1/agents/{id}/delegations", "agent-delegations"},
 		{"POST /api/v1/agents/{id}/delegate", "agent-delegate"},
+		{"POST /api/v1/agents/verify-delegation", "agent-verify"},
 		{"POST /api/v1/agents/revoke-delegation", "agent-revoke"},
+		{"GET /api/v1/agents/{id}/denied-events", "agent-denied-events"},
 		{"GET /api/v1/delegations", "delegations-list"},
 	} {
 		registerCrossTenantFamily("PR1-02-FLEET", crossTenantCase{Route: tc.route, Name: tc.name, Run: func(t *testing.T, sw *crossTenantSweep) {
@@ -285,7 +371,7 @@ func registerFleetAgentCases() {
 				}
 			}
 			assertCrossTenantNoLeaks(t, rr, "A agent request", marker)
-			if tc.name == "agent-delegate" || tc.name == "agent-revoke" {
+			if tc.name == "agent-verify" || tc.name == "agent-delegate" || tc.name == "agent-revoke" {
 				if rr.Code != http.StatusForbidden && rr.Code != http.StatusNotFound {
 					t.Errorf("A agent write status=%d, want refusal", rr.Code)
 				}
@@ -301,16 +387,27 @@ func registerFleetAgentCases() {
 			if method == http.MethodGet && !strings.Contains(rr.Body.String(), marker) {
 				t.Fatal("B agent response missing seeded marker")
 			}
-			if tc.name == "agent-revoke" {
-				service, err := sw.server.delegationTokenService()
-				if err != nil {
-					t.Fatal(err)
-				}
-				if _, err := service.VerifyDelegationToken(seed.worker.ctx, seed.token.Token, seed.target.ID); err == nil {
-					t.Fatal("B delegation revocation had no effect")
-				}
-			}
+			assertFleetAgentEffect(t, sw, seed, tc.name, rr.Body.String())
 		}})
+	}
+}
+
+// assertFleetAgentEffect checks that B's own control request took effect.
+func assertFleetAgentEffect(t *testing.T, sw *crossTenantSweep, seed crossTenantFleetAgentSeed, name, body string) {
+	t.Helper()
+	switch name {
+	case "agent-verify":
+		if !strings.Contains(body, `"valid":true`) {
+			t.Fatal("B token verification not valid")
+		}
+	case "agent-revoke":
+		service, err := sw.server.delegationTokenService()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := service.VerifyDelegationToken(seed.worker.ctx, seed.token.Token, seed.target.ID); err == nil {
+			t.Fatal("B delegation revocation had no effect")
+		}
 	}
 }
 
@@ -320,8 +417,12 @@ func fleetAgentRequest(seed crossTenantFleetAgentSeed, name string) (string, str
 		return fmt.Sprintf(`{"name":%q,"agent_id":%q,"owner":"caller","risk_tier":"low"}`, seed.source.Name, fleetWorkerID), seed.source.Description
 	case "agent-delegate":
 		return fleetDelegateBody(seed), seed.token.JTI
+	case "agent-verify":
+		return fmt.Sprintf(`{"token":%q,"expected_audience":%q}`, seed.token.Token, seed.target.ID), seed.source.Description
 	case "agent-revoke":
 		return fmt.Sprintf(`{"jti":%q,"reason":"caller-request"}`, seed.token.JTI), seed.source.Description
+	case "agent-denied-events":
+		return "", "private-denied-tool-b"
 	default:
 		return "", seed.token.JTI
 	}
