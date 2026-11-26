@@ -25,11 +25,11 @@ A failing proof stays an open finding under the review process, not a weaker tes
 | --- | --- | --- | --- |
 | DI-E01 | no cleanup path | none | none: No session-state cleanup API; Save replaces a file and removes its temporary file only |
 | DI-E02 | no cleanup path | none | none: Process termination and garbage collection; no explicit secure erasure routine |
-| DI-E03 | retention cleanup | `core/edge/agentd/cache.go` (`SafeAllowCache.Get`); `core/edge/agentd/cache.go` (`SafeAllowCache.evictOverflowLocked`) | pending PR2-08-EDGE |
+| DI-E03 | retention cleanup | `core/edge/agentd/cache.go` (`SafeAllowCache.Get`); `core/edge/agentd/cache.go` (`SafeAllowCache.evictOverflowLocked`) | `TestRetentionProofDIE03` |
 | DI-E04 | no cleanup path | none | none: Garbage collection of scan buffers; scanner does not delete source configuration files |
-| DI-C01 | retention cleanup | `core/edge/sweeper.go` (`SessionSweeper.SweepOnce`); `core/edge/store_redis.go` (`RedisStore.DeleteSession`) | pending PR2-08-EDGE |
+| DI-C01 | retention cleanup | `core/edge/sweeper.go` (`SessionSweeper.SweepOnce`); `core/edge/store_redis.go` (`RedisStore.DeleteSession`) | `TestRetentionProofDIC01` |
 | DI-C02 | no cleanup path | none | none: No code path deletes approval records at reviewed_at; transitions rewrite records and drop some index refs, while status/principal index refs remain; ApprovalSweeper.SweepOnce only marks past-deadline pending approvals expired; DeleteSession skips approval keys |
-| DI-C03 | retention cleanup | `core/edge/shadow/finding_store_redis.go` (`RedisStore.commitTransitionFinding`); `core/edge/shadow/finding_store_redis.go` (`RedisStore.purgeExpired`) | pending PR2-08-EDGE |
+| DI-C03 | retention cleanup | `core/edge/shadow/finding_store_redis.go` (`RedisStore.commitTransitionFinding`); `core/edge/shadow/finding_store_redis.go` (`RedisStore.purgeExpired`) | `TestRetentionProofDIC03` |
 | DI-C04 | no cleanup path | none | none: No automatic audit-stream trimmer found at reviewed_at; storage deletion is operator-managed |
 | DI-C05 | retention cleanup | `core/controlplane/gateway/handlers_policy_bundles.go` (`server.appendPolicyAudit`) | pending PR2-08-SERVICES |
 | DI-C06 | retention cleanup | `core/infra/store/decision_log_store.go` (`RedisDecisionLogStore.AppendDecision`); `core/infra/store/decision_log_store.go` (`RedisDecisionLogStore.cleanupStaleDecisionIDs`); `core/infra/store/decision_log_store.go` (`RedisDecisionLogStore.QueryDecisions`); `cmd/cordumctl-governance-helper/governance.go` (`governanceRuntime.appendDecisionRecord`) | pending PR2-08-DATA |
@@ -44,7 +44,7 @@ A failing proof stays an open finding under the review process, not a weaker tes
 | DI-C15 | no cleanup path | none | none: No Cordum deletion path for already exported metrics or telemetry copies |
 | DI-C16 | no cleanup path | none | none: No Cordum backup-deletion path; operators manage persistence files and backup copies |
 | DI-C17 | no cleanup path | none | none: No Cordum deletion path for NATS snapshot files or external backup copies |
-| DI-C18 | retention cleanup | `core/edge/mcp_upstream_store_redis.go` (`RedisMCPUpstreamRegistry.updateExisting`); fixed 30d TTL | pending PR2-08-EDGE |
+| DI-C18 | retention cleanup | `core/edge/mcp_upstream_store_redis.go` (`RedisMCPUpstreamRegistry.updateExisting`); fixed 30d TTL | `TestRetentionProofDIC18` |
 | DI-C19 | explicit delete only | `core/audit/buffer.go` (`BufferedExporter.loop`); `core/audit/buffer.go` (`BufferedExporter.Close`) | none: Queue drain/flush or retry exhaustion, not retention erasure; exported copies remain. |
 | DI-C20 | no cleanup path | none | none: No Cordum remote deletion of downloaded evidence; recipient must remove its copies |
 | DI-C21 | retention cleanup | `core/infra/bus/nats.go` (`NatsBus.initJetStreamFromEnv`) | pending PR2-08-DATA |
@@ -56,11 +56,11 @@ A failing proof stays an open finding under the review process, not a weaker tes
 | DI-C27 | retention cleanup | `core/workflow/store_redis.go` (`RedisStore.DeleteRun`); `core/workflow/store_redis.go` (`RedisStore.DeleteRunIdempotencyKey`); `core/workflow/store_redis.go` (`RedisStore.RemoveDelayTimer`); `core/workflow/store_redis.go` (`RedisStore.PopFiredDelays`); `core/workflow/store_redis.go` (`RedisStore.CleanStaleDelays`) | pending PR2-08-JOBS |
 | DI-C28 | retention cleanup | `core/infra/store/dlq_store.go` (`DLQStore.Add`); `core/infra/store/dlq_store.go` (`DLQStore.Delete`); `core/infra/store/dlq_store.go` (`DLQStore.CleanupStaleEntries`) | pending PR2-08-JOBS |
 | DI-C29 | no cleanup path | none | none: No identity deletion; Delete rewrites the record as revoked and UnlinkWorker removes only worker links |
-| DI-C30 | retention cleanup | `core/edge/store_redis.go` (`RedisStore.ReserveIdempotency`); `core/edge/store_redis.go` (`RedisStore.ReleaseIdempotency`) | pending PR2-08-EDGE |
+| DI-C30 | retention cleanup | `core/edge/store_redis.go` (`RedisStore.ReserveIdempotency`); `core/edge/store_redis.go` (`RedisStore.ReleaseIdempotency`) | `TestRetentionProofDIC30` |
 | DI-C31 | retention cleanup | `core/edge/shadow/finding_store_redis.go` (`RedisStore.cleanupStaleIDTx`) | pending PR2-08-EDGE |
 | DI-C32 | no cleanup path | none | none: No exception deletion path; revoke drops the id from the tenant index and CreateException deletes only its own failed write |
 | DI-C33 | no cleanup path | none | none: No upstream deletion path at reviewed_at; Disable only flips the enabled flag |
-| DI-C34 | retention cleanup | `core/mcp/dedupe_redis.go` (`RedisDedupeStore.Delete`); `core/edge/runtimeingest/replay.go` (`ReplayWindow.Release`); `core/infra/bus/nats.go` (`NatsBus.jsCallbackCtx`) | pending PR2-08-EDGE, pending PR2-08-DATA |
+| DI-C34 | retention cleanup | `core/mcp/dedupe_redis.go` (`RedisDedupeStore.Delete`); `core/edge/runtimeingest/replay.go` (`ReplayWindow.Release`); `core/infra/bus/nats.go` (`NatsBus.jsCallbackCtx`) | `TestRetentionProofDIC34`, pending PR2-08-DATA |
 | DI-C35 | no cleanup path | none | none: No hold deletion path; ReleaseHold rewrites the record as released |
 | DI-C36 | explicit delete only | `core/infra/store/eval_dataset_store.go` (`EvalDatasetStore.DeleteEvalDataset`) | none: Datasets persist until DeleteEvalDataset. |
 | DI-C37 | retention cleanup | `core/infra/store/eval_run_store.go` (`EvalRunStore.DeleteRun`); `core/infra/store/eval_run_store.go` (`EvalRunStore.GCExpired`); `core/controlplane/gateway/handlers_evals_runs.go` (`server.deleteEvalRunPending`) | pending PR2-08-DATA |
@@ -86,7 +86,7 @@ A failing proof stays an open finding under the review process, not a weaker tes
 
 | Entry | Proof |
 | --- | --- |
-| DI-C01 | pending PR2-08-EDGE |
+| DI-C01 | `TestLegalHoldProofDIC01` |
 
 DI-C01 is the only inventory entry whose cleanup consults a legal hold.
 No other entry consults a hold. The DI-C01 proof must retain the marker through
