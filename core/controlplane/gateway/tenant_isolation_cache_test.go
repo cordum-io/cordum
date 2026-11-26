@@ -36,8 +36,8 @@ func tenantCacheBody(t *testing.T, rec *httptest.ResponseRecorder, dest interfac
 func TestTenantIsolationStatusCache(t *testing.T) {
 	s := statusCacheScopeServer(t)
 	s.auth = governanceAuth{}
-	for _, tenant := range []string{"cache-a", "cache-a", "cache-b"} {
-		id := fmt.Sprintf("%s-%d", tenant, time.Now().UnixNano())
+	for i, tenant := range []string{"cache-a", "cache-a", "cache-b"} {
+		id := fmt.Sprintf("%s-%d", tenant, i)
 		if err := s.jobStore.SetTenant(context.Background(), id, tenant); err != nil {
 			t.Fatal(err)
 		}

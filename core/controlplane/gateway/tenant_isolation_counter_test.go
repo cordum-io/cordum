@@ -69,7 +69,8 @@ func TestTenantIsolationMemoryRateLimit(t *testing.T) {
 	limiter := newKeyedRateLimiter(1, 1)
 	limiter.rps = 0 // no refill while this test exhausts each tenant's bucket
 	checkTenantRateLimit(t, limiter, http.StatusNoContent)
-	if len(limiter.buckets) != 2 || limiter.buckets["tenant:counter-a"].tokens != 0 || limiter.buckets["tenant:counter-b"].tokens != 0 {
+	a, b := limiter.buckets["tenant:counter-a"], limiter.buckets["tenant:counter-b"]
+	if len(limiter.buckets) != 2 || a == nil || b == nil || a.tokens != 0 || b.tokens != 0 {
 		t.Fatalf("tenant budgets not independently consumed: %+v", limiter.buckets)
 	}
 }
@@ -121,7 +122,7 @@ func issueTenantDelegation(t *testing.T, s *server, tenant string, want int) del
 		t.Fatal(err)
 	}
 	claims, err := service.VerifyDelegationToken(context.Background(), result.Token, "target")
-	if err != nil || claims == nil || claims.Tenant != tenant || claims.Subject != "shared-agent" {
+	if err != nil || claims.Tenant != tenant || claims.Subject != "shared-agent" {
 		t.Fatalf("wrong tenant's issued token: claims=%+v err=%v", claims, err)
 	}
 	return result
