@@ -217,10 +217,10 @@ func (s *server) handleAgentDeniedEvents(w http.ResponseWriter, r *http.Request)
 	}
 	events := []denyEventRecord{}
 	if s.mcpDenyRing != nil {
-		events = s.mcpDenyRing.recent(agentID, 50)
+		events = s.mcpDenyRing.recent(identity.ID, 50)
 	}
 	writeJSON(w, map[string]any{
-		"agent_id": agentID,
+		"agent_id": identity.ID,
 		"events":   events,
 		"limit":    50,
 	})
