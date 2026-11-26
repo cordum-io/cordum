@@ -20,9 +20,10 @@ import (
 func main() { os.Exit(run(os.Args[1:], os.Stdout)) }
 
 type options struct {
-	doc, root   string
-	copies, env []string
-	timeout     time.Duration
+	doc, root           string
+	copies, env, dotenv []string
+	envFile             []byte
+	timeout             time.Duration
 }
 
 func run(args []string, stdout io.Writer) int {
@@ -34,6 +35,7 @@ func run(args []string, stdout io.Writer) int {
 	fs.DurationVar(&o.timeout, "timeout", 2*time.Minute, "timeout per block")
 	fs.Func("copy", "file relative to root (repeatable)", func(s string) error { o.copies = append(o.copies, s); return nil })
 	fs.Func("env", "environment name to pass (repeatable)", func(s string) error { o.env = append(o.env, s); return nil })
+	fs.Func("dotenv", "environment name to write to each block's .env (repeatable)", func(s string) error { o.dotenv = append(o.dotenv, s); return nil })
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -49,6 +51,9 @@ func run(args []string, stdout io.Writer) int {
 		for _, line := range unmarked {
 			err = errors.Join(err, fmt.Errorf("%s:%d: shell block needs command or skip marker", o.doc, line.No))
 		}
+	}
+	if err == nil {
+		o.envFile, err = dotenv(o.dotenv)
 	}
 	if err != nil {
 		// Already failing, including when the diagnostic writer is unavailable.
@@ -95,6 +100,11 @@ func execute(b docscheck.Block, o options) (output string, err error) {
 	defer func() { err = errors.Join(err, os.RemoveAll(dir)) }()
 	if err := copyFiles(o.root, dir, o.copies); err != nil {
 		return "", err
+	}
+	if len(o.envFile) > 0 {
+		if err := os.WriteFile(filepath.Join(dir, ".env"), o.envFile, 0o600); err != nil {
+			return "", err
+		}
 	}
 	var script strings.Builder
 	for _, line := range b.Lines {
@@ -153,6 +163,23 @@ func environment(dir string, names []string) []string {
 		}
 	}
 	return env
+}
+
+// dotenv builds the .env body from the runner environment. Its errors name the
+// variable and never include the value.
+func dotenv(names []string) ([]byte, error) {
+	var body strings.Builder
+	for _, name := range names {
+		value, ok := os.LookupEnv(name)
+		if !ok || name == "" || strings.ContainsAny(name, "=\n\x00") {
+			return nil, fmt.Errorf("-dotenv %q: variable is unset or not a valid name", name)
+		}
+		if strings.ContainsAny(value, "\n\x00") {
+			return nil, fmt.Errorf("-dotenv %q: value holds a newline or NUL", name)
+		}
+		body.WriteString(name + "=" + value + "\n")
+	}
+	return []byte(body.String()), nil
 }
 
 func copyFiles(root, dir string, names []string) (err error) {

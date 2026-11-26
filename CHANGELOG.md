@@ -7,6 +7,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- MCP: the gateway's HTTP MCP endpoint now serves nine read tools instead of answering
+  501 `read_only_unsupported`: listing jobs, runs, workflows, topics, agents and pending
+  approvals, reading a run and its timeline, and verifying the audit chain. Each read runs through
+  the route's own handler with the caller's tenant, so another tenant's objects are not
+  returned. The stdio server's runs reads now use the `/api/v1/workflow-runs` routes, and
+  both transports accept a list answered as a bare JSON array. `cordum_list_packs`,
+  `cordum_list_workers` and `cordum_audit_query` are documented as unavailable over HTTP
+  MCP (task-7c148803).
+
 - cordumctl: the `CORDUM_ADMIN_PASSWORD` that `cordumctl up --dev` generates meets the gateway's password policy, so the admin user is seeded, and a `.env` definition that Compose reads as empty, such as `CORDUM_API_KEY="" # note` or `export CORDUM_API_KEY=`, is filled in place (task-d23dda77).
 
 - Gateway: a job submit, over HTTP or gRPC, now stores its policy audit entry
@@ -362,6 +371,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   would decide (deny and require-approval per bundle and rule) over the tenant's whole
   window, not filtered by repository or label, and the assurance state of the observed
   sessions at report time (M5-01C, task-bdf2f376).
+- `cordumctl edge calibration-report [--since T] [--until T] [--repos a,b] [--labels k=v,...]`
+  creates a calibration report through that API and prints a text summary of each section,
+  or the server's JSON unchanged with `--json`. `cordumctl edge calibration-report get <id>`
+  fetches a stored report by its id (M5-01, task-9e3c8fbf).
 
 - Execution grant v1 schema (M2A-02A) and `core/execgrant` canonical bytes, strict
   decoder and golden vectors; no service issues, signs or verifies grants yet (task-85bb037a).
