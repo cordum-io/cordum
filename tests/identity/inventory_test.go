@@ -127,14 +127,16 @@ var gatewayHTTP = []Entry{HTTPAPI, EdgeAPI, SCIMAPI, MCPGateway}
 // inventory maps each site key to what the site is. Gateway routes under
 // /api/ and /mcp/ map by path prefix and need no line here.
 var inventory = map[string]use{
-	"cmd/cordum-context-engine/main.go|main|listen|http.Server{} metricsSrv":  outside(1, probeServer),
-	"cmd/cordum-context-engine/main.go|main|listen|metricsSrv.ListenAndServe": outside(1, probeServer),
-	"cmd/cordum-context-engine/main.go|main|listen|net.Listen":                serves(1, GRPCContextEngine),
-	"cmd/cordum-context-engine/main.go|newGRPCServer|listen|grpc.NewServer":   serves(1, GRPCContextEngine),
-	"cmd/cordum-mcp/main.go|main|listen|http.Server{} httpSrv":                serves(1, MCPStandalone),
-	"cmd/cordum-mcp/main.go|main|listen|httpSrv.ListenAndServe":               serves(1, MCPStandalone),
-	"cmd/cordum-scheduler/main.go|main|listen|http.Server{} metricsSrv":       outside(1, probeServer),
-	"cmd/cordum-scheduler/main.go|main|listen|metricsSrv.ListenAndServe":      outside(1, probeServer),
+	"cmd/cordum-context-engine/main.go|main|listen|http.Server{} metricsSrv":                                              outside(1, probeServer),
+	"cmd/cordum-context-engine/main.go|main|listen|metricsSrv.ListenAndServe":                                             outside(1, probeServer),
+	"cmd/cordum-context-engine/main.go|main|listen|net.Listen":                                                            serves(1, GRPCContextEngine),
+	"cmd/cordum-context-engine/main.go|newGRPCServer|listen|grpc.NewServer":                                               serves(1, GRPCContextEngine),
+	"cmd/cordum-mcp/main.go|main|listen|http.Server{} httpSrv":                                                            serves(1, MCPStandalone),
+	"cmd/cordum-mcp/main.go|main|listen|httpSrv.ListenAndServe":                                                           serves(1, MCPStandalone),
+	"cmd/cordum-scheduler/main.go|main|listen|http.Server{} metricsSrv":                                                   outside(1, probeServer),
+	"cmd/cordum-scheduler/main.go|main|listen|metricsSrv.ListenAndServe":                                                  outside(1, probeServer),
+	"cmd/cordumctl-governance-helper/governance.go|runGovernanceTail|subscribe|func":                                      serves(1, BusAuditExport),
+	"cmd/cordumctl-governance-helper/governance.go|(natsGovernanceSubscriber).Subscribe|subscribe|governanceAuditSubject": serves(1, BusAuditExport),
 
 	"core/audit/consumer.go|NewNATSAuditConsumer|subscribe|capsdk.SubjectAuditExport":                serves(2, BusAuditExport),
 	"core/auth/delegation/keys.go|GenerateSigningKey|issuer|GenerateSigningKey":                      outside(1, keyMaterial),
