@@ -153,11 +153,12 @@ func (s *server) handlePutPolicyGlobal(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Read-modify-write of the policy config doc. configsvc.Set is the
-	// atomic write boundary — concurrent writers (pack install/uninstall,
-	// the legacy bundles PUT) race against this Set the same way they
-	// race each other. Optimistic concurrency via SnapshotVersion guards
-	// the common dashboard case (read, edit, save).
+	// Read-modify-write of the policy config doc. commitPolicyBundles stores
+	// it with its audit entry and refuses a change made after this read, as
+	// configsvc.Set does, so concurrent writers (pack install/uninstall, the
+	// bundles PUT) get a conflict instead of a lost update. Optimistic
+	// concurrency via SnapshotVersion guards the common dashboard case (read,
+	// edit, save).
 	doc, err := getConfigDoc(r.Context(), s.configSvc, packs.PolicyConfigScope, packs.PolicyConfigID)
 	if err != nil {
 		if !errors.Is(err, redis.Nil) {
@@ -234,13 +235,13 @@ func (s *server) handlePutPolicyGlobal(w http.ResponseWriter, r *http.Request) {
 		bundles[bundleID] = existing
 	}
 
-	doc.Data[packs.PolicyConfigKey] = bundles
-	if err := s.configSvc.Set(r.Context(), doc); err != nil {
-		writeInternalError(w, r, "policy operation", err)
+	if err := s.commitPolicyBundles(r.Context(), doc.Revision, bundles, policybundles.PolicyAuditEntry{
+		Action: "edit", ResourceType: "policy", ResourceID: "global", ResourceName: "global",
+		ActorID: policybundles.PolicyActorID(r), Role: policybundles.PolicyRole(r), Message: "edit unified Global policy",
+	}); err != nil {
+		writePolicyCommitError(w, r, "policy operation", err)
 		return
 	}
-	s.appendAuditEntryNamed(r.Context(), "edit", "policy", "global", "global",
-		policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "edit unified Global policy")
 
 	resp, err := buildGlobalPolicyResponse(bundles, now)
 	if err != nil {
