@@ -429,10 +429,7 @@ func TestCheckHarnessDefaults(t *testing.T) {
 				}
 			}
 			if !reflect.DeepEqual(got, tc.want) {
-				t.Fatalf("env-default failures =
-%#v
-want
-%#v", got, tc.want)
+				t.Fatalf("env-default failures = %#v, want %#v", got, tc.want)
 			}
 		})
 	}
