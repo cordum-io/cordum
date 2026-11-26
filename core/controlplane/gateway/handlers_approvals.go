@@ -1039,6 +1039,11 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	tenant, res := s.approvalTenantResult(r.Context(), r, "approve", jobID)
+	if res != nil {
+		writeApprovalHandlerResult(w, res.status, res.body, "json encode approval error failed")
+		return
+	}
 
 	// Acquire distributed lock so concurrent approve/reject requests are
 	// serialised. Uses the same key prefix as the scheduler engine.
@@ -1103,11 +1108,6 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 
-		tenant, res := s.approvalTenantResult(ctx, r, "approve", jobID)
-		if res != nil {
-			result = *res
-			return nil
-		}
 		req, err := s.jobStore.GetJobRequest(ctx, jobID)
 		if errors.Is(err, redis.Nil) {
 			result = handlerResult{http.StatusNotFound, "job request not found"}
@@ -1508,6 +1508,11 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	tenant, res := s.approvalTenantResult(r.Context(), r, "reject", jobID)
+	if res != nil {
+		writeApprovalHandlerResult(w, res.status, res.body, "json encode approval error failed")
+		return
+	}
 
 	var result handlerResult
 	lockErr := s.withApprovalLock(r.Context(), jobID, func(ctx context.Context) error {
@@ -1548,11 +1553,6 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 				conflictMessage = "approval expired"
 			}
 			result = handlerResult{http.StatusConflict, approvalConflictPayload(http.StatusConflict, conflictCode, conflictMessage)}
-			return nil
-		}
-		tenant, res := s.approvalTenantResult(ctx, r, "reject", jobID)
-		if res != nil {
-			result = *res
 			return nil
 		}
 		req, reqErr := s.jobStore.GetJobRequest(ctx, jobID)
