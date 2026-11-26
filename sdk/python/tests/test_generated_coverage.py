@@ -34,6 +34,9 @@ def test_every_generated_endpoint_exports_sync_and_async_callables() -> None:
         module = importlib.import_module(module_name)
         assert callable(getattr(module, "sync_detailed", None)), module_name
         assert callable(getattr(module, "asyncio_detailed", None)), module_name
+        # client.py sends every operation through these two helpers.
+        assert callable(getattr(module, "_get_kwargs", None)), module_name
+        assert callable(getattr(module, "_build_response", None)), module_name
         sync = getattr(module, "sync", None)
         if sync is not None:
             assert callable(sync), module_name

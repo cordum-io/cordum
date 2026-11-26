@@ -47,7 +47,7 @@ server {
   # Proxy API requests to the API gateway
   location /api/ {
     resolver ${CORDUM_DNS_RESOLVER} valid=5s ipv6=off;
-    set $api_upstream ${CORDUM_UPSTREAM_SCHEME}://${CORDUM_API_UPSTREAM_HOST}:8081;
+    set $api_upstream ${CORDUM_UPSTREAM_SCHEME}://${CORDUM_API_UPSTREAM_HOST}:${CORDUM_API_UPSTREAM_PORT};
     proxy_pass $api_upstream;
     proxy_http_version 1.1;
     proxy_ssl_server_name on;
@@ -64,11 +64,11 @@ server {
   # WebSocket support for streaming
   location /api/v1/stream {
     resolver ${CORDUM_DNS_RESOLVER} valid=5s ipv6=off;
-    set $ws_upstream ${CORDUM_UPSTREAM_SCHEME}://${CORDUM_API_UPSTREAM_HOST}:8081;
+    set $ws_upstream ${CORDUM_UPSTREAM_SCHEME}://${CORDUM_API_UPSTREAM_HOST}:${CORDUM_API_UPSTREAM_PORT};
     proxy_pass $ws_upstream;
     proxy_http_version 1.1;
     proxy_ssl_server_name on;
-    proxy_ssl_verify off;
+    proxy_ssl_verify ${CORDUM_PROXY_SSL_VERIFY};
     ${CORDUM_PROXY_SSL_TRUSTED_CA}
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";
@@ -78,6 +78,28 @@ server {
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header Sec-WebSocket-Protocol $http_sec_websocket_protocol;
     proxy_read_timeout 86400s;
+  }
+
+  # MCP HTTP+SSE transport (/mcp/sse, /mcp/message, /mcp/status) on the API
+  # gateway, so the URL the dashboard copies works on this origin. Upstream,
+  # TLS and headers match /api/; SSE needs no buffering and a long read timeout.
+  location /mcp/ {
+    resolver ${CORDUM_DNS_RESOLVER} valid=5s ipv6=off;
+    set $mcp_upstream ${CORDUM_UPSTREAM_SCHEME}://${CORDUM_API_UPSTREAM_HOST}:${CORDUM_API_UPSTREAM_PORT};
+    proxy_pass $mcp_upstream;
+    proxy_http_version 1.1;
+    proxy_ssl_server_name on;
+    proxy_ssl_verify ${CORDUM_PROXY_SSL_VERIFY};
+    ${CORDUM_PROXY_SSL_TRUSTED_CA}
+    proxy_set_header Host $host;
+    proxy_set_header Connection "";
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_read_timeout 3600s;
+    proxy_connect_timeout 75s;
   }
 
   location / {

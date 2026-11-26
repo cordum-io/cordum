@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { CordumClient } from "../src/client.js";
 import { RetryExhaustedError } from "../src/errors.js";
 import { applyJitter, computeRetryDelay, createRetryFetch, resolveRetryPolicy } from "../src/retry.js";
 
@@ -115,6 +116,32 @@ describe("retry middleware", () => {
     const response = await promise;
     expect(response.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries jobs.create with an idempotency key the gateway can dedupe on", async () => {
+    // Plain fetch, not msw: under msw's patched global Request the headers
+    // openapi-fetch sets are lost in the middleware chain in this test env.
+    const sent: Request[] = [];
+    const responses = [new Response("busy", { status: 503 }), Response.json({ job_id: "job-1" })];
+    const client = new CordumClient({
+      baseUrl: "https://cordum.test",
+      auth: "sdk-key",
+      retryPolicy: { jitter: false, maxRetries: 1 },
+      fetch: async (input, init) => {
+        sent.push(new Request(input, init));
+        return responses.shift() ?? new Response("unexpected", { status: 500 });
+      },
+    });
+
+    const promise = client.jobs.create({ topic: "job.default" } as never, { idempotencyKey: "idem-123" });
+    await vi.advanceTimersByTimeAsync(500);
+
+    await expect(promise).resolves.toEqual({ job_id: "job-1" });
+    expect(sent).toHaveLength(2);
+    for (const request of sent) {
+      expect(request.headers.get("Idempotency-Key")).toBe("idem-123");
+      expect(await request.json()).toEqual({ topic: "job.default", idempotency_key: "idem-123" });
+    }
   });
 
   it("aborts immediately when the caller cancels during backoff", async () => {

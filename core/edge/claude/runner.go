@@ -37,8 +37,8 @@ func Run(ctx context.Context, opts RunOptions) int {
 		warnf(stderr, "invalid_hook_timeout error=%s", redactDiagnostic(err.Error()))
 		return 2
 	}
-	// One outer budget keeps the whole hook under Claude's 5s command-hook
-	// deadline. The agentd POST gets a shorter child budget below so a slow
+	// One outer budget keeps the whole hook under the generated 5s command-hook
+	// timeout. The agentd POST gets a shorter child budget below so a slow
 	// local daemon cannot consume the response-write reserve.
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -60,6 +60,7 @@ func Run(ctx context.Context, opts RunOptions) int {
 		return 0
 	}
 	req := agentdRequest(input, opts.Args, opts.Env)
+	bound := bindArtifacts(runCtx, input, opts.Env, &req)
 
 	agentd, err := hookAgentdClient(opts, postBudget)
 	if err != nil {
@@ -69,6 +70,7 @@ func Run(ctx context.Context, opts RunOptions) int {
 	if err != nil {
 		return handleAgentdError(stderr, stdout, input, req, err, opts, startedAt)
 	}
+	decision = recheckArtifacts(runCtx, input, opts.Env, req, bound, decision)
 	// Compute the hook output once, derive the metric/audit-recorded
 	// decision from it. Previously this fired recordHookObservability with
 	// the raw `decision.Decision` BEFORE hookOutputForRun synthesized a deny
@@ -365,7 +367,7 @@ func riskyPreToolUse(input HookInput) bool {
 	if _, ok := fileMutationTools[input.ToolName]; ok {
 		return true
 	}
-	if !strings.EqualFold(input.ToolName, "Bash") {
+	if !strings.EqualFold(input.ToolName, "Bash") && !strings.EqualFold(input.ToolName, "PowerShell") {
 		return false
 	}
 	raw, ok := input.ToolInput["command"]

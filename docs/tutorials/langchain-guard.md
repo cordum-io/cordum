@@ -17,7 +17,7 @@ BEFORE                              AFTER
 ```
 
 **Before Cordum:** Your agent runs `delete_account()` without hesitation.
-**After Cordum:** The Safety Kernel blocks destructive operations and requires human approval for high-risk actions — all without changing your agent's logic.
+**After Cordum:** Each wrapped tool call is checked against your safety policy first, and a deny or approval-required decision stops the call before the tool runs, all without changing your agent's logic. This applies to actions Cordum mediates; safety gating is rated `supported`, not `verified` (see CLM-016 in the [claim register](../contract/claims.yaml)).
 
 ## Prerequisites
 
@@ -236,7 +236,12 @@ def execute_transfer(amount: float, to_account: str):
     bank_api.transfer(amount, to_account)
 ```
 
-Works with both sync and async functions.
+Works with both sync and async functions. When a call needs approval,
+`@guard` files an approval job on the `job.guard` topic and waits for a
+human. The shipped pools config registers `job.guard`; if your topic
+registry predates that, register it by hand or the gateway rejects the
+job with `unknown_topic` (see
+[Approval-only topics](../topics/registry.md#approval-only-topics)).
 
 ## Advanced: Async Agents
 

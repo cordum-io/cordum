@@ -534,11 +534,7 @@ func (b *HTTPServiceBridge) doRequest(ctx context.Context, method, path string, 
 	}
 	// Pin DNS resolution to prevent rebinding attacks (TOCTOU).
 	if len(pinnedIPs) > 0 {
-		client = &http.Client{
-			Timeout:       client.Timeout,
-			CheckRedirect: client.CheckRedirect,
-			Transport:     &http.Transport{DialContext: pinnedDialer(pinnedIPs)},
-		}
+		client = pinnedClient(client, pinnedIPs)
 	}
 	// Start the invocation audit BEFORE client.Do so latency is measured
 	// across the full transport. FinishRequest always fires (defer) so
@@ -596,6 +592,11 @@ type DirectServiceBridgeConfig struct {
 	UpdatePolicyBundleFunc  func(ctx context.Context, req UpdatePolicyBundleInput) (*UpdatePolicyBundleOutput, error)
 	RevokeWorkerSessionFunc func(ctx context.Context, req RevokeWorkerSessionInput) error
 	SetAgentScopeFunc       func(ctx context.Context, req SetAgentScopeInput) (*SetAgentScopeOutput, error)
+
+	// Read hooks. A nil hook, and every read method without one, answers
+	// 501 read_only_unsupported.
+	GetJobFunc    func(ctx context.Context, jobID string) (*ResourceItem, error)
+	GetStatusFunc func(ctx context.Context) (*ResourceItem, error)
 }
 
 // DirectServiceBridge is an in-process ServiceBridge based on function hooks.
@@ -615,6 +616,10 @@ type DirectServiceBridge struct {
 	updatePolicyBundle  func(ctx context.Context, req UpdatePolicyBundleInput) (*UpdatePolicyBundleOutput, error)
 	revokeWorkerSession func(ctx context.Context, req RevokeWorkerSessionInput) error
 	setAgentScope       func(ctx context.Context, req SetAgentScopeInput) (*SetAgentScopeOutput, error)
+
+	// Read hooks
+	getJob    func(ctx context.Context, jobID string) (*ResourceItem, error)
+	getStatus func(ctx context.Context) (*ResourceItem, error)
 }
 
 // NewDirectServiceBridge creates a direct bridge.
@@ -633,6 +638,8 @@ func NewDirectServiceBridge(cfg DirectServiceBridgeConfig) *DirectServiceBridge 
 		updatePolicyBundle:  cfg.UpdatePolicyBundleFunc,
 		revokeWorkerSession: cfg.RevokeWorkerSessionFunc,
 		setAgentScope:       cfg.SetAgentScopeFunc,
+		getJob:              cfg.GetJobFunc,
+		getStatus:           cfg.GetStatusFunc,
 	}
 }
 

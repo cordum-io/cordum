@@ -19,12 +19,14 @@ on:
     branches: [main]
     paths:
       - 'sdk/typescript/**'
+      - 'docs/api/openapi/cordum-api.yaml'
       - '.github/workflows/sdk-typescript.yml'
     tags:
       - 'sdk-ts-v*.*.*'
   pull_request:
     paths:
       - 'sdk/typescript/**'
+      - 'docs/api/openapi/cordum-api.yaml'
       - '.github/workflows/sdk-typescript.yml'
 
 defaults:
@@ -74,6 +76,10 @@ jobs:
         # platform drift and regenerates only the affected entries.
         run: npm install --no-audit --no-fund
 
+      - name: Check generated schema is current
+        # OpenAPI edits must ship regenerated types; browser and publish need this job.
+        run: npm run check:generated
+
       - name: Typecheck
         run: npm run typecheck
 
@@ -94,6 +100,9 @@ jobs:
 
       - name: Pack dry-run
         run: npm pack --dry-run
+
+      - name: Packed-artifact consumer smoke
+        run: npm run smoke:packed
 
   browser:
     name: Browser smoke (Playwright)

@@ -158,16 +158,18 @@ go test -cover ./core/packs/signing/...
 Signature verification runs on BOTH sides of `cordumctl pack install`:
 `cordumctl` checks locally for fast feedback, and the gateway
 re-verifies server-side before persisting any install state. The
-server-side check is the zero-trust rail — if `cordumctl` is patched
-or a hand-rolled curl upload bypasses the client, the gateway's
-verify still gates the install.
+server-side check does not depend on the client: if `cordumctl` is
+patched or a hand-rolled upload skips it, the gateway still checks the
+pack's signature when it has one, and in strict mode it refuses an
+unsigned pack. In non-strict mode the gateway accepts an unsigned pack;
+see CLM-083 in the [claim register](../contract/claims.yaml).
 
 ### Strict vs non-strict mode (decision tree)
 
 | Mode | Unsigned pack | Tampered or bad signature | Typical deployment |
 |------|---------------|---------------------------|--------------------|
-| **Non-strict** (default) | Install proceeds with a loud `WARNING` on stderr | Install refused | Dev or pre-Phase-1-moat pilots where ecosystem signing is still rolling out |
-| **Strict** | Install refused with `pack.unsigned` | Install refused | Production, compliance-gated tenants, and any deploy where supply-chain attestation is non-negotiable |
+| **Non-strict** (client default; gateway default outside the production profile) | Install proceeds with a loud `WARNING` on stderr | Install refused | Dev or pre-Phase-1-moat pilots where ecosystem signing is still rolling out |
+| **Strict** (gateway default in the production profile) | Install refused with `pack.unsigned` | Install refused | Production, compliance-gated tenants, and any deploy where supply-chain attestation is non-negotiable |
 
 Strict mode flips two ways on each side:
 
@@ -176,7 +178,13 @@ Strict mode flips two ways on each side:
   `SET cfg:packs:strict_mode true` in Redis at runtime (propagates
   across gateway replicas within one second via the in-process
   cache). Use the Redis flip for incident response; env for
-  steady-state.
+  steady-state. In the production profile (`CORDUM_PRODUCTION=true`, or
+  `CORDUM_ENV` set to `prod` or `production`) the gateway is strict without
+  either. `CORDUM_GATEWAY_PACK_STRICT=false`, or `false` in
+  `cfg:packs:strict_mode`, is the explicit downgrade, and a `true` in either
+  one wins over it. The gateway logs a downgrade at startup and on every
+  unsigned install, and admins see the result in
+  `signature_enforcement.packs.strict` of `GET /api/v1/status`.
 
 ### Trust-store setup
 
@@ -219,8 +227,9 @@ name instead of falling back to the bare kid. Two registration paths:
 ```sh
 # Redis (persistent, shared across replicas). JSON document keyed
 # by kid; at minimum set publisher_id, optionally display_name +
-# added_at.
-redis-cli SET packs:publishers:acme \
+# added_at. Compose stack shown (TLS-only Redis with a password); point
+# -h, --cacert and -a at your Redis elsewhere.
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" SET packs:publishers:acme \
   '{"publisher_id":"acme-corp","display_name":"Acme Corp","added_at":"2026-04-20T00:00:00Z"}'
 
 # Environment (per-gateway bootstrap shorthand). publisher_id only;
@@ -276,8 +285,9 @@ When a compromised publisher key surfaces, ops can escalate the
 fleet immediately without a redeploy:
 
 ```sh
-# Gateway side: propagates across replicas within 1s.
-redis-cli SET cfg:packs:strict_mode true
+# Gateway side: propagates across replicas within 1s. Compose stack shown;
+# point -h, --cacert and -a at your Redis elsewhere.
+redis-cli --tls --cacert ./certs/ca/ca.crt -a "$REDIS_PASSWORD" SET cfg:packs:strict_mode true
 
 # cordumctl side: ship CORDUM_PACK_STRICT=true via config-management,
 # or push a follow-up key revocation so --trusted-keys drops the

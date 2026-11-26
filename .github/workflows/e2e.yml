@@ -1,29 +1,13 @@
 name: E2E TLS
 
+# Nightly tier: this suite boots the whole stack over TLS, so it runs on
+# the schedule below and on demand (`gh workflow run "E2E TLS" --ref
+# <branch>`), not on every PR. See the tier note in ci.yml.
 on:
-  pull_request:
-    paths:
-      - ".github/workflows/e2e.yml"
-      - "cmd/**"
-      - "core/**"
-      - "dashboard/**"
-      - "docker-compose*.yml"
-      - "examples/hello-worker-go/**"
-      - "sdk/**"
-      - "tools/scripts/e2e_test.sh"
-      - "tools/scripts/e2e_test_tls_detect_test.sh"
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/e2e.yml"
-      - "cmd/**"
-      - "core/**"
-      - "dashboard/**"
-      - "docker-compose*.yml"
-      - "examples/hello-worker-go/**"
-      - "sdk/**"
-      - "tools/scripts/e2e_test.sh"
-      - "tools/scripts/e2e_test_tls_detect_test.sh"
+  schedule:
+    # 02:07 UTC daily. The odd minute avoids top-of-hour runner contention.
+    - cron: '7 2 * * *'
+  workflow_dispatch:
 
 permissions:
   contents: read

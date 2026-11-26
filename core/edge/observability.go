@@ -867,6 +867,9 @@ func sessionExtra(session EdgeSession) map[string]string {
 		"mode":       boundedShortString(string(session.Mode), 32),
 		"status":     boundedShortString(string(session.Status), 32),
 	}
+	if session.AssuranceState != "" {
+		extra["assurance_state"] = boundedShortString(string(session.AssuranceState), 32)
+	}
 	if v := strings.TrimSpace(session.AgentProduct); v != "" {
 		extra["agent_product"] = boundedShortString(v, 32)
 	}

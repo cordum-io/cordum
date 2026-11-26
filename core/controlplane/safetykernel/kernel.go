@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -477,6 +478,9 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 			srv.watchPolicy(lifecycleCtx, loader, notifyCh)
 		}()
 	}
+
+	// Report this kernel's loader configuration on the same lifecycle.
+	startPolicySignatureReporter(lifecycleCtx, &wg, resultClient)
 
 	grpcServer := grpc.NewServer(
 		serverCreds,
@@ -1526,52 +1530,53 @@ func (s *server) watchPolicy(ctx context.Context, loader *policyLoader, notifyCh
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	reload := func(trigger string) {
-		if trigger != "poll" {
-			slog.Info("safety-kernel: policy reload triggered", "trigger", trigger)
-		}
-
-		policy, invariants, snapshot, customBundleCount, err := loader.Load(ctx)
-		if err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-			slog.Error("safety-kernel: policy reload failed", "err", err, "trigger", trigger)
-			return
-		}
-		s.mu.RLock()
-		current := s.snapshot
-		s.mu.RUnlock()
-		if snapshot != "" && snapshot != current {
-			if err := s.setPolicyWithInvariants(ctx, policy, invariants, snapshot, customBundleCount); err != nil {
-				slog.Error("safety-kernel: setPolicyWithInvariants failed", "err", err, "trigger", trigger)
-				return
-			}
-			slog.Info("safety-kernel: policy snapshot updated", "snapshot", snapshot, "trigger", trigger)
-		}
-
-		// Reload tag derivers from topic registry. Pack installs update the
-		// topic registry and publish a config change notification, so this
-		// picks up newly installed pack derivers without a kernel restart.
-		if loader.configSvc != nil && s.tagDeriverRegistry != nil {
-			if entries, err := loadTopicDeriverEntries(ctx, loader.configSvc); err != nil {
-				slog.Warn("safety-kernel: tag deriver reload failed", "err", err, "trigger", trigger)
-			} else if n := loadTagDeriversFromTopics(s.tagDeriverRegistry, entries); n > 0 {
-				slog.Info("safety-kernel: tag derivers reloaded from topic registry", "count", n, "trigger", trigger)
-			}
-		}
-	}
-
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			reload("poll")
+			_ = s.reloadPolicy(ctx, loader, "poll")
 		case <-notifyCh:
-			reload("notification")
+			_ = s.reloadPolicy(ctx, loader, "notification")
 		}
 	}
+}
+
+func (s *server) reloadPolicy(ctx context.Context, loader *policyLoader, trigger string) error {
+	if trigger != "poll" {
+		slog.Info("safety-kernel: policy reload triggered", "trigger", trigger)
+	}
+
+	policy, invariants, snapshot, customBundleCount, err := loader.Load(ctx)
+	if err != nil {
+		if ctx.Err() != nil {
+			return err
+		}
+		slog.Error("safety-kernel: policy reload failed", "err", err, "trigger", trigger)
+		return err
+	}
+	s.mu.RLock()
+	current := s.snapshot
+	s.mu.RUnlock()
+	if snapshot != "" && snapshot != current {
+		if err := s.setPolicyWithInvariants(ctx, policy, invariants, snapshot, customBundleCount); err != nil {
+			slog.Error("safety-kernel: setPolicyWithInvariants failed", "err", err, "trigger", trigger)
+			return err
+		}
+		slog.Info("safety-kernel: policy snapshot updated", "snapshot", snapshot, "trigger", trigger)
+	}
+
+	// Reload tag derivers from topic registry. Pack installs update the
+	// topic registry and publish a config change notification, so this
+	// picks up newly installed pack derivers without a kernel restart.
+	if loader.configSvc != nil && s.tagDeriverRegistry != nil {
+		if entries, err := loadTopicDeriverEntries(ctx, loader.configSvc); err != nil {
+			slog.Warn("safety-kernel: tag deriver reload failed", "err", err, "trigger", trigger)
+		} else if n := loadTagDeriversFromTopics(s.tagDeriverRegistry, entries); n > 0 {
+			slog.Info("safety-kernel: tag derivers reloaded from topic registry", "count", n, "trigger", trigger)
+		}
+	}
+	return nil
 }
 
 func (s *server) setPolicy(ctx context.Context, policy *config.SafetyPolicy, snapshot string) error {
@@ -1611,6 +1616,9 @@ func (s *server) setPolicyWithInvariants(ctx context.Context, policy *config.Saf
 	// retained for the GlobalPolicy view so its section buckets do not
 	// double-count invariants.
 	combined := applyKernelInvariants(policy, invariants)
+	if tenants := combined.TenantsSettingReservedMCPGatewayFields(); len(tenants) > 0 {
+		slog.Warn("safety-kernel: tenants.<tenant>.mcp gateway_enabled, upstream_servers and allowed_upstreams are reserved and not enforced yet (EDGE-101)", "tenants", tenants)
+	}
 	var invariantRules []config.PolicyRule
 	var invariantOutputRules []config.OutputPolicyRule
 	if invariants != nil {
@@ -2057,6 +2065,9 @@ func readPolicySource(source string) ([]byte, error) {
 	return readPolicyFile(source)
 }
 
+// policyURLRootCAs is a test seam; nil preserves the transport's system roots.
+var policyURLRootCAs *x509.CertPool
+
 func fetchPolicyURL(raw string) ([]byte, error) {
 	parsed, err := url.Parse(raw)
 	if err != nil {
@@ -2071,6 +2082,9 @@ func fetchPolicyURL(raw string) ([]byte, error) {
 	}
 
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if policyURLRootCAs != nil {
+		transport.TLSClientConfig = &tls.Config{RootCAs: policyURLRootCAs, MinVersion: tls.VersionTLS12}
+	}
 	transport.DialContext = policyDialContext
 
 	client := &http.Client{

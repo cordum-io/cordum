@@ -133,6 +133,9 @@ preflight_deploy() {
   # invocation.
   if [[ -z "${api_key}" ]]; then
     api_key="$(openssl rand -hex 32)"
+    if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+      gha_mask_value "${api_key}" || exit 1
+    fi
     export CORDUM_API_KEY="${api_key}"
     persist_env_var CORDUM_API_KEY "${api_key}"
     mark_env_source CORDUM_API_KEY "auto-generated" ".env"
@@ -141,6 +144,9 @@ preflight_deploy() {
 
   if [[ -z "${REDIS_PASSWORD:-}" ]]; then
     REDIS_PASSWORD="$(openssl rand -hex 24)"
+    if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+      gha_mask_value "${REDIS_PASSWORD}" || exit 1
+    fi
     export REDIS_PASSWORD
     persist_env_var REDIS_PASSWORD "${REDIS_PASSWORD}"
     mark_env_source REDIS_PASSWORD "auto-generated" ".env"
@@ -281,6 +287,12 @@ capture_artifacts() {
 # --- Parse arguments ---
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/../.." && pwd)"
+# On a GitHub Actions runner, preflight_deploy registers each credential it
+# mints as a log mask before its first use (workflow_credential_guard.py).
+if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+  # shellcheck source=tools/scripts/github_actions_mask_env.sh
+  source "${script_dir}/github_actions_mask_env.sh"
+fi
 if [[ ! -f "docker-compose.yml" && -f "${repo_root}/docker-compose.yml" ]]; then
   cd "${repo_root}"
 fi
@@ -443,8 +455,93 @@ load_from_env_file() {
     fi
   done
 }
+
+# policy_setting prints NAME from the environment, else from its first
+# non-empty NAME= line in .env, else nothing.
+policy_setting() {
+  local name="$1"
+  if [[ -n "${!name:-}" ]]; then
+    printf '%s' "${!name}"
+  elif [[ -f .env ]]; then
+    grep -E "^${name}=." .env 2>/dev/null | head -1 | cut -d= -f2- || true
+  fi
+}
+
+# bootstrap_policy_signing: when the compose set includes
+# docker-compose.release.yml and none of the three policy signing settings is
+# set, generate one Ed25519 keypair (cordumctl pack keygen), sign
+# config/safety.yaml under key id "default" (the only id the release compose's
+# kernel trusts SAFETY_POLICY_PUBLIC_KEY under) and persist all three to .env.
+# It runs before quickstart's first .env write, so each refusal writes nothing.
+# The private key goes to cordumctl through the environment, never argv, and
+# is never printed.
+bootstrap_policy_signing() {
+  local file release=0 name set_names="" unset_names="" key_id
+  for file in $1; do
+    if [[ "${file##*/}" == "docker-compose.release.yml" ]]; then release=1; fi
+  done
+  [[ "${release}" == "1" ]] || return 0
+  # Git Bash rewrites an environment value that starts with / (a base64 key can)
+  # into a Windows path for native children such as cordumctl.exe and
+  # docker.exe. Linux and macOS ignore this variable.
+  export MSYS2_ENV_CONV_EXCL="CORDUM_POLICY_SIGNING_KEY;SAFETY_POLICY_PUBLIC_KEY${MSYS2_ENV_CONV_EXCL:+;${MSYS2_ENV_CONV_EXCL}}"
+  for name in CORDUM_POLICY_SIGNING_KEY SAFETY_POLICY_PUBLIC_KEY SAFETY_POLICY_SIGNATURE; do
+    if [[ -n "$(policy_setting "${name}")" ]]; then set_names+=" ${name}"; else unset_names+=" ${name}"; fi
+  done
+  if [[ -z "${unset_names}" ]]; then
+    log "policy signing: using the provided CORDUM_POLICY_SIGNING_KEY, SAFETY_POLICY_PUBLIC_KEY and SAFETY_POLICY_SIGNATURE"
+    return 0
+  fi
+  if [[ -n "${set_names}" ]]; then
+    die "policy-signing-partial: set:${set_names}; missing:${unset_names}. Set all three, or none to have them generated."
+  fi
+  key_id="$(policy_setting CORDUM_POLICY_SIGNING_KEY_ID)"
+  if [[ -n "${key_id}" && "${key_id}" != "default" ]]; then
+    die "policy-signing-key-id: CORDUM_POLICY_SIGNING_KEY_ID=${key_id}, but the release compose trusts a generated key only under key id default. Unset it, or set all three policy signing settings."
+  fi
+  generate_policy_signing
+}
+
+generate_policy_signing() {
+  local ctl=() bin tmp pub priv sig
+  if bin="$(resolve_cordumctl)"; then
+    ctl=("${bin}")
+  elif command -v go >/dev/null 2>&1; then
+    ctl=(go run ./cmd/cordumctl)
+  else
+    die "policy-signing-cordumctl: neither cordumctl nor go was found. Install cordumctl, or set CORDUM_POLICY_SIGNING_KEY, SAFETY_POLICY_PUBLIC_KEY and SAFETY_POLICY_SIGNATURE."
+  fi
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/cordum-policy-signing.XXXXXX")"
+  # Expanded now: the local is out of scope when the trap fires on die.
+  trap "rm -rf -- $(printf '%q' "${tmp}")" EXIT
+  if ! pub="$("${ctl[@]}" pack keygen --out "${tmp}/key.yaml" 2>"${tmp}/err")"; then
+    cat "${tmp}/err" >&2
+    die "policy-signing-keygen: cordumctl pack keygen failed"
+  fi
+  pub="$(printf '%s\n' "${pub}" | sed -n 's/^public_key_b64: *//p' | tr -d '\r')"
+  # Base64 holds no quotes, so dropping them strips optional YAML quoting.
+  priv="$(sed -n 's/^private_key_b64: *//p' "${tmp}/key.yaml" | tr -d "\r\"'")"
+  [[ -n "${pub}" && -n "${priv}" ]] || die "policy-signing-keygen: could not read the generated keypair"
+  if ! CORDUM_POLICY_SIGNING_KEY="${priv}" "${ctl[@]}" policy sign --in config/safety.yaml \
+    --out "${tmp}/safety.sig" --key-id default 2>"${tmp}/err"; then
+    cat "${tmp}/err" >&2
+    die "policy-signing-sign: cordumctl policy sign failed for config/safety.yaml"
+  fi
+  sig="$(tr -d '\r\n' < "${tmp}/safety.sig")"
+  rm -rf -- "${tmp}"
+  trap - EXIT
+
+  persist_env_var CORDUM_POLICY_SIGNING_KEY "${priv}"
+  persist_env_var SAFETY_POLICY_PUBLIC_KEY "${pub}"
+  # Single quotes: compose and a shell `. ./.env` both read the JSON literally.
+  persist_env_var SAFETY_POLICY_SIGNATURE "'${sig}'"
+  export CORDUM_POLICY_SIGNING_KEY="${priv}" SAFETY_POLICY_PUBLIC_KEY="${pub}" SAFETY_POLICY_SIGNATURE="${sig}"
+  log "policy signing: generated an Ed25519 key and signed config/safety.yaml under key id default; persisted CORDUM_POLICY_SIGNING_KEY, SAFETY_POLICY_PUBLIC_KEY and SAFETY_POLICY_SIGNATURE to .env"
+}
+
 snapshot_shell_env_sources
 load_from_env_file ".env"
+bootstrap_policy_signing "${CORDUM_COMPOSE_FILES:-docker-compose.yml}"
 
 API_KEY=${CORDUM_API_KEY:-${API_KEY:-}}
 if [[ -z "${CORDUM_API_KEY:-}" && -n "${API_KEY:-}" ]]; then
@@ -603,7 +700,7 @@ echo "  │  Cordum is running!                                     │"
 echo "  ├─────────────────────────────────────────────────────────┤"
 echo "  │  Dashboard:      http://localhost:8082                  │"
 echo "  │  API Gateway:    ${API_BASE}                            │"
-echo "  │  API Key:        ${API_KEY:0:8}... (see .env)           │"
+echo "  │  API Key:        CORDUM_API_KEY in .env                 │"
 echo "  ├─────────────────────────────────────────────────────────┤"
 echo "  │  Login:          ${CREDS_SUMMARY}"
 echo "  │  (auto-generated — rotate before exposing publicly)     │"

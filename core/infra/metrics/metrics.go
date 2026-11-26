@@ -332,8 +332,8 @@ func NewProm(namespace string) *Prom {
 		inputFailOpen: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: namespace,
 			Name:      "input_fail_open_total",
-			Help:      "Jobs allowed through when safety kernel is unavailable (fail-open mode) per topic",
-		}, []string{"topic"}),
+			Help:      "Jobs allowed through when safety kernel is unavailable (fail-open mode) per topic and scope rule",
+		}, []string{"topic", "scope_rule"}),
 		jobLockAbandoned: prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: namespace,
 			Name:      "scheduler_job_lock_abandoned_total",
@@ -533,7 +533,11 @@ func (p *Prom) IncValidationRejections() {
 }
 
 func (p *Prom) IncInputFailOpen(topic string) {
-	p.inputFailOpen.WithLabelValues(topic).Inc()
+	p.IncInputFailOpenRule(topic, "")
+}
+
+func (p *Prom) IncInputFailOpenRule(topic, rule string) {
+	p.inputFailOpen.WithLabelValues(topic, rule).Inc()
 }
 
 func (p *Prom) IncJobLockAbandoned() {

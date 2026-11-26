@@ -345,7 +345,7 @@ func (s *server) handleDeletePool(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) deletePoolFromConfig(ctx context.Context, tenantID, name string, force bool) error {
-	return s.configSvc.SetWithRetry(ctx, configsvc.ScopeSystem, "default", 3, func(doc *configsvc.Document) error {
+	return s.configSvc.ReplaceWithRetry(ctx, configsvc.ScopeSystem, "default", 3, func(doc *configsvc.Document) error {
 		topics, poolMap, err := extractPoolsFromConfig(doc)
 		if err != nil {
 			return err
@@ -551,7 +551,7 @@ func (s *server) handleRemoveTopicFromPool(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	err := s.configSvc.SetWithRetry(r.Context(), configsvc.ScopeSystem, "default", 3, func(doc *configsvc.Document) error {
+	err := s.configSvc.ReplaceWithRetry(r.Context(), configsvc.ScopeSystem, "default", 3, func(doc *configsvc.Document) error {
 		topics, poolMap, err := extractPoolsFromConfig(doc)
 		if err != nil {
 			return err

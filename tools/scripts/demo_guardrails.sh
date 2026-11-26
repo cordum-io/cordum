@@ -54,7 +54,7 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
-API_BASE=${CORDUM_API_BASE:-http://localhost:8081}
+API_BASE=${CORDUM_API_BASE:-https://localhost:8081}
 API_KEY=${CORDUM_API_KEY:-${API_KEY:-}}
 if [[ -z "${API_KEY}" ]]; then
   echo "CORDUM_API_KEY is required; export it before running the demo." >&2

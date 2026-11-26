@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,18 +19,18 @@ import (
 )
 
 // edgeMaxExecutionsPerSession resolves the per-session AgentExecution cap.
-// Reads CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION as int64; falls back to
-// edgecore.DefaultMaxExecutionsPerSession when missing/invalid/<=0. The
-// cap protects DeleteSession + dashboard timelines from unbounded
-// per-session fanout (PR #243 senior review finding; EDGE-037).
-func edgeMaxExecutionsPerSession() int64 {
+// Reads CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION as the native int used by the
+// Edge store; falls back to edgecore.DefaultMaxExecutionsPerSession when
+// missing, invalid, out of range or <=0. The cap protects DeleteSession and
+// dashboard timelines from unbounded per-session fanout (EDGE-037).
+func edgeMaxExecutionsPerSession() int {
 	raw := strings.TrimSpace(os.Getenv("CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION"))
 	if raw == "" {
-		return int64(edgecore.DefaultMaxExecutionsPerSession)
+		return edgecore.DefaultMaxExecutionsPerSession
 	}
-	n, err := strconv.ParseInt(raw, 10, 64)
+	n, err := strconv.Atoi(raw)
 	if err != nil || n <= 0 {
-		return int64(edgecore.DefaultMaxExecutionsPerSession)
+		return edgecore.DefaultMaxExecutionsPerSession
 	}
 	return n
 }
@@ -153,6 +154,13 @@ func (s *server) handleCreateEdgeSession(w http.ResponseWriter, r *http.Request)
 	normalizedReq := req
 	normalizedReq.TenantID = tenantID
 	normalizedReq.PrincipalID = principalID
+	// Only a principal the credential vouches for owns the session. A principal
+	// the caller only asserted (X-Principal-Id on a key with no bound principal)
+	// is kept as the display label, never as the owner (task-cf94ebba).
+	ownerID := auth.FromRequest(r).AuthenticatedPrincipal()
+	if ownerID == "" && strings.TrimSpace(req.PrincipalDisplayName) == "" {
+		req.PrincipalDisplayName = principalID
+	}
 	idempotencyReq, idempotent, handled := s.prepareEdgeIdempotencyRequest(w, r, tenantID, edgeSessionCreateEndpoint, normalizedReq)
 	if handled {
 		return
@@ -160,7 +168,7 @@ func (s *server) handleCreateEdgeSession(w http.ResponseWriter, r *http.Request)
 	if idempotent {
 		s.applyEdgeIdempotency(w, r, store, idempotencyReq,
 			func() (edgeIdempotentWriteResult, error) {
-				return s.executeCreateEdgeSession(r, store, req, tenantID, principalID)
+				return s.executeCreateEdgeSession(r, store, req, tenantID, ownerID)
 			},
 			func(err error) {
 				writeCreateEdgeSessionDomainError(w, r, err)
@@ -168,7 +176,7 @@ func (s *server) handleCreateEdgeSession(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	result, err := s.executeCreateEdgeSession(r, store, req, tenantID, principalID)
+	result, err := s.executeCreateEdgeSession(r, store, req, tenantID, ownerID)
 	if err != nil {
 		writeCreateEdgeSessionDomainError(w, r, err)
 		return
@@ -258,6 +266,9 @@ func (s *server) executeCreateEdgeSession(r *http.Request, store edgecore.Store,
 		StartedAt: now,
 		Labels:    sessionLabels,
 	}
+	// The heartbeat is touched right after the session is stored, and a failed
+	// touch fails the create, so the create response can derive with it alive.
+	session.AssuranceState = edgecore.DeriveAssuranceState(session, true)
 	if err := session.Validate(); err != nil {
 		return edgeIdempotentWriteResult{}, edgeCreateSessionInvalidErr{wrapped: err}
 	}
@@ -434,7 +445,25 @@ func (s *server) handleListEdgeSessions(w http.ResponseWriter, r *http.Request) 
 		writeEdgeInternalError(w, r, "list edge sessions", err)
 		return
 	}
+	for i := range page.Items {
+		if err := deriveEdgeSessionAssurance(r.Context(), store, &page.Items[i]); err != nil {
+			writeEdgeInternalError(w, r, "read edge session heartbeat", err)
+			return
+		}
+	}
 	writeJSON(w, edgeSessionPageResponse{Items: page.Items, NextCursor: page.NextCursor})
+}
+
+// deriveEdgeSessionAssurance replaces the session's stored assurance state
+// with one derived from its current facts, so a response never repeats a
+// stored value that a lost heartbeat or a later end has made too strong.
+func deriveEdgeSessionAssurance(ctx context.Context, store edgecore.Store, session *edgecore.EdgeSession) error {
+	alive, err := store.HeartbeatAlive(ctx, session.TenantID, session.SessionID)
+	if err != nil {
+		return err
+	}
+	session.AssuranceState = edgecore.DeriveAssuranceState(*session, alive)
+	return nil
 }
 
 func (s *server) handleGetEdgeSession(w http.ResponseWriter, r *http.Request) {
@@ -460,6 +489,10 @@ func (s *server) handleGetEdgeSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if !found || session == nil {
 		writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge session not found", nil)
+		return
+	}
+	if err := deriveEdgeSessionAssurance(r.Context(), store, session); err != nil {
+		writeEdgeInternalError(w, r, "read edge session heartbeat", err)
 		return
 	}
 	writeJSON(w, session)
@@ -547,6 +580,9 @@ func (s *server) handleEndEdgeSession(w http.ResponseWriter, r *http.Request) {
 	}
 	// EDGE-014 step-10: emit best-effort session_ended audit event.
 	if ended != nil {
+		// EndSession drops the heartbeat, so the ended session derives as
+		// stale rather than echoing the state stored at create.
+		ended.AssuranceState = edgecore.DeriveAssuranceState(*ended, false)
 		edgecore.SendSIEMEvent(s.auditExporter, edgecore.SIEMEventForSessionEnded(*ended))
 	}
 	writeJSON(w, ended)
@@ -633,7 +669,7 @@ func (s *server) executeCreateEdgeExecution(r *http.Request, store edgecore.Stor
 	// (count >= maxExecutions rejects); this matches the count-current-then-
 	// create-one semantics, so the cap is the maximum number of stored
 	// executions.
-	maxExecutions := edgeMaxExecutionsPerSession()
+	maxExecutions := int64(edgeMaxExecutionsPerSession())
 	executionCount, err := store.CountSessionExecutions(r.Context(), tenantID, sessionID)
 	if err != nil {
 		return edgeIdempotentWriteResult{}, edgeCreateExecutionInternalErr{op: "count edge session executions", wrapped: err}

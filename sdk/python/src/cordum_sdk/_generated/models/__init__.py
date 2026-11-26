@@ -76,18 +76,6 @@ from .create_eval_dataset_successor_body_entries_item import (
 from .create_eval_dataset_successor_response_200 import CreateEvalDatasetSuccessorResponse200
 from .create_legal_hold_body import CreateLegalHoldBody
 from .create_pool_body import CreatePoolBody
-from .create_shadow_agent_finding_request import CreateShadowAgentFindingRequest
-from .create_shadow_agent_finding_request_ci_provider import (
-    CreateShadowAgentFindingRequestCiProvider,
-)
-from .create_shadow_agent_finding_request_metadata import CreateShadowAgentFindingRequestMetadata
-from .create_shadow_agent_finding_request_retention_class import (
-    CreateShadowAgentFindingRequestRetentionClass,
-)
-from .create_shadow_agent_finding_request_risk import CreateShadowAgentFindingRequestRisk
-from .create_shadow_agent_finding_request_source_type import (
-    CreateShadowAgentFindingRequestSourceType,
-)
 from .create_shadow_exception_request import CreateShadowExceptionRequest
 from .create_shadow_exception_request_scope_risk_level import (
     CreateShadowExceptionRequestScopeRiskLevel,
@@ -97,7 +85,10 @@ from .create_shadow_exception_request_scope_source_type import (
 )
 from .create_topic_body import CreateTopicBody
 from .create_user_request import CreateUserRequest
-from .create_worker_credential_body import CreateWorkerCredentialBody
+from .create_worker_credential_request import CreateWorkerCredentialRequest
+from .create_worker_credential_request_proof_algorithm import (
+    CreateWorkerCredentialRequestProofAlgorithm,
+)
 from .create_workflow_response_201 import CreateWorkflowResponse201
 from .delegation_chain_link import DelegationChainLink
 from .delegation_lineage_chain_link import DelegationLineageChainLink
@@ -432,6 +423,7 @@ from .repair_approval_body import RepairApprovalBody
 from .rerun_workflow_body import RerunWorkflowBody
 from .rerun_workflow_response_200 import RerunWorkflowResponse200
 from .reset_user_password_body import ResetUserPasswordBody
+from .resign_policy_bundle_response_200 import ResignPolicyBundleResponse200
 from .resolve_memory_resource_body import ResolveMemoryResourceBody
 from .resolve_memory_resource_body_reference import ResolveMemoryResourceBodyReference
 from .resolve_memory_resource_response_200 import ResolveMemoryResourceResponse200
@@ -439,8 +431,8 @@ from .resolve_shadow_agent_finding_request import ResolveShadowAgentFindingReque
 from .retry_dlq_entry_response_200 import RetryDLQEntryResponse200
 from .revoke_delegation_token_body import RevokeDelegationTokenBody
 from .revoke_delegation_token_response_200 import RevokeDelegationTokenResponse200
-from .revoke_worker_session_response_200 import RevokeWorkerSessionResponse200
 from .revoke_shadow_exception_request import RevokeShadowExceptionRequest
+from .revoke_worker_session_response_200 import RevokeWorkerSessionResponse200
 from .role_definition import RoleDefinition
 from .role_detail_response import RoleDetailResponse
 from .role_list_response import RoleListResponse
@@ -533,6 +525,7 @@ from .verify_mcp_signature_response_200 import VerifyMcpSignatureResponse200
 from .wait_edge_approval_body import WaitEdgeApprovalBody
 from .worker_credential import WorkerCredential
 from .worker_credential_issue import WorkerCredentialIssue
+from .worker_credential_proof_algorithm import WorkerCredentialProofAlgorithm
 from .worker_runtime import WorkerRuntime
 from .worker_runtime_labels import WorkerRuntimeLabels
 from .workflow_definition import WorkflowDefinition
@@ -612,18 +605,13 @@ __all__ = (
     "CreateEvalDatasetSuccessorResponse200",
     "CreateLegalHoldBody",
     "CreatePoolBody",
-    "CreateShadowAgentFindingRequest",
-    "CreateShadowAgentFindingRequestCiProvider",
-    "CreateShadowAgentFindingRequestMetadata",
-    "CreateShadowAgentFindingRequestRetentionClass",
-    "CreateShadowAgentFindingRequestRisk",
-    "CreateShadowAgentFindingRequestSourceType",
     "CreateShadowExceptionRequest",
     "CreateShadowExceptionRequestScopeRiskLevel",
     "CreateShadowExceptionRequestScopeSourceType",
     "CreateTopicBody",
     "CreateUserRequest",
-    "CreateWorkerCredentialBody",
+    "CreateWorkerCredentialRequest",
+    "CreateWorkerCredentialRequestProofAlgorithm",
     "CreateWorkflowResponse201",
     "DelegationChainLink",
     "DelegationLineageChainLink",
@@ -932,6 +920,7 @@ __all__ = (
     "RerunWorkflowBody",
     "RerunWorkflowResponse200",
     "ResetUserPasswordBody",
+    "ResignPolicyBundleResponse200",
     "ResolveMemoryResourceBody",
     "ResolveMemoryResourceBodyReference",
     "ResolveMemoryResourceResponse200",
@@ -939,8 +928,8 @@ __all__ = (
     "RetryDLQEntryResponse200",
     "RevokeDelegationTokenBody",
     "RevokeDelegationTokenResponse200",
-    "RevokeWorkerSessionResponse200",
     "RevokeShadowExceptionRequest",
+    "RevokeWorkerSessionResponse200",
     "RoleDefinition",
     "RoleDetailResponse",
     "RoleListResponse",
@@ -1031,6 +1020,7 @@ __all__ = (
     "WaitEdgeApprovalBody",
     "WorkerCredential",
     "WorkerCredentialIssue",
+    "WorkerCredentialProofAlgorithm",
     "WorkerRuntime",
     "WorkerRuntimeLabels",
     "WorkflowDefinition",

@@ -2,7 +2,20 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { visualizer } from "rollup-plugin-visualizer";
+import fs from "fs";
 import path from "path";
+
+// Dev proxy target: the compose gateway serves HTTPS only, signed by the dev
+// CA from `cordumctl generate-certs` (repo-root certs/). For a localhost
+// target, trust that CA; any other target uses Node's default trust store
+// (add a private CA with NODE_EXTRA_CA_CERTS).
+const apiTarget = process.env.VITE_API_TARGET || "https://localhost:8081";
+const devCAPath = path.resolve(__dirname, "../certs/ca/ca.crt");
+const apiTargetCA =
+  /^https:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/.test(apiTarget) &&
+  fs.existsSync(devCAPath)
+    ? fs.readFileSync(devCAPath, "utf8")
+    : undefined;
 
 export default defineConfig({
   plugins: [
@@ -56,8 +69,11 @@ export default defineConfig({
     allowedHosts: true,
     proxy: {
       "/api": {
-        target: process.env.VITE_API_TARGET || "http://localhost:8080",
+        target: apiTarget,
         changeOrigin: true,
+        // /api/v1/stream is a WebSocket.
+        ws: true,
+        ca: apiTargetCA,
       },
     },
   },

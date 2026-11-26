@@ -1,15 +1,17 @@
 package config
 
 import (
-	"strings"
+	"reflect"
 	"testing"
 )
 
-// TestSafetyPolicyAcceptsNewConstraintFields verifies the schema extension
-// permits max_output_bytes, allowed_destinations, and redact_patterns
-// under rule.constraints. These are the CONSTRAIN-extension primitives
-// the unified Decision.Type = allow_with_constraints path emits.
-func TestSafetyPolicyAcceptsNewConstraintFields(t *testing.T) {
+// TestSafetyPolicyAcceptsDeprecatedConstraintFields pins the backward
+// compatibility of max_output_bytes, allowed_destinations and redact_patterns
+// under rule.constraints. task-e4e9489c added them to the schema and the docs,
+// so policies that use them must keep loading. They are deprecated and
+// ignored: PolicyConstraints (and the CAP PolicyConstraints proto) has no such
+// fields, so the parser drops them and the Safety Kernel never enforces them.
+func TestSafetyPolicyAcceptsDeprecatedConstraintFields(t *testing.T) {
 	yaml := `
 version: "1"
 default_tenant: default
@@ -30,78 +32,44 @@ rules:
 `
 	policy, err := ParseSafetyPolicy([]byte(yaml))
 	if err != nil {
-		t.Fatalf("ParseSafetyPolicy() error = %v; want nil", err)
+		t.Fatalf("ParseSafetyPolicy(deprecated constraints) error = %v; want nil", err)
 	}
-	if policy == nil {
-		t.Fatal("ParseSafetyPolicy() returned nil policy")
+	if got := policy.Rules[0].Constraints; !reflect.ValueOf(got).IsZero() {
+		t.Errorf("Constraints = %+v; want zero value (deprecated keys are ignored)", got)
 	}
 }
 
-// TestSafetyPolicyAcceptsZeroMaxOutputBytes verifies the minimum bound
-// (0) is honored — zero is a valid policy meaning "no output allowed".
-func TestSafetyPolicyAcceptsZeroMaxOutputBytes(t *testing.T) {
-	yaml := `
+// TestSafetyPolicyDeprecatedMaxOutputBytesBounds keeps the original 0..16 MiB
+// schema bounds, so existing policies validate exactly as they did before.
+func TestSafetyPolicyDeprecatedMaxOutputBytesBounds(t *testing.T) {
+	for _, tc := range []struct {
+		value  string
+		wantOK bool
+	}{
+		{"0", true},
+		{"16777216", true},
+		{"16777217", false},
+		{"-1", false},
+	} {
+		yaml := `
 version: "1"
-default_tenant: default
 rules:
-  - id: rule-zero-budget
+  - id: rule-bound
     decision: allow_with_constraints
     match:
       topics: ["job.openclaw.result_gating"]
     constraints:
-      max_output_bytes: 0
+      max_output_bytes: ` + tc.value + `
 `
-	if _, err := ParseSafetyPolicy([]byte(yaml)); err != nil {
-		t.Errorf("ParseSafetyPolicy(zero max_output_bytes) error = %v; want nil", err)
+		if _, err := ParseSafetyPolicy([]byte(yaml)); (err == nil) != tc.wantOK {
+			t.Errorf("ParseSafetyPolicy(max_output_bytes: %s) error = %v; want accepted = %v", tc.value, err, tc.wantOK)
+		}
 	}
 }
 
-// TestSafetyPolicyRejectsOversizedMaxOutputBytes enforces the 16MiB cap.
-// >16777216 must be rejected by the schema.
-func TestSafetyPolicyRejectsOversizedMaxOutputBytes(t *testing.T) {
-	yaml := `
-version: "1"
-default_tenant: default
-rules:
-  - id: rule-oversized
-    decision: allow_with_constraints
-    match:
-      topics: ["job.openclaw.result_gating"]
-    constraints:
-      max_output_bytes: 16777217
-`
-	_, err := ParseSafetyPolicy([]byte(yaml))
-	if err == nil {
-		t.Fatal("ParseSafetyPolicy(>16MiB max_output_bytes) returned nil error; want schema error")
-	}
-	if !strings.Contains(strings.ToLower(err.Error()), "max_output_bytes") &&
-		!strings.Contains(strings.ToLower(err.Error()), "maximum") {
-		t.Errorf("ParseSafetyPolicy(>16MiB) error = %v; want max-bound error", err)
-	}
-}
-
-// TestSafetyPolicyRejectsNegativeMaxOutputBytes enforces the minimum bound.
-func TestSafetyPolicyRejectsNegativeMaxOutputBytes(t *testing.T) {
-	yaml := `
-version: "1"
-default_tenant: default
-rules:
-  - id: rule-negative
-    decision: allow_with_constraints
-    match:
-      topics: ["job.openclaw.result_gating"]
-    constraints:
-      max_output_bytes: -1
-`
-	if _, err := ParseSafetyPolicy([]byte(yaml)); err == nil {
-		t.Error("ParseSafetyPolicy(negative max_output_bytes) returned nil error; want minimum-bound error")
-	}
-}
-
-// TestSafetyPolicyBackcompatNoNewFields verifies that policies without
-// the new constraint fields keep validating. Crucial for the additive-
-// only contract — existing safety policies in the wild must not break.
-func TestSafetyPolicyBackcompatNoNewFields(t *testing.T) {
+// TestSafetyPolicyAcceptsSupportedConstraints verifies the constraint keys
+// PolicyConstraints actually parses keep validating and reach the struct.
+func TestSafetyPolicyAcceptsSupportedConstraints(t *testing.T) {
 	yaml := `
 version: "1"
 default_tenant: default
@@ -115,8 +83,12 @@ rules:
       budgets:
         max_runtime_ms: 30000
 `
-	if _, err := ParseSafetyPolicy([]byte(yaml)); err != nil {
-		t.Errorf("ParseSafetyPolicy(legacy constraints) error = %v; want nil", err)
+	policy, err := ParseSafetyPolicy([]byte(yaml))
+	if err != nil {
+		t.Fatalf("ParseSafetyPolicy(supported constraints) error = %v; want nil", err)
+	}
+	if got := policy.Rules[0].Constraints.Budgets.MaxRuntimeMs; got != 30000 {
+		t.Errorf("Budgets.MaxRuntimeMs = %d; want 30000", got)
 	}
 }
 

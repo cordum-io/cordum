@@ -10,6 +10,14 @@ function baseUrl(): string {
   return raw.endsWith("/") ? raw.slice(0, -1) : raw;
 }
 
+// mcpSseUrl is the gateway's MCP HTTP+SSE endpoint. The gateway serves it at
+// /mcp/sse on its own origin, outside the API prefix, so it resolves against
+// the API base URL: that URL's origin when it is absolute, else the dashboard
+// origin, whose bundled nginx proxies /mcp/ to the gateway like /api/.
+export function mcpSseUrl(): string {
+  return new URL("/mcp/sse", new URL(baseUrl(), window.location.origin)).toString();
+}
+
 // ---------------------------------------------------------------------------
 // ApiError
 // ---------------------------------------------------------------------------

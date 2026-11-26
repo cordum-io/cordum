@@ -1,7 +1,9 @@
 # Delegation tokens
 
-Cordum delegation tokens let one Enterprise agent identity delegate a reduced,
-time-bounded scope to another agent identity. The gateway issues Ed25519-signed
+Cordum delegation tokens let one agent identity delegate a reduced,
+time-bounded scope to another agent identity. The delegation endpoints are not
+license-gated; managing the agent identities themselves (`/api/v1/agents`)
+requires the `agent_identity` entitlement. The gateway issues Ed25519-signed
 JWTs, verifies them on `POST /api/v1/jobs`, injects only reserved delegation
 labels into the Safety Kernel request, and records lineage in the audit trail.
 
@@ -15,14 +17,24 @@ authority.
   affected JTIs.
 - **Replay:** tokens are bearer credentials. Keep TTLs short, prefer a
   `parent_token` only when chaining is necessary, and revoke exposed JTIs.
-- **Scope escalation attempts:** issuance and verification enforce scope
-  monotonicity against both the delegating agent identity and any parent token.
-- **Tenant crossover:** issuance rejects cross-tenant targets before signing.
-- **Chain abuse:** verification rejects chains deeper than
-  `CORDUM_DELEGATION_MAX_DEPTH` (default `3`).
+- **Scope escalation attempts:** issuance refuses actions or topics outside the
+  delegating agent identity's current permissions or outside any parent token.
+  Verification re-checks a token's actions and topics against the delegating
+  agent identity's current permissions only (`scope_exceeded`).
+- **Tenant crossover:** issuance rejects cross-tenant targets before signing,
+  and refuses a child token whose tenant differs from its parent token's.
+- **Expiry:** a child token's expiry is capped at its parent token's expiry,
+  and issuance is refused when the capped expiry is not after the current time.
+  Verification refuses a token when any link of its delegation chain expired
+  30 seconds or more ago (the fixed clock leeway).
+- **Chain abuse:** issuance, verification and job dispatch refuse chains deeper
+  than `CORDUM_DELEGATION_MAX_DEPTH` (default `3`).
 - **Policy bypass attempts:** the raw JWT is never forwarded to the Safety
   Kernel. Only `_delegation.*` labels derived from a verified token are passed
-  downstream.
+  downstream. Client-supplied labels with a `_` prefix never reach the Safety
+  Kernel from job submit or from Edge evaluate (request and session labels).
+  Edge evaluate has no delegation-token input, so an Edge action is always a
+  direct call.
 
 ## JWT model
 
@@ -83,7 +95,7 @@ the required RBAC permissions.
 ### Issue
 
 ```bash
-curl -sS -X POST http://localhost:8081/api/v1/agents/agent-a/delegate \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/agents/agent-a/delegate \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default' \
   -H 'Content-Type: application/json' \
@@ -107,10 +119,22 @@ Successful response:
 }
 ```
 
+To chain, pass a `parent_token` issued to the delegating agent. The child's
+`expires_at` is capped at the parent's expiry. A parent token from another
+tenant is refused before signing:
+
+```json
+{
+  "error": "tenant_mismatch",
+  "code": "DELEGATION_REQUEST_INVALID",
+  "status": 400
+}
+```
+
 ### Verify
 
 ```bash
-curl -sS -X POST http://localhost:8081/api/v1/agents/verify-delegation \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/agents/verify-delegation \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default' \
   -H 'Content-Type: application/json' \
@@ -132,7 +156,7 @@ Invalid tokens still return HTTP 200:
 ### Revoke
 
 ```bash
-curl -sS -X POST http://localhost:8081/api/v1/agents/revoke-delegation \
+curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/agents/revoke-delegation \
   -H 'X-API-Key: YOUR_API_KEY' \
   -H 'X-Tenant-ID: default' \
   -H 'Content-Type: application/json' \
@@ -398,8 +422,15 @@ Each rejection emits an increment to the Prometheus counter
 Safety-decision audit events emitted downstream include `delegation.depth`,
 `delegation.root_issuer`, `delegation.parent_issuer`, `delegation.chain`,
 and `delegation.jti` in the SIEMEvent `Extra` map. The full scope list is
-deliberately excluded to stay under the 8 KiB syslog line limit; the
-decision log carries the full lineage via the policy-decision-log endpoint.
+deliberately excluded to stay under the 8 KiB syslog line limit.
+
+For a job dispatched under a delegation token, the Policy Decision Log record
+and the job's stored safety decision carry `delegation_issuer_chain`: the
+issuer agent ids of the dispatch-time delegation chain, root issuer first. The
+field holds no scope, and it is omitted for a job dispatched without
+delegation. The `GET /api/v1/governance/decisions` response does not include
+it. No release up to and including v1.3.2 records the field; CHANGELOG.md
+lists it under `[Unreleased]`.
 
 ### Policy troubleshooting
 

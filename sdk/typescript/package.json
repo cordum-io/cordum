@@ -27,6 +27,7 @@
     "test": "vitest run",
     "generate": "node ./scripts/generate.mjs",
     "check:generated": "node ./scripts/check-generated.mjs",
+    "smoke:packed": "node ./scripts/smoke-packed-consumer.mjs",
     "prepare": "npm run build",
     "size": "size-limit",
     "check:no-node-builtins": "node ./scripts/check-no-node-builtins.mjs",

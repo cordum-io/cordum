@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 from typing import List
 
@@ -18,10 +18,10 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
+    from ..models.safety_decision import SafetyDecision
     from ..models.job_detail_result_type_0 import JobDetailResultType0
     from ..models.delegation_lineage_view import DelegationLineageView
     from ..models.job_detail_labels import JobDetailLabels
-    from ..models.safety_decision import SafetyDecision
 
 
 T = TypeVar("T", bound="JobDetail")
@@ -81,9 +81,6 @@ class JobDetail:
 
     def to_dict(self) -> Dict[str, Any]:
         from ..models.job_detail_result_type_0 import JobDetailResultType0
-        from ..models.delegation_lineage_view import DelegationLineageView
-        from ..models.job_detail_labels import JobDetailLabels
-        from ..models.safety_decision import SafetyDecision
 
         id = self.id
 
@@ -231,10 +228,10 @@ class JobDetail:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
+        from ..models.safety_decision import SafetyDecision
         from ..models.job_detail_result_type_0 import JobDetailResultType0
         from ..models.delegation_lineage_view import DelegationLineageView
         from ..models.job_detail_labels import JobDetailLabels
-        from ..models.safety_decision import SafetyDecision
 
         d = src_dict.copy()
         id = d.pop("id", UNSET)

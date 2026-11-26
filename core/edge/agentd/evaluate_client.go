@@ -27,6 +27,10 @@ type EvaluateRequest struct {
 
 	InputRedacted map[string]any `json:"input_redacted,omitempty"`
 	InputHash     string         `json:"input_hash,omitempty"`
+	// InputCommitment is "hmac-sha256:<hex>" over the original, pre-redaction
+	// action input under a key that never leaves this agentd process. The
+	// Gateway binds it into the approval's action hash without learning the input.
+	InputCommitment string `json:"input_commitment,omitempty"`
 
 	ActionName string            `json:"action_name,omitempty"`
 	Capability string            `json:"capability,omitempty"`

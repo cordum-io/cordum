@@ -1,7 +1,7 @@
 # MCP Audit Events
 
 Four SIEMEvent types cover the full MCP tool lifecycle. Every terminal
-tools/call lands on the Merkle audit chain and flows through the
+tools/call lands on the per-tenant audit hash chain and flows through the
 configured SIEM exporter (webhook / syslog / Datadog / CloudWatch).
 
 | EventType | Emitted when |
@@ -102,7 +102,7 @@ description visible in the replacement marker.
 
 ## Retention
 
-MCP audit events flow through the same Merkle audit chain as every
+MCP audit events flow through the same audit hash chain as every
 other SIEM event. They inherit the tenant retention window
 (`CORDUM_AUDIT_RETENTION_HOURS`, default 168h = 7 days) and legal-hold
 policy. Compliance exports filter by `event_type` and time range via

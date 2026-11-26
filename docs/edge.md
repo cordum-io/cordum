@@ -100,12 +100,25 @@ labels are never copied. Auditors needing the complete label set read
 
 ## Policy modes
 
-| Mode | Use | Behavior when Cordum governance is unavailable |
+| Mode | Use | Measured outage result |
 | --- | --- | --- |
-| `observe` | Discovery and low-friction dev visibility. | Allow degraded, record evidence where possible. |
-| `enforce` / `local-dev-enforce` | Local enforcement for risky or unknown actions. | Allow known-safe actions only; deny risky/unclassified actions — requires `CORDUM_AGENTD_FAIL_CLOSED=true`. It defaults to `false`, so an `enforce` session without it fails **open** on agentd error/timeout; `cordumctl edge doctor` warns when that is the case. |
-| `enterprise-strict` | Managed enterprise rollout. | Fail closed. |
-| `requires-edge-governance` | Production workflow action requiring Edge. | Fail closed on Gateway miss regardless of session mode. |
+| `observe` | Development visibility. | Hook emits empty allow/no-op output with a degraded warning when agentd is unavailable (gateway-from-edge/low [b]). |
+| `enforce` / `local-dev-enforce` | Local enforcement. | In the enforce `PreToolUse` probes, the hook emits deny on a safe-command agentd timeout without `CORDUM_AGENTD_FAIL_CLOSED`, or a degraded agentd answer for Edit (gateway-from-edge/low [a], protected [a]). These contract probes cover `enforce`, not the alias. |
+| `enterprise-strict` | Managed enterprise rollout. | agentd returns degraded DENY in Gateway/policy-unavailable probes (gateway-from-edge/low [c]); the hook emits deny for a malformed agentd response (protected [b]). |
+
+Measured cells in the [failure and partition behavior contract](contract/failure-behavior.md#behavior-table):
+
+- gateway-from-edge/low [a]: `TestRunEnforceModeDeniesPreToolUseOnAgentdTimeoutWithoutFailClosed`;
+  protected [a]: `TestRunEnforceDeniesDegradedPreToolUse`.
+- gateway-from-edge/low [b]: `TestRunObserveModeAllowsNoopWhenAgentdUnavailable`.
+- gateway-from-edge/low [c]: the enterprise-strict cases of
+  `TestApplyFailModeMatrixCoversObserveEnforceEnterpriseStrict`;
+  protected [b]: `TestRunEnterpriseStrictDeniesMalformedAgentdResponse`.
+
+These are component probes, not a full hook-to-Gateway outage qualification.
+agentd's Gateway-outage handling in enforce and observe is not measured (G04).
+The contract's Scope paragraph also marks agent-runtime compliance with hook
+decisions as not measured; observe does not guarantee evidence survives an outage.
 
 ## Retention and artifacts
 

@@ -166,6 +166,102 @@ func TestCreateAgent_WorkerConflictIsTenantScoped(t *testing.T) {
 	}
 }
 
+func TestCreateAgent_WorkerLookupFailureFailsClosed(t *testing.T) {
+	for _, source := range []string{"tenant_hash", "legacy_fallback"} {
+		t.Run(source, func(t *testing.T) {
+			s, _, _ := newTestGateway(t)
+			enableAgentIdentityEntitlement(t, s)
+			ctx := context.Background()
+			client := s.jobStore.Client() // Also passed to agentIdentityStore by newTestGateway.
+			const workerID = "lookup-failure-worker"
+			keys := [2]string{"agent:worker-links:default", "agent:by-worker:" + workerID}
+			if source == "tenant_hash" {
+				if err := client.Set(ctx, keys[0], "not-a-hash", 0).Err(); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := client.HSet(ctx, keys[1], "not-a-string", "sentinel").Err(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.agentIdentityStore.GetByWorkerIDForTenant(ctx, "default", workerID); err == nil || !strings.Contains(err.Error(), "WRONGTYPE") {
+				t.Fatalf("expected actual WRONGTYPE lookup failure, got %v", err)
+			}
+			before := workerLookupFailureLinkSnapshot(t, client, keys)
+			requireNoWorkerLookupFailureWrites(t, s)
+			req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents",
+				strings.NewReader(`{"agent_id":"lookup-failure-worker","name":"lookup-test","owner":"admin","risk_tier":"low"}`)),
+				&auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin-user"})
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+			s.handleCreateAgent(rr, req)
+			requireNoWorkerLookupFailureWrites(t, s)
+			if after := workerLookupFailureLinkSnapshot(t, client, keys); after != before {
+				t.Error("worker-link keys changed after a failed lookup")
+			}
+			requireStableErrorCode(t, rr, http.StatusInternalServerError, "internal_error")
+			var body codedErrorBody
+			if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if body.Error != "internal error" || strings.Contains(rr.Body.String(), "WRONGTYPE") || strings.Contains(rr.Body.String(), "agent:") {
+				t.Errorf("expected generic error without Redis details, got %s", rr.Body.String())
+			}
+		})
+	}
+}
+
+func workerLookupFailureLinkSnapshot(t *testing.T, client redis.UniversalClient, keys [2]string) [2]string {
+	t.Helper()
+	var snapshot [2]string
+	for i, key := range keys {
+		ctx := context.Background()
+		kind, err := client.Type(ctx, key).Result()
+		if err != nil {
+			t.Fatalf("type %s: %v", key, err)
+		}
+		snapshot[i] = kind
+		switch kind {
+		case "string":
+			value, err := client.Get(ctx, key).Result()
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot[i] += value
+		case "hash":
+			values, err := client.HGetAll(ctx, key).Result()
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := json.Marshal(values)
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot[i] += string(encoded)
+		case "none":
+		default:
+			t.Fatalf("unexpected worker-link type %q", kind)
+		}
+	}
+	return snapshot
+}
+
+func requireNoWorkerLookupFailureWrites(t *testing.T, s *server) {
+	t.Helper()
+	agents, _, err := s.agentIdentityStore.List(context.Background(), "default", "", 10, store.AgentIdentityFilter{})
+	if err != nil {
+		t.Fatalf("list identities: %v", err)
+	}
+	if len(agents) != 0 {
+		t.Errorf("lookup failure created %d agent identities", len(agents))
+	}
+	entries, err := s.loadPolicyAudit(context.Background())
+	if err != nil {
+		t.Fatalf("load audit: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("lookup failure created audit entries: %+v", entries)
+	}
+}
+
 func TestGetAgent_WorkerFallbackIsTenantScoped(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	enableAgentIdentityEntitlement(t, s)
@@ -1160,5 +1256,239 @@ func TestListAgentsIncludesLastActive(t *testing.T) {
 	}
 	if found[agentB.ID] != 0 {
 		t.Fatalf("agent B: expected last_active=0 (no jobs), got %d", found[agentB.ID])
+	}
+}
+
+// TestUpdateAgent_LinksWorkerForExistingIdentity: an identity created without
+// a worker link can be bound on update (agent_id) instead of being re-created,
+// with create's checks. A worker linked to another identity is refused,
+// re-linking the same worker is fine, and an identity in another tenant is
+// not found and links nothing.
+func TestUpdateAgent_LinksWorkerForExistingIdentity(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
+	ctx := context.Background()
+	newIdentity := func(name string) *store.AgentIdentity {
+		t.Helper()
+		identity, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+			TenantID: "default", Name: name, Owner: "ops", RiskTier: "low", Status: "active",
+		})
+		if err != nil {
+			t.Fatalf("create %s: %v", name, err)
+		}
+		return identity
+	}
+	unbound, other := newIdentity("legacy-agent"), newIdentity("other-agent")
+	if err := s.agentIdentityStore.LinkWorker(ctx, other.ID, "key-other"); err != nil {
+		t.Fatalf("link other: %v", err)
+	}
+	update := func(tenant, body string) *httptest.ResponseRecorder {
+		req := withAuth(httptest.NewRequest(http.MethodPut, "/api/v1/agents/"+unbound.ID, bytes.NewBufferString(body)),
+			&auth.AuthContext{Tenant: tenant, Role: "admin"})
+		req.Header.Set("Content-Type", "application/json")
+		req.SetPathValue("id", unbound.ID)
+		rr := httptest.NewRecorder()
+		s.handleUpdateAgent(rr, req)
+		return rr
+	}
+
+	for range 2 {
+		if rr := update("default", `{"agent_id":"alice"}`); rr.Code != http.StatusOK {
+			t.Fatalf("bind alice on update: %d %s", rr.Code, rr.Body.String())
+		}
+	}
+	if linked, err := s.agentIdentityStore.GetByWorkerIDForTenant(ctx, "default", "alice"); err != nil || linked == nil || linked.ID != unbound.ID {
+		t.Fatalf("alice linked to %+v (err %v), want %s", linked, err, unbound.ID)
+	}
+	requireStableErrorCode(t, update("default", `{"agent_id":"key-other"}`), http.StatusConflict, "AGENT_WORKER_CONFLICT")
+	if linked, _ := s.agentIdentityStore.GetByWorkerIDForTenant(ctx, "default", "key-other"); linked == nil || linked.ID != other.ID {
+		t.Fatalf("refused update moved key-other's link to %+v", linked)
+	}
+	if rr := update("tenant-b", `{"agent_id":"bob"}`); rr.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant bind: %d %s, want 404", rr.Code, rr.Body.String())
+	}
+	if linked, _ := s.agentIdentityStore.GetByWorkerIDForTenant(ctx, "default", "bob"); linked != nil {
+		t.Fatalf("cross-tenant update linked bob to %s", linked.ID)
+	}
+}
+
+// TestUpdateAgent_WorkerLookupFailureFailsClosed: a failed worker-link read is
+// not a confirmed missing link, so agent update answers 500, writes no link and
+// leaves the identity unchanged, as agent create does.
+func TestUpdateAgent_WorkerLookupFailureFailsClosed(t *testing.T) {
+	for _, source := range []string{"tenant_hash", "legacy_fallback"} {
+		t.Run(source, func(t *testing.T) {
+			s, _, _ := newTestGateway(t)
+			enableAgentIdentityEntitlement(t, s)
+			ctx := context.Background()
+			identity, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+				TenantID: "default", Name: "legacy-agent", Owner: "ops", RiskTier: "low", Status: "active",
+			})
+			if err != nil {
+				t.Fatalf("create identity: %v", err)
+			}
+			client := s.jobStore.Client() // Also passed to agentIdentityStore by newTestGateway.
+			const workerID = "lookup-failure-worker"
+			keys := [2]string{"agent:worker-links:default", "agent:by-worker:" + workerID}
+			if source == "tenant_hash" {
+				if err := client.Set(ctx, keys[0], "not-a-hash", 0).Err(); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := client.HSet(ctx, keys[1], "not-a-string", "sentinel").Err(); err != nil {
+				t.Fatal(err)
+			}
+			before := workerLookupFailureLinkSnapshot(t, client, keys)
+			req := withAuth(httptest.NewRequest(http.MethodPut, "/api/v1/agents/"+identity.ID,
+				strings.NewReader(`{"agent_id":"lookup-failure-worker","name":"renamed"}`)),
+				&auth.AuthContext{Tenant: "default", Role: "admin"})
+			req.Header.Set("Content-Type", "application/json")
+			req.SetPathValue("id", identity.ID)
+			rr := httptest.NewRecorder()
+			s.handleUpdateAgent(rr, req)
+			requireStableErrorCode(t, rr, http.StatusInternalServerError, "internal_error")
+			if after := workerLookupFailureLinkSnapshot(t, client, keys); after != before {
+				t.Error("worker-link keys changed after a failed lookup")
+			}
+			if got, err := s.agentIdentityStore.Get(ctx, "default", identity.ID); err != nil || got == nil || got.Name != "legacy-agent" {
+				t.Errorf("identity after a failed lookup = %+v (err %v), want it unchanged", got, err)
+			}
+		})
+	}
+}
+
+// sendAgentRequest serves one agent create (POST) or update (PUT, id set)
+// as an admin key bound to principal.
+func sendAgentRequest(t *testing.T, s *server, principal, id, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	method, path, handler := http.MethodPost, "/api/v1/agents", s.handleCreateAgent
+	if id != "" {
+		method, path, handler = http.MethodPut, "/api/v1/agents/"+id, s.handleUpdateAgent
+	}
+	req := withAuth(httptest.NewRequest(method, path, strings.NewReader(body)),
+		&auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: principal})
+	req.Header.Set("Content-Type", "application/json")
+	if id != "" {
+		req.SetPathValue("id", id)
+	}
+	rr := httptest.NewRecorder()
+	handler(rr, req)
+	return rr
+}
+
+func storedPreapprovals(t *testing.T, s *server, id string) string {
+	t.Helper()
+	got, err := s.agentIdentityStore.Get(context.Background(), "default", id)
+	if err != nil || got == nil {
+		t.Fatalf("get identity %s: %+v (err %v)", id, got, err)
+	}
+	return strings.Join(got.PreapprovedMutatingTools, ",")
+}
+
+// TestUpdateAgent_RefusesSelfPreapproval: the principal an identity is linked
+// to cannot set that identity's preapproved_mutating_tools, so an agent holding
+// an admin key cannot let its own mutating calls skip human approval. Another
+// admin still can, and the agent may edit other fields or clear its list.
+func TestUpdateAgent_RefusesSelfPreapproval(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
+	ctx := context.Background()
+	identity, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+		TenantID: "default", Name: "governed-bot", Owner: "ops", RiskTier: "high", Status: "active",
+	})
+	if err != nil {
+		t.Fatalf("create identity: %v", err)
+	}
+	if err := s.agentIdentityStore.LinkWorker(ctx, identity.ID, "bot-1"); err != nil {
+		t.Fatalf("link bot-1: %v", err)
+	}
+
+	requireStableErrorCode(t, sendAgentRequest(t, s, "bot-1", identity.ID,
+		`{"preapproved_mutating_tools":["cordum_create_workflow"]}`), http.StatusForbidden, "AGENT_SELF_PREAPPROVAL_DENIED")
+	if got := storedPreapprovals(t, s, identity.ID); got != "" {
+		t.Fatalf("refused self-edit stored preapprovals %q", got)
+	}
+	if rr := sendAgentRequest(t, s, "bot-1", identity.ID, `{"name":"renamed","preapproved_mutating_tools":[]}`); rr.Code != http.StatusOK {
+		t.Fatalf("self rename with an empty list: %d %s", rr.Code, rr.Body.String())
+	}
+	if rr := sendAgentRequest(t, s, "ops-admin", identity.ID, `{"preapproved_mutating_tools":["cordum_create_workflow"]}`); rr.Code != http.StatusOK {
+		t.Fatalf("another admin grants preapproval: %d %s", rr.Code, rr.Body.String())
+	}
+	requireStableErrorCode(t, sendAgentRequest(t, s, "bot-1", identity.ID,
+		`{"preapproved_mutating_tools":["cordum_install_pack"]}`), http.StatusForbidden, "AGENT_SELF_PREAPPROVAL_DENIED")
+	if got := storedPreapprovals(t, s, identity.ID); got != "cordum_create_workflow" {
+		t.Fatalf("preapprovals after refused self-edit = %q, want cordum_create_workflow", got)
+	}
+}
+
+// TestAgentSelfLinkWithPreapprovalRefused: a principal cannot link itself
+// (agent_id) to an identity that has or would get preapproved tools, on create
+// or update, and the refusal writes no link. Linking itself without any is
+// still allowed.
+func TestAgentSelfLinkWithPreapprovalRefused(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
+	ctx := context.Background()
+	requireNoLink := func(workerID string) {
+		t.Helper()
+		if linked, err := s.agentIdentityStore.GetByWorkerIDForTenant(ctx, "default", workerID); err != nil || linked != nil {
+			t.Fatalf("%s linked to %+v (err %v), want no link", workerID, linked, err)
+		}
+	}
+
+	requireStableErrorCode(t, sendAgentRequest(t, s, "bot-2", "",
+		`{"name":"self-made","owner":"ops","risk_tier":"high","agent_id":"bot-2","preapproved_mutating_tools":["cordum_create_workflow"]}`),
+		http.StatusForbidden, "AGENT_SELF_PREAPPROVAL_DENIED")
+	requireNoLink("bot-2")
+
+	held, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+		TenantID: "default", Name: "release-bot", Owner: "ops", RiskTier: "high", Status: "active",
+		PreapprovedMutatingTools: []string{"cordum_create_workflow"},
+	})
+	if err != nil {
+		t.Fatalf("create preapproved identity: %v", err)
+	}
+	requireStableErrorCode(t, sendAgentRequest(t, s, "bot-3", held.ID, `{"agent_id":"bot-3"}`),
+		http.StatusForbidden, "AGENT_SELF_PREAPPROVAL_DENIED")
+	requireNoLink("bot-3")
+
+	plain, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+		TenantID: "default", Name: "plain-bot", Owner: "ops", RiskTier: "high", Status: "active",
+	})
+	if err != nil {
+		t.Fatalf("create plain identity: %v", err)
+	}
+	requireStableErrorCode(t, sendAgentRequest(t, s, "bot-3", plain.ID,
+		`{"agent_id":"bot-3","preapproved_mutating_tools":["cordum_create_workflow"]}`), http.StatusForbidden, "AGENT_SELF_PREAPPROVAL_DENIED")
+	requireNoLink("bot-3")
+	if rr := sendAgentRequest(t, s, "bot-3", plain.ID, `{"agent_id":"bot-3"}`); rr.Code != http.StatusOK {
+		t.Fatalf("self-link without preapprovals: %d %s", rr.Code, rr.Body.String())
+	}
+	if rr := sendAgentRequest(t, s, "bot-4", "", `{"name":"self-plain","owner":"ops","risk_tier":"high","agent_id":"bot-4"}`); rr.Code != http.StatusCreated {
+		t.Fatalf("self-registration without preapprovals: %d %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestUpdateAgent_SelfPreapprovalLookupFailsClosed: a failed read of the
+// caller's own link does not prove the caller is someone else, so setting
+// preapprovals answers 500 and the identity keeps its list.
+func TestUpdateAgent_SelfPreapprovalLookupFailsClosed(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
+	ctx := context.Background()
+	identity, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+		TenantID: "default", Name: "governed-bot", Owner: "ops", RiskTier: "high", Status: "active",
+	})
+	if err != nil {
+		t.Fatalf("create identity: %v", err)
+	}
+	// Also passed to agentIdentityStore by newTestGateway; a string under the
+	// tenant's link hash makes every link read fail.
+	if err := s.jobStore.Client().Set(ctx, "agent:worker-links:default", "not-a-hash", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	requireStableErrorCode(t, sendAgentRequest(t, s, "ops-admin", identity.ID,
+		`{"preapproved_mutating_tools":["cordum_create_workflow"]}`), http.StatusInternalServerError, "internal_error")
+	if got := storedPreapprovals(t, s, identity.ID); got != "" {
+		t.Fatalf("preapprovals after a failed link read = %q, want none", got)
 	}
 }

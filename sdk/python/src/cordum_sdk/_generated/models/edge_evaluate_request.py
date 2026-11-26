@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 from typing import List
 
@@ -17,13 +17,13 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-    from ..models.edge_evaluate_request_tool_input_redacted_type_0 import (
-        EdgeEvaluateRequestToolInputRedactedType0,
-    )
+    from ..models.edge_labels import EdgeLabels
     from ..models.edge_evaluate_request_input_redacted_type_0 import (
         EdgeEvaluateRequestInputRedactedType0,
     )
-    from ..models.edge_labels import EdgeLabels
+    from ..models.edge_evaluate_request_tool_input_redacted_type_0 import (
+        EdgeEvaluateRequestToolInputRedactedType0,
+    )
     from ..models.edge_artifact_pointer import EdgeArtifactPointer
 
 
@@ -104,14 +104,12 @@ class EdgeEvaluateRequest:
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.edge_evaluate_request_tool_input_redacted_type_0 import (
-            EdgeEvaluateRequestToolInputRedactedType0,
-        )
         from ..models.edge_evaluate_request_input_redacted_type_0 import (
             EdgeEvaluateRequestInputRedactedType0,
         )
-        from ..models.edge_labels import EdgeLabels
-        from ..models.edge_artifact_pointer import EdgeArtifactPointer
+        from ..models.edge_evaluate_request_tool_input_redacted_type_0 import (
+            EdgeEvaluateRequestToolInputRedactedType0,
+        )
 
         principal_id = self.principal_id
 
@@ -240,13 +238,13 @@ class EdgeEvaluateRequest:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.edge_evaluate_request_tool_input_redacted_type_0 import (
-            EdgeEvaluateRequestToolInputRedactedType0,
-        )
+        from ..models.edge_labels import EdgeLabels
         from ..models.edge_evaluate_request_input_redacted_type_0 import (
             EdgeEvaluateRequestInputRedactedType0,
         )
-        from ..models.edge_labels import EdgeLabels
+        from ..models.edge_evaluate_request_tool_input_redacted_type_0 import (
+            EdgeEvaluateRequestToolInputRedactedType0,
+        )
         from ..models.edge_artifact_pointer import EdgeArtifactPointer
 
         d = src_dict.copy()

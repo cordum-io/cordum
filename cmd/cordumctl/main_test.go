@@ -1,15 +1,21 @@
 package main
 
 import (
+	"crypto/tls"
 	"flag"
 	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	sdk "github.com/cordum/cordum/sdk/client"
+	"github.com/cordum/cordum/tools/certgen"
 )
 
 func TestEnvOr(t *testing.T) {
@@ -258,6 +264,66 @@ func TestTLSOptionsAutoDetectsLocalhostCA(t *testing.T) {
 				t.Fatalf("CACertPath = %q, want %q", opts.CACertPath, tc.want)
 			}
 		})
+	}
+}
+
+func TestNewFlagSetDefaultGatewayIsComposeHTTPS(t *testing.T) {
+	t.Setenv("CORDUM_GATEWAY", "")
+	fs := newFlagSet("default-gateway")
+	fs.ParseArgs(nil)
+	if got, want := *fs.gateway, "https://localhost:8081"; got != want {
+		t.Fatalf("default gateway = %q, want %q", got, want)
+	}
+}
+
+// TestBareStatusTrustsLocalDevCA runs `cordumctl status` with no flags against
+// an HTTPS gateway whose certificate comes from `cordumctl generate-certs`:
+// ./certs/ca/ca.crt in the working directory is enough to verify it. Only the
+// port differs from the compose default, via CORDUM_GATEWAY. Without the CA
+// file the same call must fail verification rather than fall back to insecure.
+func TestBareStatusTrustsLocalDevCA(t *testing.T) {
+	dir := t.TempDir()
+	if err := certgen.GenerateAll(certgen.Options{BaseDir: filepath.Join(dir, "certs")}); err != nil {
+		t.Fatalf("generate certs: %v", err)
+	}
+	cert, err := tls.LoadX509KeyPair(filepath.Join(dir, "certs", "server", "tls.crt"), filepath.Join(dir, "certs", "server", "tls.key"))
+	if err != nil {
+		t.Fatalf("load server cert: %v", err)
+	}
+	var statusCalls atomic.Int32
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/status" {
+			http.NotFound(w, r)
+			return
+		}
+		statusCalls.Add(1)
+		_, _ = w.Write([]byte(`{"build":{"version":"test"},"nats":{"connected":true,"status":"CONNECTED"},"redis":{"ok":true}}`))
+	}))
+	srv.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+
+	_, port, err := net.SplitHostPort(srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("split listener addr: %v", err)
+	}
+	t.Setenv("CORDUM_GATEWAY", "https://localhost:"+port)
+	t.Setenv("CORDUM_API_KEY", "test-key")
+	t.Setenv("CORDUM_TLS_CA", "")
+	t.Setenv("CORDUM_TLS_INSECURE", "")
+
+	t.Chdir(dir)
+	if err := runStatusCmdE(nil); err != nil {
+		t.Fatalf("bare status with ./certs/ca/ca.crt: %v", err)
+	}
+	if statusCalls.Load() != 1 {
+		t.Fatalf("status endpoint calls = %d, want 1", statusCalls.Load())
+	}
+
+	t.Chdir(t.TempDir()) // no certs/ca/ca.crt here
+	err = runStatusCmdE(nil)
+	if err == nil || !strings.Contains(err.Error(), "certificate") {
+		t.Fatalf("bare status without the dev CA: err = %v, want a certificate verification error", err)
 	}
 }
 

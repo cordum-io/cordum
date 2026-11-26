@@ -13,7 +13,6 @@ import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useQueryState } from "nuqs";
-import type { ColumnDef } from "@tanstack/react-table";
 import { get } from "@/api/client";
 import { mapJobRecord, type BackendJobRecord } from "@/api/transform";
 import type { DLQEntry, Job } from "@/api/types";
@@ -29,7 +28,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonTable } from "@/components/ui/Skeleton";
 import { Tabs } from "@/components/ui/Tabs";
 import { Textarea } from "@/components/ui/Textarea";
-import { DataTable, type DecisionTier } from "@/components/primitives/DataTable";
+import { DataTable, type DataTableColumn, type DecisionTier } from "@/components/primitives/DataTable";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useDLQ, useRetryDLQ, useDeleteDLQ } from "@/hooks/useDLQ";
 import {
@@ -533,7 +532,7 @@ export default function JobsPage() {
   const decisionAccessor = (job: EnrichedJob): DecisionTier | undefined =>
     job._safetyDecision as DecisionTier | undefined;
 
-  const columns = useMemo<ColumnDef<EnrichedJob>[]>(
+  const columns = useMemo<DataTableColumn<EnrichedJob>[]>(
     () => [
       {
         id: "status",
@@ -665,7 +664,7 @@ export default function JobsPage() {
                 </div>
               ),
               meta: { align: "right" },
-            } satisfies ColumnDef<EnrichedJob>,
+            } satisfies DataTableColumn<EnrichedJob>,
           ]
         : []),
     ],

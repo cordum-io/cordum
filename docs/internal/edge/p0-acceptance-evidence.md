@@ -480,9 +480,11 @@ Gateway trace summary:
 - Approval-required edit flow returns `REQUIRE_APPROVAL`, a generated
   `approval_ref`, dashboard approval URL shape, matching action/input hashes,
   and `manual_approval` / `approve_then_retry` guidance.
-- Operator approval consumes exactly once: first retry returns `ALLOW` with the
-  same approval/action/input hashes; duplicate retry returns `DENY` with
-  `request_new_approval` guidance.
+- Operator approval was single-use in this run: the first retry returned
+  `ALLOW` with the same approval/action/input hashes, and a duplicate retry
+  returned `DENY` with `request_new_approval` guidance. This records the
+  May 2026 EDGE-032 run. Approval binding is rated `supported`,
+  not `verified`: see CLM-013 in the [claim register](../../contract/claims.yaml).
 - Destructive action provenance requires the resolved approval audit event
   (`EventEdgeApprovalResolved` / `edge.approval_resolved`) for the same
   tenant/ref/hash; an approval-requested row alone is not sufficient evidence.

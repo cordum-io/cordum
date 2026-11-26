@@ -79,9 +79,10 @@ describe("useSettings internals", () => {
       enabled: true,
       transport: "both",
       port: 9100,
-      requireAuth: false,
       allowedOrigins: ["https://example.com"],
     });
+    // The gateway never reads mcp.require_auth (/mcp/* always requires auth).
+    expect(nested).not.toHaveProperty("requireAuth");
     expect(nested.tools.cordum_submit_job?.enabled).toBe(false);
 
     const flat = __settingsInternal.resolveMcpConfig({
@@ -95,9 +96,9 @@ describe("useSettings internals", () => {
       enabled: true,
       transport: "stdio",
       port: 7001,
-      requireAuth: false,
       allowedOrigins: ["*"],
     });
+    expect(flat).not.toHaveProperty("requireAuth");
   });
 });
 
@@ -392,9 +393,9 @@ describe("useSettings hooks", () => {
       enabled: true,
       transport: "both",
       port: 4000,
-      requireAuth: false,
       allowedOrigins: ["https://claude.ai"],
     });
+    expect(hook.result.current?.data).not.toHaveProperty("requireAuth");
     expect(hook.result.current?.data.tools.cordum_submit_job?.enabled).toBe(false);
     hook.unmount();
   });
@@ -440,6 +441,8 @@ describe("useSettings hooks", () => {
     const mcp = payload.mcp as Record<string, unknown>;
     expect(mcp.transport).toBe("both");
     expect(mcp.port).toBe(3001);
+    // A stored legacy requireAuth is not echoed back.
+    expect(mcp).not.toHaveProperty("requireAuth");
     expect((mcp.tools as Record<string, unknown>).cordum_submit_job).toEqual({ enabled: false });
     hook.unmount();
   });

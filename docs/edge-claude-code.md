@@ -10,8 +10,16 @@ when approval is needed, and when evidence must be exported.
 ## Command
 
 ```bash
-CORDUM_GATEWAY=http://localhost:8081 CORDUM_API_KEY=<cordum-api-key> CORDUM_TENANT_ID=default cordumctl edge claude -- --print "summarize this repo"
+CORDUM_GATEWAY=https://localhost:8081 \
+CORDUM_TLS_CA=<cordum-checkout>/certs/ca/ca.crt \
+CORDUM_API_KEY=<cordum-api-key> \
+CORDUM_TENANT_ID=default \
+cordumctl edge claude -- --print "summarize this repo"
 ```
+
+The default stack serves the gateway over HTTPS with a development CA in the
+Cordum checkout's `certs/ca/ca.crt`. `CORDUM_TLS_CA` (or `--cacert`) names
+that CA, and the launcher passes it to `cordum-agentd` for its Gateway calls.
 
 Use `cordumctl edge claude [edge flags] -- [claude args...]`. Cordum flags stay
 before `--`; Claude arguments go after it. The wrapper supplies the governed
@@ -80,26 +88,56 @@ persisted as audit evidence.
 
 ## Fail modes
 
-| Mode | Behavior |
+| Mode | Measured outage result |
 | --- | --- |
-| `observe` | Allow degraded actions and record evidence where possible. |
-| `enforce` | Allow known-safe degraded actions only; deny risky/unknown actions — **only when `CORDUM_AGENTD_FAIL_CLOSED` is enabled**. |
-| `enterprise-strict` | Fail closed when Cordum governance is unavailable. |
+| `observe` | Hook emits empty allow/no-op output with a degraded warning when agentd is unavailable (gateway-from-edge/low [b]). |
+| `enforce` | In the enforce `PreToolUse` probes, the hook emits deny on a safe-command agentd timeout without `CORDUM_AGENTD_FAIL_CLOSED`, or a degraded agentd answer for Edit (gateway-from-edge/low [a], protected [a]). |
+| `enterprise-strict` | agentd returns degraded DENY in Gateway/policy-unavailable probes (gateway-from-edge/low [c]); the hook emits deny for a malformed agentd response (protected [b]). |
 
-`CORDUM_AGENTD_FAIL_CLOSED` defaults to `false`. An `enforce` session that does
-not enable it fails **open**: if agentd errors or times out, the action is
-allowed. Run `cordumctl edge doctor` to see the effective posture — it warns
-when an enforce session is fail-open.
+Measured cells in the [failure and partition behavior contract](contract/failure-behavior.md#behavior-table):
 
-Malformed hook input fails closed with redacted stderr. Hook timeout must stay
-below Claude Code's 5s command-hook deadline.
+- gateway-from-edge/low [a]: `TestRunEnforceModeDeniesPreToolUseOnAgentdTimeoutWithoutFailClosed`;
+  protected [a]: `TestRunEnforceDeniesDegradedPreToolUse`.
+- gateway-from-edge/low [b]: `TestRunObserveModeAllowsNoopWhenAgentdUnavailable`.
+- gateway-from-edge/low [c]: the enterprise-strict cases of
+  `TestApplyFailModeMatrixCoversObserveEnforceEnterpriseStrict`;
+  protected [b]: `TestRunEnterpriseStrictDeniesMalformedAgentdResponse`.
 
-The same 5s deadline bounds the inline approval wait.
-`CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` defaults to `30s`, which exceeds
-it: when the wait outlives the deadline Claude Code times out the hook and
-**fails open**, with no user-visible warning. Set the inline-wait timeout
-strictly below `5s`, disable inline wait, or use deny-and-retry instead of
-block-and-wait. See [edge/configuration.md](edge/configuration.md) for details.
+These are component probes, not a full hook-to-Gateway outage qualification.
+agentd's Gateway-outage handling in enforce and observe is not measured (G04).
+The contract's Scope paragraph also marks agent-runtime compliance with hook
+decisions as not measured; observe does not guarantee evidence survives an outage.
+
+For every mode except `observe`, the wrapper generates
+`CORDUM_AGENTD_FAIL_CLOSED=true` and `"onFailure": "block"` on the
+`PreToolUse`, `UserPromptSubmit`, and `ConfigChange` command hooks.
+These settings do not establish agent-runtime compliance during an outage.
+
+Before it launches Claude Code in a fail-closed mode, the wrapper runs
+`claude --version`. `enterprise-strict` refuses to launch a version older than
+2.1.295; the other fail-closed modes print a warning and launch. If the version
+cannot be read, the wrapper prints a warning and launches. `cordumctl edge
+doctor` runs the same check as `claude_code_version`.
+
+`CORDUM_AGENTD_FAIL_CLOSED` defaults to `false` in hand-wired settings.
+The measured enforce `PreToolUse` timeout deny above does not depend on that
+flag. Other hook-event and hook-process failure outcomes are not measured by
+the contract. Run `cordumctl edge doctor` to inspect the configured posture.
+
+Malformed-input behavior is not measured by the failure contract. Hook timeout
+must stay below the command-hook `"timeout": 5` that Cordum generates;
+generated settings use `4.5s`.
+
+The same budget bounds the inline approval wait.
+`CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` defaults to `30s`, but agentd ends
+the wait 1s before the hook's `4s` agentd budget runs out, leaving about 3 seconds.
+In the contract's enterprise-strict probes, rejection returns DENY; an unresolved
+wait (pending, timeout, Gateway error or budget expiry) returns REQUIRE_APPROVAL
+with `approval_ref`, as with inline wait off. See gateway-from-edge/approval [a],
+`TestAgentdDecisionFromEvaluateInlineWaitRejectedDenies` and
+`TestAgentdDecisionFromEvaluateInlineWaitUnresolvedReturnsPendingApproval`.
+Other modes and the agent runtime's own deadline handling are not measured.
+See [configuration](edge/configuration.md) for budget and retry guidance.
 
 ## Token tradeoffs
 

@@ -16,6 +16,8 @@ func TestEmbeddedEdgeSchemasValidateGoodSamples(t *testing.T) {
 
 	session := validEdgeSession(started)
 	session.EndedAt = &ended
+	assured := session
+	assured.AssuranceState = AssuranceStateStale
 	execution := validAgentExecution(started)
 	execution.EndedAt = &ended
 	event := validAgentActionEvent(started)
@@ -32,6 +34,7 @@ func TestEmbeddedEdgeSchemasValidateGoodSamples(t *testing.T) {
 		value any
 	}{
 		{name: "edge_session.schema.json", value: session},
+		{name: "edge_session.schema.json", value: assured}, // with assurance_state set
 		{name: "agent_execution.schema.json", value: execution},
 		{name: "agent_action_event.schema.json", value: event},
 		{name: "edge_approval.schema.json", value: approval},

@@ -63,6 +63,13 @@ func NewClient(url string) (redis.UniversalClient, error) {
 	return client, nil
 }
 
+// IsCluster reports whether client talks to a Redis Cluster: there, a script
+// or MULTI may only touch keys in one hash slot, and SCAN reaches one node.
+func IsCluster(client redis.UniversalClient) bool {
+	_, ok := client.(*redis.ClusterClient)
+	return ok
+}
+
 func startPoolStatsLogger(client redis.UniversalClient) {
 	if client == nil {
 		return

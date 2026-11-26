@@ -60,7 +60,11 @@ describe("CordumClient", () => {
 
     expect(jobs).toEqual({ items: [{ id: "job-1" }] });
     expect(job).toEqual({ id: "job-1", state: "running" });
-    expect(created).toEqual({ accepted: true, body: { topic: "job.default", prompt: "run this" } });
+    // The gateway dedupes on the body field, not the header.
+    expect(created).toEqual({
+      accepted: true,
+      body: { topic: "job.default", prompt: "run this", idempotency_key: "idem-123" },
+    });
     expect(workflows).toEqual([{ id: "wf-1" }]);
     expect(bundle).toEqual({ id: "bundle-1" });
     expect(observedHeaders[0]?.get("X-API-Key")).toBe("sdk-key");

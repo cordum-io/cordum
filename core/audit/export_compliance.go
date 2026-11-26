@@ -127,6 +127,8 @@ type ComplianceExportOptions struct {
 	SOC2Legend   map[string]string
 	BundleLookup BundleLookupFn
 	Verifier     ChainVerifierFn
+	// HMACKey, when set, makes chain verification check event HMAC tags.
+	HMACKey []byte
 }
 
 // rowMatches reports whether ev passes the configured row filter. Returns true
@@ -348,6 +350,7 @@ func writeNDJSONExport(
 		SinceMs: timeToMillis(opts.From),
 		UntilMs: timeToMillis(opts.To),
 		Limit:   int64(opts.MaxEvents),
+		HMACKey: opts.HMACKey,
 	}
 	if verifyOpts.Limit > MaxVerifyLimit {
 		verifyOpts.Limit = MaxVerifyLimit
@@ -528,6 +531,7 @@ func writeCSVExport(
 		SinceMs: timeToMillis(opts.From),
 		UntilMs: timeToMillis(opts.To),
 		Limit:   int64(opts.MaxEvents),
+		HMACKey: opts.HMACKey,
 	}
 	if verifyOpts.Limit > MaxVerifyLimit {
 		verifyOpts.Limit = MaxVerifyLimit

@@ -13,8 +13,14 @@ production-only hardening across all services:
   Services fail fast at startup if cert/key files are missing.
 - **Client TLS enforced** for NATS and Redis connections (insecure rejected)
 - **gRPC reflection disabled** by default
-- **Anonymous auth blocked** (`CORDUM_ALLOW_INSECURE_NO_AUTH` ignored)
-- **Header principal override disabled** (`CORDUM_ALLOW_HEADER_PRINCIPAL` ignored)
+- **Anonymous auth blocked**: the gateway refuses to start with `CORDUM_ALLOW_INSECURE_NO_AUTH` set
+- **Header principal ignored by default**: static and managed API keys ignore
+  `X-Principal-Id`. `CORDUM_ALLOW_HEADER_PRINCIPAL=true` is honored as an
+  explicit downgrade that the gateway logs as a startup warning: it turns the
+  header back on for static API keys without a `principal_id` and for managed
+  keys (outside production it is always on). Header principals are then
+  recorded for attribution only and never bind identity, such as a job's
+  `labels.agent_id`.
 
 ## Environment Variables Reference
 
