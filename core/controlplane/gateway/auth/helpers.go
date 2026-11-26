@@ -33,6 +33,16 @@ func NormalizeRole(role string) string {
 	return role
 }
 
+// normalizeStaticKeyRole keeps a static API key's admin, operator or viewer
+// role as written, like a strict OIDC role. Any other value keeps
+// NormalizeRole, so secops stays an admin alias (task-18bdea37).
+func normalizeStaticKeyRole(role string) string {
+	if strict, ok := normalizeOIDCStrictRole(role); ok {
+		return strict
+	}
+	return NormalizeRole(role)
+}
+
 // NormalizeAPIKey cleans an API key string of surrounding whitespace and quotes.
 func NormalizeAPIKey(key string) string {
 	key = strings.TrimSpace(key)
@@ -132,7 +142,7 @@ func MergeAPIKeyEntries(keys map[string]apiKeyMeta, entries []apiKeyEntry) error
 		}
 		meta := apiKeyMeta{
 			Tenant:           strings.TrimSpace(entry.Tenant),
-			Role:             NormalizeRole(entry.Role),
+			Role:             normalizeStaticKeyRole(entry.Role),
 			PrincipalID:      strings.TrimSpace(entry.PrincipalID),
 			AllowCrossTenant: entry.AllowCrossTenant,
 		}

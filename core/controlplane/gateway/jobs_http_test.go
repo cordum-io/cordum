@@ -602,7 +602,7 @@ func TestHandleSubmitJobHTTPOperatorAllowed(t *testing.T) {
 	s.handleSubmitJobHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 for operator role (admin alias), got %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("expected 200 for operator role, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
