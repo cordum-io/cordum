@@ -889,6 +889,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `GET /api/v1/workers` lists both agents. A rerun replaces both credentials.
   The demo's other workers stay without credentials (task-50828e1f).
 
+- Test and demo scripts: `tools/scripts/e2e_test.sh` and
+  `tools/scripts/demo_guardrails_run.sh` issue a worker credential in the API
+  key's tenant for the worker each one starts (`hello-worker`,
+  `demo-guardrails-worker`) before waiting for its heartbeat, so
+  `GET /api/v1/workers` lists it. The token is discarded, and a rerun
+  replaces the credential (task-e7d1fe1d).
+
 - Workflow runs: `POST /api/v1/workflows/{id}/runs/{run_id}/cancel` reads the run's tenant before cancelling; a failed lookup returns `503`, and a run whose tenant cannot be read returns `404 run not found` to callers without cross-tenant access.
 
 - Audit: submit, approve and reject audit events and spans name the agent in a job's `agent_id` label only when that agent belongs to the job's tenant; otherwise they carry the label's id with no name or risk tier.

@@ -151,6 +151,7 @@ CURL_OUTPUT_NULL="$(to_curl_path /dev/null)"
 
 API_KEY="${CORDUM_API_KEY:-${API_KEY:-}}"
 TENANT_ID="${CORDUM_TENANT_ID:-default}"
+HELLO_WORKER_ID=hello-worker
 ADMIN_USERNAME="${CORDUM_ADMIN_USERNAME:-admin}"
 ADMIN_PASSWORD="${CORDUM_ADMIN_PASSWORD:-}"
 REDIS_PASSWORD="${REDIS_PASSWORD:-cordum-dev}"
@@ -346,6 +347,14 @@ cordumctl_common_flags() {
   fi
 }
 
+ensure_hello_worker_credential() {
+  cordumctl_common_flags
+  if ! cordumctl_cmd worker credential create "${CORDUMCTL_FLAGS[@]}" --worker-id "${HELLO_WORKER_ID}" >/dev/null; then
+    red "FATAL: could not issue worker credential for ${HELLO_WORKER_ID}"
+    exit 2
+  fi
+}
+
 to_cordumctl_path() {
   local path="$1"
   if command -v cygpath >/dev/null 2>&1; then
@@ -424,6 +433,7 @@ yellow "  hello-worker bus schemes: nats=${BUS_SCHEME}, redis=${REDIS_SCHEME}"
 HELLO_LOG="${CORDUM_E2E_HELLO_WORKER_LOG:-${TMPDIR:-/tmp}/cordum-hello-worker-e2e.log}"
 : >"${HELLO_LOG}"
 (cd "${ROOT_DIR}/examples/hello-worker-go" && \
+  WORKER_ID="${HELLO_WORKER_ID}" \
   NATS_URL="${HELLO_NATS_URL}" \
   REDIS_URL="${HELLO_REDIS_URL}" \
   NATS_TLS_CA="${NATS_TLS_CA:-}" \
@@ -722,6 +732,7 @@ check "GET /config" "200" "$code"
 # ---------------------------------------------------------------------------
 ensure_hello_pack_installed
 wait_for_hello_topic_registry
+ensure_hello_worker_credential
 
 bold "[setup] Waiting for hello-worker heartbeat"
 WORKER_READY=false
