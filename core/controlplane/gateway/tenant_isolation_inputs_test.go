@@ -23,11 +23,6 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const (
-	isoTenantA = "tenant-iso-a"
-	isoTenantB = "tenant-iso-b"
-)
-
 func isoMarker(label string) string { return "ISO-" + label + "-" + uuid.NewString() }
 
 // isoRequest authenticates as tenant; the auth tenant is never empty.
