@@ -46,6 +46,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Policy audit: each entry records a tenant: the job's tenant for job entries,
+  otherwise the tenant of a caller bound to one tenant. For callers bound to one
+  tenant, `GET /api/v1/policy/audit` lists only entries recorded for their own
+  tenant. Entries recorded before this release carry no tenant and are listed
+  only to callers whose access spans all tenants (`allow_cross_tenant`)
+  (task-6eda46e2).
+
 - Custom roles belong to the tenant that creates them; role names remain unique
   deployment-wide. Custom roles stored without a tenant belong to the gateway's
   own tenant (`TENANT_ID`, or `default` when unset); other tenants must re-create
