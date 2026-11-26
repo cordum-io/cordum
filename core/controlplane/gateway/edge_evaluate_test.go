@@ -2000,6 +2000,109 @@ func TestGatewayEdgeEvaluateBindsAgentIDToCredential(t *testing.T) {
 	}
 }
 
+// An approval wait can last minutes. The evaluation after the wait reads the
+// worker link of the credential again, so a link that was moved or removed
+// during the wait decides which agent identity the Safety Kernel loads. When
+// the link cannot be read, the action is not run and the approval is kept.
+func TestGatewayEdgeEvaluateRebindsAgentIDAfterApprovalWait(t *testing.T) {
+	const principal = "principal-edge-a"
+	relink := func(agentID string) func(context.Context, *server) error {
+		return func(ctx context.Context, s *server) error {
+			if err := s.agentIdentityStore.UnlinkWorker(ctx, edgeRouteTenant, principal); err != nil || agentID == "" {
+				return err
+			}
+			return s.agentIdentityStore.LinkWorker(ctx, agentID, principal)
+		}
+	}
+	// A links key of the wrong type makes the lookup fail, as a store outage does.
+	breakLinks := func(ctx context.Context, s *server) error {
+		return s.jobStore.Client().Set(ctx, "agent:worker-links:"+edgeRouteTenant, "not-a-hash", 0).Err()
+	}
+	for _, tc := range []struct {
+		name         string
+		duringWait   func(context.Context, *server) error
+		wantDecision edgecore.EdgeDecision
+		wantCalls    int
+		wantAgentID  string
+	}{
+		{name: "link moved to another agent", duringWait: relink("agent-next"), wantDecision: edgecore.DecisionAllow, wantCalls: 2, wantAgentID: "agent-next"},
+		{name: "link removed", duringWait: relink(""), wantDecision: edgecore.DecisionAllow, wantCalls: 2},
+		{name: "link lookup fails", duringWait: breakLinks, wantDecision: edgecore.DecisionDeny, wantCalls: 1, wantAgentID: "agent-bound"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			safety := &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{
+				Decision: pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN, Reason: "needs approval", ApprovalRequired: true,
+			}}
+			s, handler := newEdgeEvaluateTestServer(t, safety)
+			createDelegationAgent(t, s, edgeRouteTenant, "agent-bound", []string{"read"}, []string{"job.default"})
+			createDelegationAgent(t, s, edgeRouteTenant, "agent-next", []string{"read"}, []string{"job.default"})
+			if err := s.agentIdentityStore.LinkWorker(context.Background(), "agent-bound", principal); err != nil {
+				t.Fatalf("link worker: %v", err)
+			}
+			session := createEdgeRouteSession(t, handler)
+			safety.response.PolicySnapshot = session.PolicySnapshot
+
+			// Once the handler waits on the approval: change the link, then approve.
+			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+			defer cancel()
+			approved := make(chan error, 1)
+			var approvalRef string
+			go func() {
+				for {
+					page, err := s.edgeStore.ListApprovals(ctx, edgecore.ListApprovalsQuery{TenantID: edgeRouteTenant, SessionID: session.SessionID, Limit: 10})
+					if err == nil && len(page.Items) == 1 && page.Items[0].Status == edgecore.ApprovalStatusPending {
+						approvalRef = page.Items[0].ApprovalRef
+						if err = tc.duringWait(ctx, s); err == nil {
+							_, err = s.edgeStore.ApproveApproval(ctx, edgecore.ApprovalResolution{
+								TenantID: edgeRouteTenant, ApprovalRef: approvalRef, ResolverID: "reviewer", ResolvedBy: "reviewer", ResolvedAt: time.Now().UTC(),
+							})
+						}
+						approved <- err
+						return
+					}
+					select {
+					case <-ctx.Done():
+						approved <- errors.New("pending approval not observed")
+						return
+					case <-time.After(10 * time.Millisecond):
+					}
+				}
+			}()
+
+			body := edgeEvaluateBodyWithInlineWait(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", map[string]any{"command": "rm -rf /var/edge-wait-relink"}, "", 3000)
+			rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", body)
+			if err := <-approved; err != nil {
+				t.Fatalf("link change and approval during the wait: %v", err)
+			}
+			if rr.Code != http.StatusOK {
+				t.Fatalf("evaluate status = %d, want 200 body=%s", rr.Code, rr.Body.String())
+			}
+			var resp edgeEvaluateResponseJSON
+			decodeEdgeRouteJSON(t, rr, &resp)
+			if resp.Decision != string(tc.wantDecision) {
+				t.Fatalf("decision = %q, want %s body=%s", resp.Decision, tc.wantDecision, rr.Body.String())
+			}
+			stored, ok, err := s.edgeStore.GetApproval(context.Background(), edgeRouteTenant, approvalRef)
+			if err != nil || !ok || stored == nil {
+				t.Fatalf("load approval: stored=%#v ok=%v err=%v", stored, ok, err)
+			}
+			if consumed := stored.ConsumedAt != nil; consumed != (tc.wantDecision == edgecore.DecisionAllow) {
+				t.Errorf("approval consumed = %v with decision %s", consumed, tc.wantDecision)
+			}
+			requests := safety.capturedRequests()
+			if len(requests) != tc.wantCalls {
+				t.Fatalf("captured safety requests = %d, want %d", len(requests), tc.wantCalls)
+			}
+			last := requests[len(requests)-1]
+			for name, labels := range map[string]map[string]string{"labels": last.GetLabels(), "meta.labels": last.GetMeta().GetLabels()} {
+				if got, set := labels["agent_id"]; got != tc.wantAgentID || set != (tc.wantAgentID != "") {
+					t.Errorf("%s agent_id of the last safety request = %q (set=%v), want %q", name, got, set, tc.wantAgentID)
+				}
+			}
+		})
+	}
+}
+
 // The workflow_run_id and job_id of a session, and workflow or job labels on
 // a request, are what the caller says. They stay on the stored event as
 // evidence. They do not pick workflow or job override rules: the only policy

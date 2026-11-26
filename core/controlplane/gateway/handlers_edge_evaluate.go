@@ -157,17 +157,9 @@ func (s *server) handleEdgeEvaluate(w http.ResponseWriter, r *http.Request) {
 		writeEdgeEventRequestError(w, r, err, "invalid edge evaluate request")
 		return
 	}
-	// The Safety Kernel reads agent_id as the agent identity of the caller. It
-	// comes from the worker link of the credential, as on job submit; the
-	// mapper already dropped any agent_id a request or session label carried.
-	agentID, err := s.linkedAgentID(r.Context(), evalCtx.tenantID, auth.FromRequest(r).AuthenticatedPrincipal())
-	if err != nil {
+	if err := s.bindEdgeEvaluateAgentID(r, evalCtx.tenantID, policyInput.policyRequest); err != nil {
 		writeEdgeInternalError(w, r, "edge evaluate agent link lookup", err)
 		return
-	}
-	if agentID != "" {
-		policyInput.policyRequest.Labels["agent_id"] = agentID
-		policyInput.policyRequest.Meta.Labels["agent_id"] = agentID
 	}
 	safetyResp, err := s.evaluateEdgeSafety(r.Context(), policyInput.policyRequest)
 	if err != nil {
@@ -483,13 +475,38 @@ func (s *server) edgeEvaluateDecide(ctx context.Context, evalCtx edgeEvaluateCon
 	return outcome, actionHash, err
 }
 
+// bindEdgeEvaluateAgentID sets the agent_id label of the policy request from
+// the worker link of the caller's credential, as job submit does, and removes
+// the label when the credential has no link. The Safety Kernel reads agent_id
+// as the agent identity of the caller; the mapper already dropped any agent_id
+// a request or session label carried.
+func (s *server) bindEdgeEvaluateAgentID(r *http.Request, tenantID string, req *pb.PolicyCheckRequest) error {
+	agentID, err := s.linkedAgentID(r.Context(), tenantID, auth.FromRequest(r).AuthenticatedPrincipal())
+	if err != nil {
+		return err
+	}
+	for _, labels := range []map[string]string{req.Labels, req.Meta.Labels} {
+		if agentID == "" {
+			delete(labels, "agent_id")
+		} else {
+			labels["agent_id"] = agentID
+		}
+	}
+	return nil
+}
+
 // edgeEvaluateAfterWait re-checks authority once a server-side approval wait
 // returns. The caller's credential must still authenticate as the same
-// principal, and policy is evaluated again. The consume that follows uses this
-// outcome, so a deny that applies by now wins and the approval stays unconsumed.
+// principal, its worker link is read again, and policy is evaluated again. The
+// consume that follows uses this outcome, so a deny that applies by now wins
+// and the approval stays unconsumed.
 func (s *server) edgeEvaluateAfterWait(r *http.Request, evalCtx edgeEvaluateContext, policyInput edgeEvaluatePolicyInput, waited edgeEvaluateDecisionOutcome) (edgeEvaluateDecisionOutcome, string, error) {
 	if !s.edgeEvaluateCallerAuthenticatesAs(r, evalCtx.principalID) {
 		return waited.edgeEvaluateDeny("caller credential no longer authenticates; this action was not run"), "", nil
+	}
+	if err := s.bindEdgeEvaluateAgentID(r, evalCtx.tenantID, policyInput.policyRequest); err != nil {
+		slog.Error("edge evaluate agent link lookup after approval wait failed", "error", err)
+		return waited.edgeEvaluateDeny("agent identity store unavailable; this action was not run"), "", nil
 	}
 	safetyResp, err := s.evaluateEdgeSafety(r.Context(), policyInput.policyRequest)
 	if err != nil {
