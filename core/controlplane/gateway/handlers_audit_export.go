@@ -76,11 +76,19 @@ func (s *server) handleAuditExportTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tenant, err := s.resolveTenant(r, "")
+	if err != nil {
+		if !s.hasPlatformAuthority(r) {
+			writeForbidden(w, r, err)
+			return
+		}
+		tenant = s.tenant
+	}
 	testEvent := audit.SIEMEvent{
 		Timestamp: time.Now().UTC(),
 		EventType: "system.test",
 		Severity:  audit.SeverityInfo,
-		TenantID:  s.tenant,
+		TenantID:  tenant,
 		Action:    "audit_export_test",
 		Decision:  "allow",
 		Reason:    "manual test from dashboard",

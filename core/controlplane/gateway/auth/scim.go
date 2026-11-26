@@ -52,13 +52,14 @@ const (
 )
 
 type SCIMService struct {
-	defaultTenant string
-	userStore     UserStore
-	redisStore    *RedisUserStore
-	resolver      *licensing.EntitlementResolver
-	baseURL       string
-	now           func() time.Time
-	newToken      func() (string, error)
+	defaultTenant  string
+	settingsTenant string
+	userStore      UserStore
+	redisStore     *RedisUserStore
+	resolver       *licensing.EntitlementResolver
+	baseURL        string
+	now            func() time.Time
+	newToken       func() (string, error)
 }
 
 type scimName struct {
@@ -169,9 +170,10 @@ type scimSettingsResponse struct {
 
 func NewSCIMService(store UserStore, defaultTenant string, resolver *licensing.EntitlementResolver) (*SCIMService, error) {
 	svc := &SCIMService{
-		defaultTenant: normalizeSCIMTenant(defaultTenant),
-		userStore:     store,
-		resolver:      resolver,
+		defaultTenant:  normalizeSCIMTenant(defaultTenant),
+		settingsTenant: strings.TrimSpace(defaultTenant),
+		userStore:      store,
+		resolver:       resolver,
 		now: func() time.Time {
 			return time.Now().UTC()
 		},
@@ -179,6 +181,9 @@ func NewSCIMService(store UserStore, defaultTenant string, resolver *licensing.E
 	}
 	if svc.defaultTenant == "" {
 		svc.defaultTenant = "default"
+	}
+	if svc.settingsTenant == "" {
+		svc.settingsTenant = "default"
 	}
 	if baseURL, err := parseSAMLBaseURL("CORDUM_API_BASE_URL", "CORDUM_API_BASE", "CORDUM_SAML_BASE_URL"); err == nil && baseURL != nil {
 		svc.baseURL = strings.TrimRight(baseURL.String(), "/")
@@ -650,6 +655,10 @@ func (s *SCIMService) authorizeSettings(w http.ResponseWriter, r *http.Request) 
 	}
 	if NormalizeRole(auth.Role) != "admin" {
 		s.writeSettingsError(w, http.StatusForbidden, "admin role required")
+		return "", false
+	}
+	if !auth.AllowCrossTenant && strings.TrimSpace(auth.Tenant) != s.settingsTenant {
+		s.writeSettingsError(w, http.StatusForbidden, "SCIM settings authority required")
 		return "", false
 	}
 	tenant := normalizeSCIMTenant(auth.Tenant)

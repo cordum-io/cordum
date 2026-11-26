@@ -152,6 +152,34 @@ func (s *Service) ListForTenant(ctx context.Context, tenantID string) (Snapshot,
 	return Snapshot{Items: items, RegistryEmpty: registryEmpty}, nil
 }
 
+// Registered reports whether the stored registrations hold a record named
+// name, in any tenant or none and in any status. It reads only the stored
+// system/topics document: it never migrates legacy pool mappings and stores
+// nothing.
+func (s *Service) Registered(ctx context.Context, name string) (bool, error) {
+	if s == nil || s.config == nil {
+		return false, errors.New("topic registry unavailable")
+	}
+	doc, err := s.config.Get(ctx, configsvc.ScopeSystem, scopeIDTopics)
+	if errors.Is(err, redis.Nil) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("get topic registry: %w", err)
+	}
+	records, err := decodeDocument(doc)
+	if err != nil {
+		return false, err
+	}
+	name = strings.TrimSpace(name)
+	for _, rec := range records {
+		if rec.Name == name {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // Set inserts or updates one topic registration.
 func (s *Service) Set(ctx context.Context, reg Registration) error {
 	return s.SetMany(ctx, []Registration{reg})

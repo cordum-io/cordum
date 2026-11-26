@@ -204,6 +204,19 @@ func (s *AgentIdentityStore) List(ctx context.Context, tenantID, cursor string, 
 	if tenantID == "" {
 		return nil, "", fmt.Errorf("agent identity tenant id required")
 	}
+	return s.list(ctx, tenantID, cursor, limit, filter)
+}
+
+// ListAllTenants returns agent identities across all tenants with pagination and filtering.
+// Only checks that require access to all tenants may call it.
+func (s *AgentIdentityStore) ListAllTenants(ctx context.Context, cursor string, limit int, filter AgentIdentityFilter) ([]*AgentIdentity, string, error) {
+	if s == nil || s.client == nil {
+		return nil, "", fmt.Errorf("agent_identity_store: redis client not initialized")
+	}
+	return s.list(ctx, "", cursor, limit, filter)
+}
+
+func (s *AgentIdentityStore) list(ctx context.Context, tenantID, cursor string, limit int, filter AgentIdentityFilter) ([]*AgentIdentity, string, error) {
 	if limit <= 0 {
 		limit = defaultAgentListLimit
 	}

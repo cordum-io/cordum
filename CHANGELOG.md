@@ -45,6 +45,59 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - typedoc, typedoc-plugin-coverage and typedoc-plugin-markdown are removed from the install with pnpm `-` overrides. typedoc 0.28 calls `Minimatch#matchOne`, which 11.x removed. orval 8.31.0 loads typedoc only for its `docs` output, which the dashboard does not configure. Until typedoc supports minimatch 11, enabling that output fails at import. orval stays at 8.31.0.
 
 ### Fixed
+- Gateway config: writing an `/api/v1/config` document in any scope other than
+  `org`, `team`, `workflow` or `step` (the flat body writes `system/default`),
+  reading a `system` scope document, and `GET /api/v1/config/effective` require
+  platform authority: no auth provider, an auth context spanning all tenants, or
+  the gateway's own tenant (`TENANT_ID`, `default` when unset). Other callers get
+  403 (task-6e7013d5).
+
+- Policy audit: each entry records a tenant: the job's tenant for job entries,
+  otherwise the tenant of a caller bound to one tenant. For callers bound to one
+  tenant, `GET /api/v1/policy/audit` lists only entries recorded for their own
+  tenant. Entries recorded before this release carry no tenant and are listed
+  only to callers whose access spans all tenants (`allow_cross_tenant`)
+  (task-6eda46e2).
+
+- `DELETE /api/v1/topics/{name}` removes the caller's registration. The topic's
+  pool mapping is removed only by a caller with platform authority (no auth
+  provider, an auth context that spans all tenants, or the gateway's own
+  tenant, `TENANT_ID` or `default` when unset) once no tenant registers the
+  topic; otherwise the mapping stays for the pool routes to manage
+  (task-e2277e8a).
+
+- Scheduler: in compat mode, a session-authenticated sender's `JobCancel`
+  or `JobResult` applies only to jobs in its own tenant, as in production.
+  Service identities and unauthenticated compat traffic are unchanged
+  (task-24d20bca).
+
+- Legal-hold routes and the audit export test act on the caller's own tenant.
+  Naming or releasing another tenant's hold, or listing every tenant, requires
+  platform authority: no auth provider, an auth context that spans all tenants,
+  or the gateway's own tenant (task-c3414b7a).
+
+- Custom roles belong to the tenant that creates them; role names remain unique
+  deployment-wide. Custom roles stored without a tenant belong to the gateway's
+  own tenant (`TENANT_ID`, or `default` when unset); other tenants must re-create
+  their roles with distinct names (task-767c5395).
+
+- `GET /api/v1/status` counts the caller's own tenant's jobs and workers.
+  Deployment-wide figures and infrastructure details go to callers with platform
+  authority: no auth provider, an auth context that spans all tenants, or the
+  gateway's own tenant (task-51149f99).
+
+- Deployment settings: OIDC group-role mapping, admin lock inspection, license
+  reload and telemetry routes require platform authority: no auth provider, an
+  auth context spanning all tenants, or the gateway's own tenant (`TENANT_ID`,
+  `default` when unset). SCIM settings and token rotation require an admin of
+  the SCIM provisioning tenant or an admin context spanning all tenants.
+  Single-tenant dashboard and API administration remain available to that
+  tenant's admins (task-b6a0f9ac).
+
+- Gateway: `POST /api/v1/users` creates the user in the caller's own tenant;
+  naming another tenant requires platform authority (no auth provider, an
+  auth context that spans all tenants, or membership of the gateway's own
+  tenant, `TENANT_ID` or `default` when unset) (task-7f1c62ac).
 
 - Worker reads: a worker belongs to the tenant of its worker credential. For a
   caller without cross-tenant access, `GET /api/v1/workers` lists only that
@@ -52,6 +105,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `GET /api/v1/workers/{id}/jobs` answer 404 for any other worker, and the jobs
   list holds only that tenant's jobs. A worker without a credential record is
   listed only to callers with cross-tenant access (task-fa19ec96).
+
+- Mock-bank demo: `demo/mock-bank/integration_test.sh` issues worker
+  credentials in the API key's tenant for `megacorp-transfer-agent-01` and
+  `megacorp-transfer-agent-02` (`cordumctl worker credential create`, with
+  the printed token discarded) before it waits for their heartbeats, so
+  `GET /api/v1/workers` lists both agents. A rerun replaces both credentials.
+  The demo's other workers stay without credentials (task-50828e1f).
+
+- Test and demo scripts: `tools/scripts/e2e_test.sh` and
+  `tools/scripts/demo_guardrails_run.sh` issue a worker credential in the API
+  key's tenant for the worker each one starts (`hello-worker`,
+  `demo-guardrails-worker`) before waiting for its heartbeat, so
+  `GET /api/v1/workers` lists it. The token is discarded, and a rerun
+  replaces the credential (task-e7d1fe1d).
+
+- Production gate: before it starts or reuses the mock-bank fleet,
+  `tools/scripts/production_gate.sh` issues a worker credential in the API
+  key's tenant for each of the seven workers `demo/mock-bank/worker` starts,
+  so its readiness check finds them in `GET /api/v1/workers`. Each token is
+  discarded, and a new start replaces the credentials (task-729c47ac).
 
 - MCP approval resume: a call resumed with `_approval_ref` is refused with
   `-32096` `policy_snapshot_changed` when policy was published between the
@@ -137,6 +210,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   dashboard sessions belong to that tenant. With several tenants, the
   gateway's tenant is the platform tenant, so keep other tenants out of it.
   Reading policy is unchanged (task-677dd8af).
+- Worker pools: `DELETE /api/v1/pools/{name}`, with or without `force`, answers
+  `409 POOL_IN_USE` while an agent identity of any tenant lists the pool in its
+  `allowed_pools`. The `agent_ids` field names those agents, whatever their
+  tenant (task-04a0670c).
 - The dashboard test run no longer fails after every test passes when a console line, written by work that outlived its test file, is still being delivered as the Vitest worker shuts down (`EnvironmentTeardownError: Closing rpc while "onUserConsoleLog" was pending`). `dashboard/vitest.config.ts` ignores exactly that error, so every other unhandled error still fails the run. `KeyboardShortcutsHelp.test.tsx`, which produced it, now answers the AppShell's requests in-process and waits for them to settle (task-04eef2b3).
 
 #### core/mcp — the MCP invocation audit keeps a consumed human approval when scope preapproval also applies (2026-11-12, task-74f4c01e)

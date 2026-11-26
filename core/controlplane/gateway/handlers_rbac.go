@@ -44,9 +44,15 @@ func (s *server) handleListRoles(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to list roles")
 		return
 	}
+	visible := roles[:0]
+	for _, role := range roles {
+		if s.rbacStore.RoleVisibleTo(role, tenantFromRequest(r)) {
+			visible = append(visible, role)
+		}
+	}
 
 	writeJSON(w, map[string]any{
-		"roles":    roles,
+		"roles":    visible,
 		"entitled": true,
 	})
 }
@@ -80,7 +86,11 @@ func (s *server) handleGetRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resolved, resolveErr := s.rbacStore.ResolvePermissions(r.Context(), name)
+	if !s.rbacStore.RoleVisibleTo(role, tenantFromRequest(r)) {
+		writeJSONError(w, http.StatusNotFound, errorCodeRBACRoleNotFound, "role not found")
+		return
+	}
+	resolved, resolveErr := s.rbacStore.ResolvePermissions(r.Context(), name, s.rbacStore.PrincipalTenant(r.Context()))
 	if resolveErr != nil {
 		resolved = role.Permissions
 	}
@@ -159,6 +169,10 @@ func decodeRoleRequest(w http.ResponseWriter, r *http.Request) (roleRequest, boo
 func (s *server) existingRoleForPut(w http.ResponseWriter, r *http.Request, name string) (*auth.RoleDefinition, bool, bool) {
 	existing, err := s.rbacStore.GetRole(r.Context(), name)
 	if err == nil {
+		if !s.rbacStore.RoleVisibleTo(existing, tenantFromRequest(r)) {
+			writeJSONError(w, http.StatusNotFound, errorCodeRBACRoleNotFound, "role not found")
+			return nil, false, false
+		}
 		return existing, true, true
 	}
 	if errors.Is(err, auth.ErrRoleNotFound) {
@@ -175,6 +189,7 @@ func (s *server) saveRoleRequest(w http.ResponseWriter, r *http.Request, name st
 	}
 	role := &auth.RoleDefinition{
 		Name:        name,
+		Tenant:      tenantFromRequest(r),
 		Description: req.Description,
 		Permissions: req.Permissions,
 		Inherits:    req.Inherits,
@@ -183,15 +198,14 @@ func (s *server) saveRoleRequest(w http.ResponseWriter, r *http.Request, name st
 		role.CreatedAt = existing.CreatedAt
 	}
 	if err := s.rbacStore.PutRole(r.Context(), role); err != nil {
+		if err == auth.ErrRoleNotFound {
+			writeJSONError(w, http.StatusNotFound, errorCodeRBACRoleNotFound, "role not found")
+			return nil, false
+		}
 		writeJSONError(w, http.StatusBadRequest, errorCodeRBACPermissionInvalid, err.Error())
 		return nil, false
 	}
-	saved, err := s.rbacStore.GetRole(r.Context(), name)
-	if err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, "failed to read saved role")
-		return nil, false
-	}
-	return saved, true
+	return role, true
 }
 
 // handleDeleteRole removes a custom role definition.
@@ -213,7 +227,7 @@ func (s *server) handleDeleteRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.rbacStore.DeleteRole(r.Context(), name); err != nil {
+	if err := s.rbacStore.DeleteRole(r.Context(), name, tenantFromRequest(r)); err != nil {
 		var roleInUse *auth.RoleInUseError
 		if errors.As(err, &roleInUse) {
 			writeRBACRoleInUseError(w, roleInUse)

@@ -214,10 +214,20 @@ func (s *server) handleDeleteTopic(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(w, r, "delete topic", err)
 		return
 	}
-	removedMapping, err := s.removeTopicFromPoolConfig(r.Context(), name)
-	if err != nil {
-		writeInternalError(w, r, "remove topic pool mapping", err)
-		return
+	removedMapping := false
+	if s.hasPlatformAuthority(r) {
+		registered, err := s.topicRegistry.Registered(r.Context(), name)
+		if err != nil {
+			writeInternalError(w, r, "check topic registrations", err)
+			return
+		}
+		if !registered {
+			removedMapping, err = s.removeTopicFromPoolConfig(r.Context(), name)
+			if err != nil {
+				writeInternalError(w, r, "remove topic pool mapping", err)
+				return
+			}
+		}
 	}
 	s.publishConfigChanged("system", "topics")
 	if removedMapping {

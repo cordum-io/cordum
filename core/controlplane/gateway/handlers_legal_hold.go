@@ -78,8 +78,21 @@ func (s *server) handleCreateLegalHold(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if strings.TrimSpace(req.TenantID) == "" {
-		req.TenantID = s.tenant
+	actingTenant, err := s.resolveTenant(r, "")
+	if err != nil {
+		if !s.hasPlatformAuthority(r) {
+			writeForbidden(w, r, err)
+			return
+		}
+		actingTenant = s.tenant
+	}
+	req.TenantID = strings.TrimSpace(req.TenantID)
+	if req.TenantID == "" {
+		req.TenantID = actingTenant
+	}
+	if req.TenantID != actingTenant && !s.hasPlatformAuthority(r) {
+		writeForbidden(w, r, errors.New("legal holds for another tenant need platform authority"))
+		return
 	}
 	if strings.TrimSpace(req.Reason) == "" {
 		writeErrorJSON(w, http.StatusBadRequest, "reason required")
@@ -121,6 +134,18 @@ func (s *server) handleListLegalHolds(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tenant := strings.TrimSpace(r.URL.Query().Get("tenant"))
+	if !s.hasPlatformAuthority(r) {
+		actingTenant, err := s.resolveTenant(r, "")
+		if err != nil {
+			writeForbidden(w, r, err)
+			return
+		}
+		if tenant != "" && tenant != actingTenant {
+			writeForbidden(w, r, errors.New("legal holds for another tenant need platform authority"))
+			return
+		}
+		tenant = actingTenant
+	}
 	holds, err := s.legalHoldStore.ListHolds(r.Context(), tenant)
 	if err != nil {
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to list legal holds")
@@ -150,6 +175,23 @@ func (s *server) handleReleaseLegalHold(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	hold, err := s.legalHoldStore.GetHold(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, audit.ErrHoldNotFound) {
+			writeErrorJSON(w, http.StatusNotFound, "legal hold not found")
+			return
+		}
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to get legal hold")
+		return
+	}
+	if !s.hasPlatformAuthority(r) {
+		actingTenant, err := s.resolveTenant(r, "")
+		if err != nil || strings.TrimSpace(hold.TenantID) != actingTenant {
+			writeErrorJSON(w, http.StatusNotFound, "legal hold not found")
+			return
+		}
+	}
+	id = hold.ID
 	releasedBy := "admin"
 	if auth := auth.FromRequest(r); auth != nil && auth.PrincipalID != "" {
 		releasedBy = auth.PrincipalID
