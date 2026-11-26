@@ -131,6 +131,36 @@ func (s *server) emitWorkerHandshakeRevokeAudit(ctx context.Context, workerID, t
 	_ = ctx
 }
 
+func (s *server) workerReadScope(w http.ResponseWriter, r *http.Request) (string, map[string]bool, bool) {
+	ac := auth.FromRequest(r)
+	if s.auth == nil || (ac != nil && ac.AllowCrossTenant) {
+		return "", nil, true
+	}
+	tenant := ""
+	if ac != nil {
+		tenant = strings.TrimSpace(ac.Tenant)
+	}
+	ids := make(map[string]bool)
+	if tenant == "" {
+		return tenant, ids, true
+	}
+	if s.workerCredentialStore == nil {
+		writeErrorJSON(w, http.StatusServiceUnavailable, "worker credential store unavailable")
+		return "", nil, false
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	records, err := s.workerCredentialStore.List(ctx, tenant)
+	if err != nil {
+		writeInternalError(w, r, "list worker credentials", err)
+		return "", nil, false
+	}
+	for _, record := range records {
+		ids[record.WorkerID] = true
+	}
+	return tenant, ids, true
+}
+
 // handleGetWorker returns a single worker by ID from the Redis snapshot.
 func (s *server) handleGetWorker(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermissionOrRole(w, r, auth.PermWorkersRead, "admin") {
@@ -143,6 +173,14 @@ func (s *server) handleGetWorker(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	_, ids, allowed := s.workerReadScope(w, r)
+	if !allowed {
+		return
+	}
+	if ids != nil && !ids[id] {
+		writeJSONError(w, http.StatusNotFound, errorCodeWorkerNotFound, "worker not found")
+		return
+	}
 	// Prefer Redis snapshot (consistent across replicas).
 	snap, err := s.snapshotFromRedis()
 	if err != nil {
@@ -187,6 +225,14 @@ func (s *server) handleGetWorkerJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tenant, ids, allowed := s.workerReadScope(w, r)
+	if !allowed {
+		return
+	}
+	if ids != nil && !ids[id] {
+		writeJSONError(w, http.StatusNotFound, errorCodeWorkerNotFound, "worker not found")
+		return
+	}
 	limit := int64(20)
 	if q := r.URL.Query().Get("limit"); q != "" {
 		if v, err := strconv.ParseInt(q, 10, 64); err == nil && v > 0 {
@@ -222,6 +268,15 @@ func (s *server) handleGetWorkerJobs(w http.ResponseWriter, r *http.Request) {
 		jobs = s.recentJobsByPool(r.Context(), pool, limit)
 	}
 
+	if ids != nil {
+		filtered := make([]model.JobRecord, 0, len(jobs))
+		for _, job := range jobs {
+			if strings.TrimSpace(job.Tenant) == tenant {
+				filtered = append(filtered, job)
+			}
+		}
+		jobs = filtered
+	}
 	writeJSON(w, map[string]any{"items": jobs})
 }
 
@@ -290,6 +345,9 @@ func (s *server) handleListPools(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermissionOrRole(w, r, auth.PermWorkersRead, "admin") {
 		return
 	}
+	if !s.requirePoolPlatformAccess(w, r) {
+		return
+	}
 
 	snap, err := s.snapshotFromRedis()
 	if err != nil {
@@ -315,6 +373,9 @@ func (s *server) handleListPools(w http.ResponseWriter, r *http.Request) {
 // handleGetPool returns a single pool's detail with its workers and topics.
 func (s *server) handleGetPool(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermissionOrRole(w, r, auth.PermWorkersRead, "admin") {
+		return
+	}
+	if !s.requirePoolPlatformAccess(w, r) {
 		return
 	}
 

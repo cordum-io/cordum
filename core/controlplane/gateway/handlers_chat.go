@@ -117,6 +117,15 @@ func (s *server) handleGetRunChat(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, "missing memory id")
 		return
 	}
+	if err := s.enforceMemoryOwner(r.Context(), run.OrgID, run.ID, memoryID); err != nil {
+		var perr memoryPolicyError
+		if errors.As(err, &perr) {
+			writeJSONError(w, perr.status, errorCodeMemoryPolicyViolation, perr.msg)
+			return
+		}
+		writeErrorJSON(w, http.StatusInternalServerError, "memory policy check failed")
+		return
+	}
 
 	client, err := chatRedisClient(s.memStore)
 	if err != nil {
@@ -231,6 +240,15 @@ func (s *server) handlePostRunChat(w http.ResponseWriter, r *http.Request) {
 	memoryID := runMemoryID(run)
 	if memoryID == "" {
 		writeErrorJSON(w, http.StatusBadRequest, "missing memory id")
+		return
+	}
+	if err := s.enforceMemoryOwner(r.Context(), run.OrgID, run.ID, memoryID); err != nil {
+		var perr memoryPolicyError
+		if errors.As(err, &perr) {
+			writeJSONError(w, perr.status, errorCodeMemoryPolicyViolation, perr.msg)
+			return
+		}
+		writeErrorJSON(w, http.StatusInternalServerError, "memory policy check failed")
 		return
 	}
 

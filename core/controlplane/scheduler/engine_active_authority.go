@@ -14,12 +14,16 @@ func (e *Engine) activeSessionMode() bool {
 	return e != nil && e.sessionMiddleware != nil && e.sessionMiddleware.Mode() != HandshakeModeOff
 }
 
+func (e *Engine) authenticatedDispatch() bool {
+	return e.activeSessionMode() || e.workerAttestationMode().Enforced()
+}
+
 func (e *Engine) requiresTrustedReadiness() bool {
 	return e != nil && (e.workerReadinessRequired || e.activeSessionMode())
 }
 
-func (e *Engine) filterBoundWorkers(workers map[string]*pb.Heartbeat, readiness map[string]WorkerReadiness, topic string) map[string]*pb.Heartbeat {
-	if !e.activeSessionMode() {
+func (e *Engine) filterBoundWorkers(workers map[string]*pb.Heartbeat, readiness map[string]WorkerReadiness, topic, tenant string) map[string]*pb.Heartbeat {
+	if !e.authenticatedDispatch() {
 		return workers
 	}
 	result := make(map[string]*pb.Heartbeat, len(workers))
@@ -27,7 +31,11 @@ func (e *Engine) filterBoundWorkers(workers map[string]*pb.Heartbeat, readiness 
 		return result
 	}
 	for workerID, heartbeat := range workers {
-		if e.boundWorkerAuthorized(workerID, heartbeat, readiness[workerID], topic) {
+		if e.activeSessionMode() && !e.boundWorkerAuthorized(workerID, heartbeat, readiness[workerID], topic) {
+			continue
+		}
+		record, ok := e.workerCredentialCache.Lookup(workerID)
+		if ok && nonemptyMatch(record.TenantID, tenant) {
 			result[workerID] = heartbeat
 		}
 	}

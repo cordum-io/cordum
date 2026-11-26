@@ -250,7 +250,8 @@ func TestPolicyBundleSimulateAuthAndTenant(t *testing.T) {
 	putReq := httptest.NewRequest(http.MethodPut, "/api/v1/policy/bundles/secops/test", bytes.NewReader(seed))
 	putReq.Header.Set("X-Tenant-ID", "tenant-a")
 	putReq.SetPathValue("id", "secops/test")
-	putReq = withAuth(putReq, &auth.AuthContext{Tenant: "tenant-a", Role: "admin", PrincipalID: "admin-1"})
+	// Writing the system policy needs platform authority.
+	putReq = withAuth(putReq, &auth.AuthContext{Tenant: "tenant-a", Role: "admin", PrincipalID: "admin-1", AllowCrossTenant: true})
 	putRec := httptest.NewRecorder()
 	s.handlePutPolicyBundle(putRec, putReq)
 	if putRec.Code != http.StatusOK {

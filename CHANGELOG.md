@@ -46,10 +46,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Worker reads: a worker belongs to the tenant of its worker credential. For a
+  caller without cross-tenant access, `GET /api/v1/workers` lists only that
+  tenant's workers, `GET /api/v1/workers/{id}` and
+  `GET /api/v1/workers/{id}/jobs` answer 404 for any other worker, and the jobs
+  list holds only that tenant's jobs. A worker without a credential record is
+  listed only to callers with cross-tenant access (task-fa19ec96).
+
 - MCP approval resume: a call resumed with `_approval_ref` is refused with
   `-32096` `policy_snapshot_changed` when policy was published between the
   approval claim and the call's `mcp.tool.pre` stamp. Nothing runs and the
   approval is used up, so the client retries without `_approval_ref`.
+- Workflow runs: `POST /api/v1/workflows/{id}/runs` stores each `Idempotency-Key`
+  reservation per tenant and workflow, under `wf:run:idem:{hash}`. A key stored
+  as `wf:run:idempotency:{key}` before this release still returns its run when
+  the repeat comes from that run's tenant and workflow (task-0b797b4b,
+  task-792e0979).
 - MCP dedupe: a resumed call takes its dedupe slot over in one write, and a call
   that held the slot before can no longer publish to it or delete it. An
   identical call without `_approval_ref` used to be able to cache a second
@@ -58,8 +70,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - The mutating MCP tool descriptions and `docs/mcp/mutating-tools.md` describe
   the Edge approval flow used when `mcp.policy_gate_enabled=true`: approve the
   `approval_ref`, then retry with `_approval_ref`.
+- Memory ids: a `memory_id` of the form `run:<run id>` is accepted only when
+  that run exists in the caller's tenant, and one of the form `<tenant>/<id>`
+  only from that tenant. Starting a workflow run, submitting a job over HTTP or
+  gRPC, and reading or posting a run's chat check this; a request that fails
+  it gets `403` `MEMORY_POLICY_VIOLATION` (gRPC `PermissionDenied`)
+  (task-cdd75ab9).
 - The governed MCP demo worker retries a `429` on the approval poll, and its
   README lists the MCP, agent identity and endpoint prerequisites.
+- Schemas: a new schema id belongs to the tenant that registers it. A caller
+  bound to one tenant lists and reads platform schemas and its own tenant's;
+  another tenant's schema, like an id with no schema, answers `404` to a read
+  or delete. A register over another tenant's id, and a register over or
+  delete of a platform schema, answer `403`. Schemas registered before this
+  release, by pack install or by a cross-tenant caller, are platform schemas:
+  every tenant can read them and only a cross-tenant caller can change or
+  delete them (task-01abd084).
 - Edge approvals: a held MCP call whose arguments differ from a still-pending
   hold of the same tool in the same session now gets its own approval ref. It
   used to get the first hold's ref, so resuming it failed with `-32096`
@@ -68,6 +94,47 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `policy_mismatch`. An identical retry still returns the existing ref
   (task-29afcbe9).
 
+- Policy replay: `POST /api/v1/policy/replay` evaluates only jobs whose tenant
+  the caller may access, the same check `GET /api/v1/jobs/{id}` applies. The
+  `filters.tenant` field narrows that set, so a filter naming a tenant the
+  caller cannot access matches no jobs. A job with no stored tenant is
+  replayed only for a caller whose access spans all tenants (task-d14273c2).
+- Worker pools: the eight `/api/v1/pools` routes (list, read, create, update,
+  delete, drain, and adding or removing a topic) answer `403` to a caller
+  whose access does not span all tenants, before any pool data is read or
+  written. Pools and their topic routes serve every tenant, so these routes
+  and `cordumctl pool` need a `CORDUM_API_KEYS` entry with
+  `allow_cross_tenant` or a token with that claim. The single
+  `CORDUM_API_KEY`, managed keys and password sessions do not carry it.
+  Existing pools, topic routes and workers are unchanged (task-5e780668).
+- Agents: `GET /api/v1/agents/{id}/denied-events` resolves the agent in the
+  caller's tenant first, and answers `404 AGENT_NOT_FOUND` when it cannot, as
+  `GET /api/v1/agents/{id}` does. `POST /api/v1/agents/verify-delegation`
+  verifies a token for a caller bound to one tenant only when the token's
+  tenant claim names that tenant; any other token gets `403` before it is
+  checked. A caller whose access spans all tenants verifies any token
+  (task-810a4b3a).
+
+- Worker dispatch: with `WORKER_ATTESTATION=enforce`, or with
+  `CORDUM_SDK_HANDSHAKE` at `warn` or `enforce`, the scheduler dispatches a
+  job only to a worker whose credential belongs to the job's tenant. A job
+  gets no worker when it has no tenant or when the credential list cannot be
+  read, and a worker whose credential is missing, revoked or has no tenant
+  gets no job; such a job is retried as when its pool has no worker. Each
+  worker credential serves one tenant, so a worker that runs jobs for several
+  tenants needs a worker ID and credential per tenant. With
+  `WORKER_ATTESTATION` at `off` or `warn` and `CORDUM_SDK_HANDSHAKE=off`,
+  dispatch reads no worker credentials (task-c5aaf69c).
+- System policy: the routes that write the system policy document (policy
+  bundles, publish, rollback, bundle snapshots, global policy, output rules,
+  velocity rules, `PUT` and `POST /api/v1/config` for `system`/`policy`, and
+  pack install, uninstall and marketplace install) answer `403` unless the
+  caller belongs to the gateway's own tenant (`TENANT_ID`, `default` when
+  unset) or its access spans all tenants (`allow_cross_tenant`). A
+  single-tenant deployment is unchanged, because its keys, users and
+  dashboard sessions belong to that tenant. With several tenants, the
+  gateway's tenant is the platform tenant, so keep other tenants out of it.
+  Reading policy is unchanged (task-677dd8af).
 - The dashboard test run no longer fails after every test passes when a console line, written by work that outlived its test file, is still being delivered as the Vitest worker shuts down (`EnvironmentTeardownError: Closing rpc while "onUserConsoleLog" was pending`). `dashboard/vitest.config.ts` ignores exactly that error, so every other unhandled error still fails the run. `KeyboardShortcutsHelp.test.tsx`, which produced it, now answers the AppShell's requests in-process and waits for them to settle (task-04eef2b3).
 
 #### core/mcp — the MCP invocation audit keeps a consumed human approval when scope preapproval also applies (2026-11-12, task-74f4c01e)

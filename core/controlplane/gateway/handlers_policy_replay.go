@@ -284,6 +284,9 @@ func (s *server) handlePolicyReplay(w http.ResponseWriter, r *http.Request) {
 
 			topic := strings.TrimSpace(meta[metaFieldTopic])
 			tenant := strings.TrimSpace(meta[metaFieldTenant])
+			if !s.replayJobVisible(r, tenant) {
+				continue
+			}
 			originalDecision := strings.TrimSpace(meta[metaFieldSafetyDecision])
 			if originalDecision == "" {
 				originalDecision = "ALLOW"
@@ -432,6 +435,17 @@ func (s *server) handlePolicyReplay(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---------- helpers ----------
+
+func (s *server) replayJobVisible(r *http.Request, tenant string) bool {
+	if s.auth == nil {
+		return true
+	}
+	if authCtx := auth.FromRequest(r); authCtx != nil && authCtx.AllowCrossTenant {
+		return true
+	}
+	tenant = strings.TrimSpace(tenant)
+	return tenant != "" && s.requireTenantAccess(r, tenant) == nil
+}
 
 const metaFieldTopic = "topic"
 const metaFieldTenant = "tenant"

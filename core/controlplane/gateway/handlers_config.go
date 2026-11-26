@@ -64,6 +64,9 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	scope := configsvc.Scope(scopeStr)
+	if scope == configsvc.ScopeSystem && strings.TrimSpace(scopeID) == packs.PolicyConfigID && !s.requireSystemPolicyAuthority(w, r) {
+		return
+	}
 	if scope == configsvc.ScopeOrg {
 		tenant, err := s.resolveTenant(r, scopeID)
 		if err != nil {
@@ -272,18 +275,20 @@ func (s *server) handleRegisterSchema(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(w, r, "schema lookup", err)
 		return
 	}
-	if !schemaExists {
-		count, err := s.schemaCount(r.Context())
-		if err != nil {
-			writeInternalError(w, r, "schema count", err)
-			return
-		}
-		if limitErr := licensing.CheckSchemaCount(int64(count+1), s.currentEntitlements()); limitErr != nil {
-			writeTierLimitJSON(w, limitErr)
-			return
-		}
+	claimTenant, allowed := s.schemaRegisterScope(w, r, req.ID, schemaExists)
+	if !allowed {
+		return
+	}
+	if !schemaExists && !s.schemaCountAllows(w, r) {
+		return
+	}
+	if claimTenant != "" && !s.claimSchemaOwner(w, r, req.ID, claimTenant) {
+		return
 	}
 	if err := s.schemaRegistry.Register(r.Context(), req.ID, data); err != nil {
+		if claimTenant != "" {
+			s.releaseSchemaOwner(r, req.ID)
+		}
 		writeJSONError(w, http.StatusBadRequest, errorCodeConfigSchemaViolation, err.Error())
 		return
 	}
@@ -296,11 +301,22 @@ func (s *server) handleListSchemas(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit, _ := parsePagination(r, 100)
-	ids, err := s.schemaRegistry.List(r.Context(), limit)
+	tenant, bound := s.schemaTenantScope(r)
+	fetch := limit
+	if bound {
+		fetch = schemaIndexCap
+	}
+	ids, err := s.schemaRegistry.List(r.Context(), fetch)
 	if err != nil {
 		slog.Error("schema list failed", "error", err)
 		writeErrorJSON(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	if bound {
+		if ids, err = s.visibleSchemaIDs(r, ids, tenant, limit); err != nil {
+			writeInternalError(w, r, "schema owner lookup", err)
+			return
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]any{"schemas": ids})
@@ -314,6 +330,17 @@ func (s *server) handleGetSchema(w http.ResponseWriter, r *http.Request) {
 	if id == "" {
 		writeJSONError(w, http.StatusBadRequest, errorCodeConfigSchemaViolation, "schema id required")
 		return
+	}
+	if tenant, bound := s.schemaTenantScope(r); bound {
+		owner, err := s.schemaRegistry.Owner(r.Context(), id)
+		if err != nil {
+			writeInternalError(w, r, "schema owner lookup", err)
+			return
+		}
+		if owner != "" && owner != tenant {
+			writeJSONError(w, http.StatusNotFound, errorCodeConfigSchemaNotFound, "schema not found")
+			return
+		}
 	}
 	data, err := s.schemaRegistry.Get(r.Context(), id)
 	if err != nil {
@@ -343,6 +370,9 @@ func (s *server) handleDeleteSchema(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, errorCodeConfigSchemaViolation, "schema id required")
 		return
 	}
+	if tenant, bound := s.schemaTenantScope(r); bound && !s.schemaDeleteAllowed(w, r, id, tenant) {
+		return
+	}
 	if err := s.schemaRegistry.Delete(r.Context(), id); err != nil {
 		slog.Error("schema delete failed", "error", err, "id", id) // #nosec -- id is validated and used for diagnostics.
 		writeErrorJSON(w, http.StatusInternalServerError, "internal error")
@@ -350,6 +380,128 @@ func (s *server) handleDeleteSchema(w http.ResponseWriter, r *http.Request) {
 	}
 	s.appendAuditEntryNamed(r.Context(), "delete", "schema", id, id, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "delete schema "+id)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// schemaIndexCap matches the schema registry's index cap, so a bound list
+// filters every indexed id before the request limit applies.
+const schemaIndexCap = 500
+
+// schemaTenantScope returns the caller's tenant and whether schema owner
+// checks apply. Callers with cross-tenant access, and every request when auth
+// is off, are not bound. A bound caller with an empty tenant owns nothing.
+func (s *server) schemaTenantScope(r *http.Request) (string, bool) {
+	ac := auth.FromRequest(r)
+	if s.auth == nil || (ac != nil && ac.AllowCrossTenant) {
+		return "", false
+	}
+	if ac == nil {
+		return "", true
+	}
+	return strings.TrimSpace(ac.Tenant), true
+}
+
+// schemaRegisterScope decides a register before any write. It returns the
+// tenant that must claim id (empty when no claim is needed) and false after
+// writing the refusal.
+func (s *server) schemaRegisterScope(w http.ResponseWriter, r *http.Request, id string, exists bool) (string, bool) {
+	tenant, bound := s.schemaTenantScope(r)
+	if !bound {
+		return "", true
+	}
+	owner, err := s.schemaRegistry.Owner(r.Context(), id)
+	if err != nil {
+		writeInternalError(w, r, "schema owner lookup", err)
+		return "", false
+	}
+	switch {
+	case owner != "" && owner == tenant:
+		return "", true
+	case owner == "" && !exists && tenant != "":
+		return tenant, true
+	}
+	writeJSONError(w, http.StatusForbidden, errorCodeConfigSchemaViolation, "schema id not available")
+	return "", false
+}
+
+// schemaCountAllows writes the refusal and returns false when one more schema
+// would pass the entitled schema count.
+func (s *server) schemaCountAllows(w http.ResponseWriter, r *http.Request) bool {
+	count, err := s.schemaCount(r.Context())
+	if err != nil {
+		writeInternalError(w, r, "schema count", err)
+		return false
+	}
+	if limitErr := licensing.CheckSchemaCount(int64(count+1), s.currentEntitlements()); limitErr != nil {
+		writeTierLimitJSON(w, limitErr)
+		return false
+	}
+	return true
+}
+
+// claimSchemaOwner claims id for tenant and writes the refusal when another
+// owner holds it.
+func (s *server) claimSchemaOwner(w http.ResponseWriter, r *http.Request, id, tenant string) bool {
+	owner, err := s.schemaRegistry.ClaimOwner(r.Context(), id, tenant)
+	if err != nil {
+		writeInternalError(w, r, "schema owner claim", err)
+		return false
+	}
+	if owner != tenant {
+		writeJSONError(w, http.StatusForbidden, errorCodeConfigSchemaViolation, "schema id not available")
+		return false
+	}
+	return true
+}
+
+func (s *server) releaseSchemaOwner(r *http.Request, id string) {
+	if err := s.schemaRegistry.ReleaseOwner(r.Context(), id); err != nil {
+		slog.Warn("schema owner release failed", "error", err, "id", id) // #nosec -- id is validated and used for diagnostics.
+	}
+}
+
+// visibleSchemaIDs keeps platform ids and the tenant's own, up to limit.
+func (s *server) visibleSchemaIDs(r *http.Request, ids []string, tenant string, limit int64) ([]string, error) {
+	owners, err := s.schemaRegistry.Owners(r.Context(), ids)
+	if err != nil {
+		return nil, err
+	}
+	visible := make([]string, 0, len(ids))
+	for i, id := range ids {
+		if int64(len(visible)) >= limit {
+			break
+		}
+		if owners[i] == "" || owners[i] == tenant {
+			visible = append(visible, id)
+		}
+	}
+	return visible, nil
+}
+
+// schemaDeleteAllowed lets a bound caller delete only its own id. Another
+// tenant's id answers 404, as an absent id does, and a platform id answers 403.
+func (s *server) schemaDeleteAllowed(w http.ResponseWriter, r *http.Request, id, tenant string) bool {
+	owner, err := s.schemaRegistry.Owner(r.Context(), id)
+	if err != nil {
+		writeInternalError(w, r, "schema owner lookup", err)
+		return false
+	}
+	if owner != "" {
+		if owner == tenant {
+			return true
+		}
+		writeJSONError(w, http.StatusNotFound, errorCodeConfigSchemaNotFound, "schema not found")
+		return false
+	}
+	_, err = s.schemaRegistry.Get(r.Context(), id)
+	switch {
+	case err == nil:
+		writeJSONError(w, http.StatusForbidden, errorCodeConfigSchemaViolation, "schema id not available")
+	case errors.Is(err, redis.Nil):
+		writeJSONError(w, http.StatusNotFound, errorCodeConfigSchemaNotFound, "schema not found")
+	default:
+		writeInternalError(w, r, "schema lookup", err)
+	}
+	return false
 }
 
 // Resource lock handlers
