@@ -27,6 +27,16 @@ var crossTenantGlobalRoutes = map[string]string{
 
 var crossTenantExistingCoverage = map[string][]string{
 	"ANY /api/v1/stream": {"TestEdgeEventStreamTenantFilteringAndBusPacketRegression"},
+	// PR1-02-EDGE-MCP
+	"GET /api/v1/edge/sessions":                         {"TestEdgeCrossTenantListSessionsReturnsOnlyOwnTenant"},
+	"GET /api/v1/edge/sessions/{session_id}":            {"TestEdgeCrossTenantGetSessionRejectsByIDGuess", "TestGatewayEdgeErrorMappingAndTenantIsolation"},
+	"GET /api/v1/edge/executions":                       {"TestEdgeCrossTenantListExecutionsBySessionIsScoped", "TestGatewayEdgeExecutionsListRejectsMissingIndexAndOmitsCrossTenant"},
+	"GET /api/v1/edge/executions/{execution_id}":        {"TestEdgeCrossTenantGetExecutionRejectsByIDGuess"},
+	"GET /api/v1/edge/approvals":                        {"TestGatewayEdgeApprovalListDetailRejectAndTenantIsolation", "TestGatewayEdgeApprovalListPrincipalBinding"},
+	"GET /api/v1/edge/approvals/{approval_ref}":         {"TestGatewayEdgeApprovalListDetailRejectAndTenantIsolation", "TestGatewayEdgeApprovalGetPrincipalBinding"},
+	"POST /api/v1/edge/mcp/upstreams":                   {"TestHandlerCreateRejectsCrossTenantBody"},
+	"GET /api/v1/edge/sessions/{session_id}/events":     {"TestGatewayEdgeEventRoutesDenyCrossTenantWithoutLeakingIDs", "TestEdgeCrossTenantListSessionEventsRejectsForeignSession"},
+	"GET /api/v1/edge/executions/{execution_id}/events": {"TestGatewayEdgeEventRoutesDenyCrossTenantWithoutLeakingIDs", "TestEdgeCrossTenantListExecutionEventsRejectsForeignExecution"},
 }
 
 var crossTenantOpenFindings = map[string]string{}
@@ -42,7 +52,7 @@ var crossTenantPending = map[string][]string{
 	// Slice separator: keep unchanged when removing a pending block.
 	"PR1-02-PLATFORM": {"/api/v1/packs", "/api/v1/marketplace", "/api/v1/config", "/api/v1/evals", "/api/v1/governance", "/api/v1/license", "/api/v1/telemetry", "/api/v1/status", "/api/v1/admin", "/api/v1/copilot", "/health", "/api/v1/health"},
 	// Slice separator: keep unchanged when removing a pending block.
-	"PR1-02-EDGE-MCP": {"/api/v1/edge", "/api/v1/mcp", "/mcp", "/api/v1/audit"},
+	"PR1-02-EDGE-MCP": {"/api/v1/mcp", "/mcp", "/api/v1/audit"},
 }
 
 var crossTenantRowKey = regexp.MustCompile(`^(?:M[0-9][A-Z]?|PR[0-9])-[A-Z0-9]+(?:-[A-Z0-9]+)*$`)
