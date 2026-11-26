@@ -52,7 +52,7 @@ func (pc *PermissionChecker) RequirePermission(r *http.Request, permission strin
 		entitled = RBACEntitled(pc.entitlements())
 	}
 
-	if HasPermission(r.Context(), pc.store, role, permission, entitled) {
+	if HasPermission(r.Context(), pc.store, role, pc.store.PrincipalTenant(r.Context()), permission, entitled) {
 		return nil
 	}
 	return fmt.Errorf("permission %s denied for role %s", permission, role)
@@ -77,7 +77,7 @@ func (pc *PermissionChecker) RequirePermissionGRPC(ctx context.Context, role, pe
 		entitled = RBACEntitled(pc.entitlements())
 	}
 
-	if HasPermission(ctx, pc.store, role, permission, entitled) {
+	if HasPermission(ctx, pc.store, role, pc.store.PrincipalTenant(ctx), permission, entitled) {
 		return nil
 	}
 	return fmt.Errorf("permission %s denied for role %s", permission, role)
@@ -140,7 +140,7 @@ func (pc *PermissionChecker) CheckRole(r *http.Request, roles ...string) error {
 	}
 
 	// Check if the user's role inherits from any of the required roles
-	perms, err := pc.store.ResolvePermissions(r.Context(), role)
+	perms, err := pc.store.ResolvePermissions(r.Context(), role, pc.store.PrincipalTenant(r.Context()))
 	if err != nil {
 		// Fall back to name matching on resolution failure
 		return fmt.Errorf("role %s not permitted", role)

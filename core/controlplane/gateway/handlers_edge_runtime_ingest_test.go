@@ -109,13 +109,14 @@ func runtimeIngestNonce(seed string) string {
 
 const testRuntimeCollectorRole = "runtime_collector"
 
-func setupRuntimeIngestRBAC(t *testing.T, s *server) {
+func setupRuntimeIngestRBAC(t *testing.T, s *server, tenant string) {
 	t.Helper()
 	setTestEntitlements(t, s, licensing.PlanEnterprise, func(entitlements *licensing.Entitlements) {
 		entitlements.RBAC = true
 	})
 	if err := s.rbacStore.PutRole(context.Background(), &auth.RoleDefinition{
 		Name:        "user",
+		Tenant:      tenant,
 		Description: "test same-tenant job writer without runtime ingest permission",
 		Permissions: []string{
 			auth.PermJobsWrite,
@@ -125,6 +126,7 @@ func setupRuntimeIngestRBAC(t *testing.T, s *server) {
 	}
 	if err := s.rbacStore.PutRole(context.Background(), &auth.RoleDefinition{
 		Name:        testRuntimeCollectorRole,
+		Tenant:      tenant,
 		Description: "test trusted runtime collector",
 		Permissions: []string{
 			auth.PermJobsWrite, // Keeps this role accepted by the vulnerable handler before the fix.
@@ -229,7 +231,7 @@ func createRuntimeIngestBoundParentsForTenant(t *testing.T, s *server, tenantID,
 func TestRuntimeIngest_RejectsRegularUserWithJobsWritePerm(t *testing.T) {
 	enableRuntimeIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupRuntimeIngestRBAC(t, s)
+	setupRuntimeIngestRBAC(t, s, edgeRouteTenant)
 	session, execution := createRuntimeIngestBoundParents(t, s, "regular-user", "principal-edge-user")
 
 	rr := postRuntimeIngestWithAuth(t, s, runtimeIngestAuthContext("user", "principal-edge-user"),
@@ -241,7 +243,7 @@ func TestRuntimeIngest_RejectsRegularUserWithJobsWritePerm(t *testing.T) {
 func TestRuntimeIngest_RejectsAdminWithoutRuntimeCollectorPermission(t *testing.T) {
 	enableRuntimeIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupRuntimeIngestRBAC(t, s)
+	setupRuntimeIngestRBAC(t, s, edgeRouteTenant)
 	if err := s.rbacStore.PutRole(context.Background(), &auth.RoleDefinition{
 		Name:        "admin",
 		Description: "test admin wildcard without runtime ingest permission",
@@ -263,7 +265,7 @@ func TestRuntimeIngest_RejectsAdminWithoutRuntimeCollectorPermission(t *testing.
 func TestRuntimeIngest_RejectsMismatchedSourceID(t *testing.T) {
 	enableRuntimeIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupRuntimeIngestRBAC(t, s)
+	setupRuntimeIngestRBAC(t, s, edgeRouteTenant)
 	session, execution := createRuntimeIngestBoundParents(t, s, "mismatched-source", "collector-a")
 
 	rr := postRuntimeIngestWithAuth(t, s, runtimeIngestAuthContext(testRuntimeCollectorRole, "collector-a"),
@@ -277,7 +279,7 @@ func TestRuntimeIngest_RejectsMismatchedSourceID(t *testing.T) {
 func TestRuntimeIngest_RejectsUnauthorizedSession(t *testing.T) {
 	enableRuntimeIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupRuntimeIngestRBAC(t, s)
+	setupRuntimeIngestRBAC(t, s, edgeRouteTenant)
 	_, _ = createRuntimeIngestBoundParents(t, s, "authorized-session", "collector-a")
 	otherSession, otherExecution := createRuntimeIngestBoundParents(t, s, "unauthorized-session", "collector-b")
 
@@ -290,7 +292,7 @@ func TestRuntimeIngest_RejectsUnauthorizedSession(t *testing.T) {
 func TestRuntimeIngest_RejectsMissingCollectorIdentity(t *testing.T) {
 	enableRuntimeIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupRuntimeIngestRBAC(t, s)
+	setupRuntimeIngestRBAC(t, s, edgeRouteTenant)
 	session, execution := createRuntimeIngestBoundParents(t, s, "missing-identity", "collector-a")
 
 	rr := postRuntimeIngestWithAuth(t, s, runtimeIngestAuthContext(testRuntimeCollectorRole, ""),
@@ -304,7 +306,7 @@ func TestRuntimeIngest_RejectsMissingCollectorIdentity(t *testing.T) {
 func TestRuntimeIngest_AcceptsTrustedCollectorOnBoundSource(t *testing.T) {
 	enableRuntimeIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupRuntimeIngestRBAC(t, s)
+	setupRuntimeIngestRBAC(t, s, edgeRouteTenant)
 	session, execution := createRuntimeIngestBoundParents(t, s, "trusted-collector", "collector-a")
 
 	rr := postRuntimeIngestWithAuth(t, s, runtimeIngestAuthContext(testRuntimeCollectorRole, "collector-a"),
@@ -330,7 +332,7 @@ func TestRuntimeIngestDisabledReturns503(t *testing.T) {
 func TestRuntimeIngestEnabledRequiresTenantHeader(t *testing.T) {
 	enableRuntimeIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupRuntimeIngestRBAC(t, s)
+	setupRuntimeIngestRBAC(t, s, edgeRouteTenant)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/edge/runtime/events",
 		strings.NewReader(runtimeIngestBody("ignored", "ignored", edgeRouteTenant, "no-tenant-header")))
@@ -361,7 +363,7 @@ func TestRuntimeIngestEnabledRequiresAuth(t *testing.T) {
 func TestRuntimeIngestEnabledRejectsBodyTenantMismatch(t *testing.T) {
 	enableRuntimeIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupRuntimeIngestRBAC(t, s)
+	setupRuntimeIngestRBAC(t, s, edgeRouteTenant)
 	session, execution := createRuntimeIngestBoundParents(t, s, "tenant-mismatch", "collector-a")
 	// header=A, body events stamp tenant=B → 403 tenant_mismatch.
 	body := runtimeIngestBodyForSource("collector-a", session.SessionID, execution.ExecutionID, edgeRouteOtherTenant, "mismatch-1")
@@ -378,7 +380,7 @@ func TestRuntimeIngestEnabledRejectsBodyTenantMismatch(t *testing.T) {
 func TestRuntimeIngestEnabledRejectsCrossTenantSession(t *testing.T) {
 	enableRuntimeIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupRuntimeIngestRBAC(t, s)
+	setupRuntimeIngestRBAC(t, s, edgeRouteTenant)
 	tenantBSession, tenantBExecution := createRuntimeIngestBoundParentsForTenant(t, s, edgeRouteOtherTenant, "tenant-b", "collector-b")
 	body := runtimeIngestBodyForSource("collector-a", tenantBSession.SessionID, tenantBExecution.ExecutionID, edgeRouteTenant, "xtenant-sess")
 	rr := postRuntimeIngestWithAuth(t, s, runtimeIngestAuthContext(testRuntimeCollectorRole, "collector-a"), body)
@@ -392,7 +394,7 @@ func TestRuntimeIngestEnabledRejectsCrossTenantSession(t *testing.T) {
 func TestRuntimeIngestEnabledRejectsMissingParent(t *testing.T) {
 	enableRuntimeIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupRuntimeIngestRBAC(t, s)
+	setupRuntimeIngestRBAC(t, s, edgeRouteTenant)
 	body := runtimeIngestBodyForSource("collector-a", "edge-session-does-not-exist", "edge-exec-does-not-exist", edgeRouteTenant, "missing-parent")
 	rr := postRuntimeIngestWithAuth(t, s, runtimeIngestAuthContext(testRuntimeCollectorRole, "collector-a"), body)
 	assertEdgeErrorShape(t, rr, http.StatusNotFound, edgeErrCodeNotFound)
@@ -401,7 +403,7 @@ func TestRuntimeIngestEnabledRejectsMissingParent(t *testing.T) {
 func TestRuntimeIngestEnabledRejectsExecutionSessionMismatch(t *testing.T) {
 	enableRuntimeIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupRuntimeIngestRBAC(t, s)
+	setupRuntimeIngestRBAC(t, s, edgeRouteTenant)
 	session, execution := createRuntimeIngestBoundParents(t, s, "exec-mismatch-a", "collector-a")
 	otherSession, _ := createRuntimeIngestBoundParents(t, s, "exec-mismatch-b", "collector-a")
 	body := runtimeIngestBodyForSource("collector-a", otherSession.SessionID, execution.ExecutionID, edgeRouteTenant, "exec-mismatch")
@@ -418,7 +420,7 @@ func TestRuntimeIngestEnabledRejectsExecutionSessionMismatch(t *testing.T) {
 func TestRuntimeIngestEnabledRejectsEmptyBatch(t *testing.T) {
 	enableRuntimeIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupRuntimeIngestRBAC(t, s)
+	setupRuntimeIngestRBAC(t, s, edgeRouteTenant)
 	body := `{"source":{"source_id":"collector-a"},"nonce":"nonce-empty-batch-1","events":[]}`
 	rr := postRuntimeIngestWithAuth(t, s, runtimeIngestAuthContext(testRuntimeCollectorRole, "collector-a"), body)
 	assertEdgeErrorShape(t, rr, http.StatusBadRequest, edgeErrCodeInvalidRequest)
@@ -427,7 +429,7 @@ func TestRuntimeIngestEnabledRejectsEmptyBatch(t *testing.T) {
 func TestRuntimeIngestEnabledRejectsMissingSourceID(t *testing.T) {
 	enableRuntimeIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupRuntimeIngestRBAC(t, s)
+	setupRuntimeIngestRBAC(t, s, edgeRouteTenant)
 	session, execution := createRuntimeIngestBoundParents(t, s, "missing-source", "collector-a")
 	body := `{
 		"source":{"source_id":""},
@@ -448,7 +450,7 @@ func TestRuntimeIngestEnabledRejectsMissingSourceID(t *testing.T) {
 func TestRuntimeIngestEnabledRejectsForbiddenRawKey(t *testing.T) {
 	enableRuntimeIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupRuntimeIngestRBAC(t, s)
+	setupRuntimeIngestRBAC(t, s, edgeRouteTenant)
 	session, execution := createRuntimeIngestBoundParents(t, s, "forbidden-raw-key", "collector-a")
 	body := `{
 		"source":{"source_id":"collector-a"},
@@ -475,7 +477,7 @@ func TestRuntimeIngestEnabledRejectsForbiddenRawKey(t *testing.T) {
 func TestRuntimeIngestEnabledRejectsOversizeBatch(t *testing.T) {
 	enableRuntimeIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupRuntimeIngestRBAC(t, s)
+	setupRuntimeIngestRBAC(t, s, edgeRouteTenant)
 	session, execution := createRuntimeIngestBoundParents(t, s, "oversize", "collector-a")
 	// Build a batch with too many events to exceed MaxRuntimeBatchEvents.
 	var sb strings.Builder
@@ -504,7 +506,7 @@ func TestRuntimeIngestEnabledRejectsOversizeBatch(t *testing.T) {
 func TestRuntimeIngestEnabledAppendsEventsThroughStore(t *testing.T) {
 	enableRuntimeIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupRuntimeIngestRBAC(t, s)
+	setupRuntimeIngestRBAC(t, s, edgeRouteTenant)
 	session, execution := createRuntimeIngestBoundParents(t, s, "append", "tetragon-test")
 
 	rr := postRuntimeIngestWithAuth(t, s, runtimeIngestAuthContext(testRuntimeCollectorRole, "tetragon-test"),
@@ -546,7 +548,7 @@ func TestRuntimeIngestEnabledAppendsEventsThroughStore(t *testing.T) {
 func TestRuntimeIngestDuplicateBatchReturnsIdempotentSuccess(t *testing.T) {
 	enableRuntimeIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupRuntimeIngestRBAC(t, s)
+	setupRuntimeIngestRBAC(t, s, edgeRouteTenant)
 	session, execution := createRuntimeIngestBoundParents(t, s, "duplicate", "tetragon-test")
 	body := runtimeIngestBody(session.SessionID, execution.ExecutionID, edgeRouteTenant, "rt-replay-duplicate")
 
@@ -573,7 +575,7 @@ func TestRuntimeIngestDuplicateBatchReturnsIdempotentSuccess(t *testing.T) {
 func TestRuntimeIngestLegitimateRetryAfterFailureSucceeds(t *testing.T) {
 	enableRuntimeIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupRuntimeIngestRBAC(t, s)
+	setupRuntimeIngestRBAC(t, s, edgeRouteTenant)
 	session, execution := createRuntimeIngestBoundParents(t, s, "retry", "tetragon-test")
 	s.edgeStore = &runtimeIngestAppendFailStore{
 		Store:     s.edgeStore,
@@ -605,7 +607,7 @@ func TestRuntimeIngestLegitimateRetryAfterFailureSucceeds(t *testing.T) {
 func TestRuntimeIngestReplayWindowFullRefuses(t *testing.T) {
 	enableRuntimeIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupRuntimeIngestRBAC(t, s)
+	setupRuntimeIngestRBAC(t, s, edgeRouteTenant)
 	const collectorID = "collector-a"
 	s.runtimeReplayWindow = runtimeingest.NewReplayWindow(s.jobStore.Client(), time.Hour, 1)
 	ok, err := s.runtimeReplayWindow.Reserve(context.Background(), edgeRouteTenant, collectorID, "nonce-window-full-seed")
@@ -632,10 +634,10 @@ func TestRuntimeIngestReplayWindowFullRefuses(t *testing.T) {
 func TestRuntimeReplay_SharedRedisDedup(t *testing.T) {
 	enableRuntimeIngest(t)
 	s1, _ := newEdgeRouteTestServer(t)
-	setupRuntimeIngestRBAC(t, s1)
+	setupRuntimeIngestRBAC(t, s1, edgeRouteTenant)
 
 	s2, _ := newEdgeRouteTestServer(t)
-	setupRuntimeIngestRBAC(t, s2)
+	setupRuntimeIngestRBAC(t, s2, edgeRouteTenant)
 	if s1 == s2 {
 		t.Fatal("newEdgeRouteTestServer returned aliased server pointers; want independent instances")
 	}
@@ -672,7 +674,7 @@ func TestRuntimeReplay_SharedRedisDedup(t *testing.T) {
 func TestReplayRelease_SurvivesClientDisconnect(t *testing.T) {
 	enableRuntimeIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupRuntimeIngestRBAC(t, s)
+	setupRuntimeIngestRBAC(t, s, edgeRouteTenant)
 	session, execution := createRuntimeIngestBoundParents(t, s, "release-cancel", "tetragon-test")
 	ctx, cancel := context.WithCancel(context.Background())
 	s.edgeStore = &runtimeIngestCancelAppendStore{Store: s.edgeStore, cancel: cancel}
@@ -702,7 +704,7 @@ func TestReplayRelease_SurvivesClientDisconnect(t *testing.T) {
 func TestRuntimeIngest_NoN1QueryPerEvent(t *testing.T) {
 	enableRuntimeIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupRuntimeIngestRBAC(t, s)
+	setupRuntimeIngestRBAC(t, s, edgeRouteTenant)
 	session, execution := createRuntimeIngestBoundParents(t, s, "n1", "tetragon-test")
 	counting := &runtimeIngestParentCountingStore{Store: s.edgeStore}
 	s.edgeStore = counting
@@ -728,7 +730,7 @@ func TestRuntimeIngest_NoN1QueryPerEvent(t *testing.T) {
 func TestRuntimeIngestNoNonceLeakInLogs(t *testing.T) {
 	enableRuntimeIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupRuntimeIngestRBAC(t, s)
+	setupRuntimeIngestRBAC(t, s, edgeRouteTenant)
 	session, execution := createRuntimeIngestBoundParents(t, s, "log-leak", "tetragon-test")
 	s.edgeStore = &runtimeIngestAppendFailStore{
 		Store:     s.edgeStore,
@@ -764,7 +766,7 @@ func TestRuntimeIngestNoNonceLeakInLogs(t *testing.T) {
 func TestRuntimeIngestPreservesCollectorBindingPostFix(t *testing.T) {
 	enableRuntimeIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupRuntimeIngestRBAC(t, s)
+	setupRuntimeIngestRBAC(t, s, edgeRouteTenant)
 	session, execution := createRuntimeIngestBoundParents(t, s, "binding", "collector-a")
 	const nonce = "nonce-binding-postfix-1"
 	forged := runtimeIngestBodyWithNonceForSource(
@@ -926,7 +928,7 @@ func (s *runtimeIngestParentCountingStore) counts() (int, int) {
 func TestRuntimeIngestEnabledStoresRedactedRuntimeEvent(t *testing.T) {
 	enableRuntimeIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupRuntimeIngestRBAC(t, s)
+	setupRuntimeIngestRBAC(t, s, edgeRouteTenant)
 	session, execution := createRuntimeIngestBoundParents(t, s, "redacted", "tetragon-clusterA")
 
 	body := `{
@@ -1070,7 +1072,7 @@ func TestRuntimeIngestAllEventKinds_EndToEnd(t *testing.T) {
 	// subtest filters by its own kind+marker. This catches partial-
 	// rejection / wrong-kind-persistence regressions.
 	s, _ := newEdgeRouteTestServer(t)
-	setupRuntimeIngestRBAC(t, s)
+	setupRuntimeIngestRBAC(t, s, edgeRouteTenant)
 	session, execution := createRuntimeIngestBoundParents(t, s, "all-kinds", "tetragon-all-kinds")
 
 	for i, tc := range cases {
@@ -1153,7 +1155,7 @@ func TestRuntimeIngestAllEventKinds_EndToEnd(t *testing.T) {
 func TestRuntimeIngestEnabledAllOrNothingOnOneBadEnvelope(t *testing.T) {
 	enableRuntimeIngest(t)
 	s, _ := newEdgeRouteTestServer(t)
-	setupRuntimeIngestRBAC(t, s)
+	setupRuntimeIngestRBAC(t, s, edgeRouteTenant)
 	session, execution := createRuntimeIngestBoundParents(t, s, "partial-batch", "tetragon-test")
 	body := `{
 		"source":{"source_id":"tetragon-test"},
