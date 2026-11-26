@@ -902,6 +902,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   so its readiness check finds them in `GET /api/v1/workers`. Each token is
   discarded, and a new start replaces the credentials (task-729c47ac).
 
+- Governed A2A demo: `demo/a2a-governed/integration_test.sh` issues a worker
+  credential in the API key's tenant for `a2a-demo-worker` before it waits
+  for the worker's heartbeat, so `GET /api/v1/workers` lists the worker and
+  `GET /api/v1/workers/a2a-demo-worker/jobs` returns its jobs. The token is
+  discarded, and a rerun replaces the credential (task-f1a5c71d).
+
 - Workflow runs: `POST /api/v1/workflows/{id}/runs/{run_id}/cancel` reads the run's tenant before cancelling; a failed lookup returns `503`, and a run whose tenant cannot be read returns `404 run not found` to callers without cross-tenant access.
 
 - Audit: submit, approve and reject audit events and spans name the agent in a job's `agent_id` label only when that agent belongs to the job's tenant; otherwise they carry the label's id with no name or risk tier.

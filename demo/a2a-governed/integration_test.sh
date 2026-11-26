@@ -318,6 +318,9 @@ openssl ecparam -name prime256v1 -genkey -noout | openssl pkcs8 -topk8 -nocrypt 
 
 # --- P3-P4: worker and bridges -----------------------------------------------
 phase P3 "starting the worker in pool a2a-governed"
+# GET /api/v1/workers lists a worker only to callers in its credential's tenant. The token is discarded.
+CORDUM_GATEWAY="$api_base" CORDUM_TENANT_ID=default "$CORDUMCTL_BIN" worker credential create --worker-id a2a-demo-worker \
+  >/dev/null 2>"$artifacts/worker-credential.log" || fail "worker credential create failed; see worker-credential.log"
 start worker
 worker_pid=$!
 poll "$WAIT_WORKER_SEC" 1 worker_ready || fail "a2a-demo-worker has no fresh heartbeat in pool a2a-governed after ${WAIT_WORKER_SEC}s"
