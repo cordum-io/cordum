@@ -720,7 +720,7 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	s.mu.RUnlock()
 
 	workflowID, scopedJobID := resolvePolicyScope(req)
-	evalPolicy := scopedPolicyForRequest(policy, global, workflowID, scopedJobID, topic, req.GetLabels())
+	evalPolicy := scopedPolicyForRequest(policy, global, workflowID, scopedJobID, topic)
 	inputRules = selectInputRulesForScope(inputRules, workflowID, scopedJobID)
 
 	// Bypass decision cache when the active policy has effective velocity rules.
