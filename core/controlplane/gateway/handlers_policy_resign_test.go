@@ -116,7 +116,7 @@ func TestResignPolicyBundle_RequiresAdmin(t *testing.T) {
 			storeWriterSeed(t, s, map[string]any{"custom/a": policyContent})
 			before := storeWriterKeyspace(t, s)
 			id, status := "custom/a", http.StatusForbidden
-			if role == "admin" || role == "operator" || role == "secops" {
+			if role == "admin" {
 				id, status = "missing", http.StatusNotFound
 			}
 			resignTestRequest(t, s, id, role, status)

@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Auth: role names are matched exactly. Routes and checks that require the admin role
+  admit only `admin`. A principal keeps the role it was given, whether it authenticates
+  with a static API key, a session, or a JWT, OIDC or SAML role claim. A role list that
+  names `admin` on a permission-checked route also admits `operator`, which holds the
+  built-in operator permissions. `secops` holds no built-in permissions. Upgrading: give
+  `role: admin` to any key, user or claim mapping that needs admin access
+  (task-b355b21d).
 - Edge routes take the license break-glass decision in every license state and on every
   plan, as other API routes do. A request that break-glass does not allow answers 503,
   with code `license.grace_restricted` in grace (for example an MCP upstream change or

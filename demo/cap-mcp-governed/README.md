@@ -251,9 +251,9 @@ the prebuilt worker on the host, over TLS to NATS, Redis and the gateway.
 | `CAP_MCP_WORKER_API_KEY` | admin | `cap-mcp-governed` | The worker, and the refused self-approval |
 | `CAP_MCP_OPERATOR_API_KEY` | admin | `cap-mcp-governed-operator` | The approval |
 
-The worker key is admin because a static key's `operator` role normalizes to
-admin and a viewer key lacks `workflows.write`. The self-approval refusal
-therefore comes from the identity check, not from RBAC.
+The worker key is admin, so it holds every permission, `jobs.approve`
+included. The self-approval refusal therefore comes from the identity check,
+not from RBAC.
 
 The script creates the agent identity with `agent_id` `cap-mcp-governed`,
 `risk_tier` `high`, `allowed_tools` `cordum_status` and

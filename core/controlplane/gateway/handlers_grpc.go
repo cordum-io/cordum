@@ -49,10 +49,10 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		return nil, status.Error(codes.InvalidArgument, "request required")
 	}
 
-	// RBAC: only admin and user roles may submit jobs.
-	// This matches the HTTP handler (handleSubmitJobHTTP) which also allows
-	// "admin" and "user" roles. Keep both in sync to avoid role asymmetry.
-	if err := s.requireRoleGRPC(ctx, "admin", "user"); err != nil {
+	// RBAC: only admin, user and operator roles may submit jobs.
+	// This matches the HTTP handler (handleSubmitJobHTTP), whose "admin" and
+	// "user" list also admits operator. Keep both in sync to avoid role asymmetry.
+	if err := s.requireRoleGRPC(ctx, "admin", "user", "operator"); err != nil {
 		actorID, _, _, role := grpcAuditActor(ctx)
 		s.appendAuditEntryNamed(ctx, "submit_denied", "job", "", "", actorID, role, "job submit denied: "+err.Error())
 		return nil, err

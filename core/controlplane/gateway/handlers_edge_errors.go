@@ -218,7 +218,7 @@ func (s *server) authorizeEdgePermissionOrRole(w http.ResponseWriter, r *http.Re
 		return true
 	}
 	if len(legacyRoles) > 0 {
-		if err := s.requireRole(r, legacyRoles...); err != nil {
+		if err := s.requireRole(r, s.permissionLegacyRoles(legacyRoles)...); err != nil {
 			writeEdgeForbidden(w, r, err)
 			return false
 		}
