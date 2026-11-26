@@ -5,6 +5,38 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [v1.3.3] - 2026-11-26
+
+Security patch release: the v1.3.2 tag plus the fixes of #605 and the label
+handling of #590, adapted to the `release/1.3` branch.
+
+### Security
+
+#### Policy scope, agent identity and job source come from server-side sources only (2026-11-26)
+
+- Landed on main in #605 (989dcafa4).
+- Safety Kernel: the kernel chose the rule section of a job from its topic and
+  from its MCP labels (`mcp.server`, `mcp_tool`, `mcpAction` and the other
+  alias names). Labels come from the client. A job that declares an MCP call
+  is now checked against the same rules as a job without the labels, plus
+  the rules with `match.mcp` lists, in the order the policy lists them.
+- Edge evaluate: the policy mapper now also drops `agent_id`,
+  `secrets_present`, the `mcp` alias names and the workflow and job scope
+  labels from request and session labels. The gateway sets `agent_id` from
+  the worker link of the principal. The `workflow_run_id` and `job_id` of a
+  session stay on the event as evidence and no longer select workflow or job
+  override rules.
+- Job submit: `_source=pack` is set only when a principal with a worker link
+  sends a `pack_id`. Every other caller gets `_source=api`.
+- Job submit and workflow steps (label handling of #590): HTTP and gRPC job
+  submit drop client labels that only Cordum services write (`approval_*`,
+  `gate_type`, `cordum.bus_msg_id`, `policy.attachment_id` and the workflow
+  context). The workflow engine drops them, and the `_` system labels, from
+  the route labels of a step.
+- Affected: 1.0.0 through 1.3.2.
+- Operators: upgrade. See `docs/release-notes/v1.3.3.md` for the behavior
+  changes.
+
 ## [v1.3.2] - 2026-11-25
 
 Security patch release: the v1.3.1 tag plus one fix, cherry-picked from main
