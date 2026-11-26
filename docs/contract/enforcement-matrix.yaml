@@ -12,6 +12,8 @@ columns:
    sandbox.isolated, sandbox.network_allowlist, sandbox.fs_read_only, sandbox.fs_read_write, toolchain.allowed_tools, toolchain.allowed_commands,
    diff.max_files, diff.max_lines, diff.deny_path_globs, redaction_level]
 rows:
+  # Observe allows with degraded evidence on a Gateway or kernel outage; see
+  # failure-behavior.md gateway-from-edge [b] and its observe-mode paragraph.
   - id: edge-hook-observe
     anchors: [{path: core/edge/agentd/evaluator.go, symbol: Evaluator.EvaluateHook}, {path: core/controlplane/gateway/handlers_edge_evaluate.go, symbol: server.handleEdgeEvaluate}]
     cells:
@@ -206,8 +208,7 @@ ref_tests:
   core/edge/agentd/approval_waiter.go:91:
     tests: [{package: core/edge/agentd, name: TestAgentdDecisionFromEvaluateRequiresApprovalDefaultsToImmediateRetryDeny}]
   core/edge/agentd/approval_waiter.go:93:
-    tests: []
-    gap: "No test passes a THROTTLE evaluate response through AgentdDecisionFromEvaluateResponse and asserts a deny hook decision; core/edge/claude covers only its own mapper."
+    tests: [{package: core/edge/agentd, name: TestAgentdDecisionFromEvaluateMapsThrottleToDeny}]
   core/mcp/policy_evaluate.go:895:
     tests: [{package: core/mcp, name: TestInvokeToolWithPolicy_RequireApprovalHandsOffToApprovalStore}]
   core/mcp/policy_evaluate.go:944:

@@ -1,7 +1,7 @@
 PROTO_SRC = core/protocol/proto/v1
 PB_OUT_CORE = core/protocol/pb/v1
 PROTO_OUT_CORE = $(abspath $(PB_OUT_CORE))
-PROTO_FILES = api.proto context.proto output_policy.proto
+PROTO_FILES = api.proto context.proto output_policy.proto execution_grant.proto
 OPENAPI_OUT = docs/api/openapi
 
 BIN_DIR ?= bin
