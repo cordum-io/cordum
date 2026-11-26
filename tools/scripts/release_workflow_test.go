@@ -1374,11 +1374,12 @@ func checkBinaryWiring(docker, binary releaseWorkflow) []string {
 		add("called workflow must grant only contents read")
 	}
 	for name, job := range binary.Jobs {
-		if job.Permissions.Kind != 0 {
+		// sign-manifest's grant is pinned by the binary signing rules.
+		if job.Permissions.Kind != 0 && name != signJob {
 			add(name + " declares job permissions")
 		}
 		for _, step := range job.Steps {
-			for _, command := range []string{"gh release", "gh api", "git push", "docker login", "docker push", "cosign", "helm push"} {
+			for _, command := range []string{"gh release", "gh api", "git push", "docker login", "docker push", "helm push"} {
 				if strings.Contains(step.Run, command) {
 					add(name + " contains " + command)
 				}
@@ -1410,7 +1411,7 @@ func checkBinaryCallers(docker releaseWorkflow) []string {
 		} else if name != "binaries" {
 			add("unexpected caller " + name)
 		}
-		if normalizeCondition(job.If) != want || !contentsPermission(job.Permissions, "read") || job.With.Kind != 0 {
+		if normalizeCondition(job.If) != want || !exactPermissions(job.Permissions, signingPermissions) || job.With.Kind != 0 {
 			add(name + " caller configuration")
 		}
 		if name == "binaries-dry-run" && job.Secrets.Kind != 0 {

@@ -18,7 +18,7 @@ import (
 
 func runEdgeCmd(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: cordumctl edge <claude|doctor|init|managed-settings>")
+		fmt.Fprintln(os.Stderr, "usage: cordumctl edge <claude|doctor|init|managed-settings|calibration-report>")
 		return 2
 	}
 	switch args[0] {
@@ -30,6 +30,8 @@ func runEdgeCmd(args []string) int {
 		return runEdgeInitCmd(args[1:], os.Stdin, os.Stdout, os.Stderr)
 	case "managed-settings":
 		return runEdgeManagedSettingsCmd(args[1:], os.Stdout, os.Stderr)
+	case "calibration-report":
+		return runEdgeCalibrationReportCmd(args[1:], os.Stdout, os.Stderr)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown edge subcommand %q\n", args[0])
 		return 2

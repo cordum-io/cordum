@@ -83,7 +83,7 @@ type ApprovalConsumeFunc func(ctx context.Context, approvalRef string) (*Evaluat
 // approved inline wait, consume re-issues evaluate with the approval_ref so the
 // single-use CAS runs before ALLOW (see approvalRequiredDecision).
 func AgentdDecisionFromEvaluateResponse(ctx context.Context, resp EvaluateResponse, cfg ApprovalDecisionConfig, waiter ApprovalWaiter, consume ApprovalConsumeFunc) claude.AgentdDecision {
-	switch strings.ToUpper(strings.TrimSpace(resp.Decision)) {
+	switch resp = denyUnenforceableConstraints(resp); strings.ToUpper(strings.TrimSpace(resp.Decision)) {
 	case string(edgecore.DecisionAllow):
 		return claude.AgentdDecision{Decision: claude.DecisionAllow}
 	case string(edgecore.DecisionDeny):
@@ -221,7 +221,7 @@ func consumeApprovedInlineWait(ctx context.Context, resp EvaluateResponse, ref s
 // rejected, expired, error) fails closed. The reviewer's wait-result reason/
 // updated input is preferred, falling back to the consume response.
 func decisionFromConsumedEvaluate(resp EvaluateResponse, ref string, waitResult ApprovalWaitResult) claude.AgentdDecision {
-	switch strings.ToUpper(strings.TrimSpace(resp.Decision)) {
+	switch resp = denyUnenforceableConstraints(resp); strings.ToUpper(strings.TrimSpace(resp.Decision)) {
 	case string(edgecore.DecisionAllow), string(edgecore.DecisionConstrain):
 		updated := cloneAnyMap(waitResult.UpdatedInput)
 		if updated == nil {
@@ -243,6 +243,21 @@ func decisionFromConsumedEvaluate(resp EvaluateResponse, ref string, waitResult 
 			ApprovalRef: ref,
 		}
 	}
+}
+
+// denyUnenforceableConstraints turns an ALLOW or CONSTRAIN response that
+// carries constraint kinds the hook path cannot apply into a DENY whose reason
+// names those kinds.
+func denyUnenforceableConstraints(resp EvaluateResponse) EvaluateResponse {
+	decision := edgecore.EdgeDecision(strings.ToUpper(strings.TrimSpace(resp.Decision)))
+	kinds := edgecore.UnenforceableConstraintKinds(resp.Constraints)
+	if (decision != edgecore.DecisionAllow && decision != edgecore.DecisionConstrain) || len(kinds) == 0 {
+		return resp
+	}
+	reason := boundDecisionText(edgecore.UnenforceableConstraintReason(kinds))
+	resp.Decision, resp.UpdatedInput = string(edgecore.DecisionDeny), nil
+	resp.Reason, resp.PermissionDecisionReason, resp.TerminalMessage = reason, reason, reason
+	return resp
 }
 
 func approvalRetryReason(resp EvaluateResponse, fallback string) string {
