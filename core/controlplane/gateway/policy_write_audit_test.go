@@ -3,8 +3,16 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -261,4 +269,195 @@ func TestPolicyPublish_RefusedPublishStoresNoSnapshot(t *testing.T) {
 	rec := policyWritePublish(s)
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	require.Equal(t, before, auditPersistKeyspace(t, mr), "a refused publish changed stored documents")
+}
+
+// gatewayConfigWriters names every function in this package that writes a
+// config document, with why it may do so outside commitPolicyWithAudit. A new
+// or removed writer fails TestGatewayConfigWriters_EachHasAPinnedReason until
+// it is classified here.
+var gatewayConfigWriters = map[string]string{
+	"migrateLegacyPolicyBundles":       "startup migration of legacy bundles; no request actor",
+	"deleteSystemDefaultKeyWithRetry":  "startup migration step on system/default; no request actor",
+	"handleUpdateOIDCGroupRoleMapping": "writes the OIDC role mapping in system/default",
+	"handleSetConfig":                  "managedConfigKey refuses writes to system/policy",
+	"applyConfigOverlay":               "pack config overlay; only the pools and timeouts keys",
+	"removeConfigOverlay":              "pack config overlay; only the pools and timeouts keys",
+	"restoreConfigOverlay":             "pack config overlay; only the pools and timeouts keys",
+	"applyPolicyOverlay":               "pending task-b2c7a413",
+	"removePolicyOverlay":              "pending task-b2c7a413",
+	"restorePolicyOverlay":             "pending task-b2c7a413",
+	"savePackRegistry":                 "writes the pack registry",
+	"savePolicySnapshots":              "stores snapshots after the entry naming them is stored",
+	"appendPolicyAudit":                "writes the policy audit log itself",
+	"commitPolicyWithAudit":            "stores system/policy together with its audit entry",
+	"handleCreatePool":                 "writes the pools config in system/default",
+	"handleUpdatePool":                 "writes the pools config in system/default",
+	"deletePoolFromConfig":             "writes the pools config in system/default",
+	"handleDrainPool":                  "writes the pools config in system/default",
+	"handleAddTopicToPool":             "writes the pools config in system/default",
+	"handleRemoveTopicFromPool":        "writes the pools config in system/default",
+	"removeTopicFromPoolConfigOnce":    "removes a deleted topic from the pools config",
+	"transitionToInactive":             "marks a drained pool inactive in the pools config",
+}
+
+// policyCommitHandlers store their system/policy change through
+// commitPolicyBundles, so none of them may write config directly.
+var policyCommitHandlers = []string{
+	"handlePutPolicyOutputRule", "handlePutPolicyBundle", "handleDeletePolicyBundle",
+	"handlePublishPolicyBundles", "handleRollbackPolicyBundles", "handlePutPolicyGlobal",
+	"handleCreateVelocityRule", "handlePutVelocityRule", "handleDeleteVelocityRule",
+}
+
+var configWriteMethods = []string{"Set", "SetWithRetry", "ReplaceWithRetry", "SetAll"}
+
+// isConfigService reports whether expr is the type *configsvc.Service.
+func isConfigService(expr ast.Expr) bool {
+	star, ok := expr.(*ast.StarExpr)
+	if !ok {
+		return false
+	}
+	sel, ok := star.X.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	pkg, ok := sel.X.(*ast.Ident)
+	return ok && pkg.Name == "configsvc" && sel.Sel.Name == "Service"
+}
+
+// isConfigSvcField reports whether expr selects a configSvc field.
+func isConfigSvcField(expr ast.Expr) bool {
+	sel, ok := expr.(*ast.SelectorExpr)
+	return ok && sel.Sel.Name == "configSvc"
+}
+
+// writesConfig reports whether fn calls a config write method on a configSvc
+// field or on a name fn declares as a *configsvc.Service.
+func writesConfig(fn *ast.FuncDecl) bool {
+	services := map[string]bool{}
+	writes := false
+	ast.Inspect(fn, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.Field:
+			for _, id := range n.Names {
+				services[id.Name] = services[id.Name] || isConfigService(n.Type)
+			}
+		case *ast.ValueSpec:
+			for _, id := range n.Names {
+				services[id.Name] = services[id.Name] || isConfigService(n.Type)
+			}
+		case *ast.AssignStmt:
+			for i, rhs := range n.Rhs {
+				if id, ok := n.Lhs[i].(*ast.Ident); ok && isConfigSvcField(rhs) {
+					services[id.Name] = true
+				}
+			}
+		case *ast.CallExpr:
+			sel, ok := n.Fun.(*ast.SelectorExpr)
+			if !ok || !slices.Contains(configWriteMethods, sel.Sel.Name) {
+				return true
+			}
+			id, isIdent := sel.X.(*ast.Ident)
+			writes = writes || isConfigSvcField(sel.X) || (isIdent && services[id.Name])
+		}
+		return true
+	})
+	return writes
+}
+
+func TestGatewayConfigWriters_EachHasAPinnedReason(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	require.NoError(t, err)
+	fset := token.NewFileSet()
+	var writers []string
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, name, nil, 0)
+		require.NoError(t, err)
+		for _, decl := range f.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok && writesConfig(fn) {
+				writers = append(writers, fn.Name.Name)
+			}
+		}
+	}
+	require.ElementsMatch(t, slices.Collect(maps.Keys(gatewayConfigWriters)), writers)
+	for _, name := range policyCommitHandlers {
+		require.NotContains(t, gatewayConfigWriters, name)
+	}
+}
+
+// policyBumpHook stores another bundle in system/policy through other after
+// every GET of the policy key, so every commit attempt meets a newer revision.
+type policyBumpHook struct {
+	other *redis.Client
+	bumps *atomic.Int32
+}
+
+func (h policyBumpHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (h policyBumpHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		err := next(ctx, cmd)
+		args := cmd.Args()
+		if strings.EqualFold(cmd.Name(), "get") && len(args) > 1 && args[1] == auditPersistPolicyKey {
+			var runs atomic.Int32
+			id := fmt.Sprintf("secops/bump-%d", h.bumps.Add(1))
+			_ = configsvc.NewFromClient(h.other).SetWithRetry(context.Background(), configsvc.ScopeSystem, packs.PolicyConfigID, 3, auditPersistAddBundle(id, &runs))
+		}
+		return err
+	}
+}
+
+func (h policyBumpHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+
+func TestCommitPolicyWithAudit_ReturnsAConflictAndStoresNothingWhenRetriesRunOut(t *testing.T) {
+	s, mr, hooked, plain := auditPersistServer(t)
+	auditPersistSeedPolicy(t, mr, plain)
+	var bumps, runs atomic.Int32
+	hooked.AddHook(policyBumpHook{other: plain, bumps: &bumps})
+	logs := storeWriterLogs(t)
+
+	err := s.commitPolicyWithAudit(context.Background(), auditPersistAddBundle("secops/new", &runs), auditPersistEntry("policy.exhaust"))
+	require.True(t, errors.Is(err, configsvc.ErrRevisionConflict), "err=%v", err)
+	require.Equal(t, int32(policyAuditAttempts), runs.Load(), "apply runs")
+	require.False(t, mr.Exists(auditPersistWriteKey), "the co-located audit doc was stored")
+	require.False(t, mr.Exists(auditPersistLogKey), "the shared audit log was stored")
+	policy, err := configsvc.NewFromClient(plain).Get(context.Background(), configsvc.ScopeSystem, packs.PolicyConfigID)
+	require.NoError(t, err)
+	bundles, _ := policy.Data[packs.PolicyConfigKey].(map[string]any)
+	require.NotContains(t, bundles, "secops/new", "the policy change was stored")
+	require.Len(t, logs.records("ERROR", "msg", "policy write and audit entry not committed"), 1)
+	require.Len(t, logs.records("ERROR", "level", "ERROR"), 1, "exactly one ERROR line overall")
+	require.NotContains(t, auditPersistActions(t, s), "policy.exhaust")
+}
+
+// policyWriteUnreadableAudit stores a co-located audit doc whose entries are
+// not a list.
+func policyWriteUnreadableAudit(t *testing.T, plain *redis.Client) {
+	t.Helper()
+	require.NoError(t, configsvc.NewFromClient(plain).Set(context.Background(), &configsvc.Document{
+		Scope: configsvc.ScopeSystem, ScopeID: policybundles.PolicyWriteAuditID, Data: map[string]any{policybundles.PolicyAuditKey: "not-a-list"},
+	}))
+}
+
+func TestCommitPolicyWithAudit_RefusesAnUnreadableAuditDocument(t *testing.T) {
+	s, mr, _, plain := auditPersistServer(t)
+	auditPersistSeedPolicy(t, mr, plain)
+	policyWriteUnreadableAudit(t, plain)
+	before := auditPersistKeyspace(t, mr)
+	var runs atomic.Int32
+
+	require.Error(t, s.commitPolicyWithAudit(context.Background(), auditPersistAddBundle("secops/new", &runs), auditPersistEntry("policy.x")))
+	require.Equal(t, before, auditPersistKeyspace(t, mr))
+}
+
+func TestLoadPolicyAudit_FailsOnAnUnreadableAuditDocument(t *testing.T) {
+	s, _, _, plain := auditPersistServer(t)
+	policyWriteUnreadableAudit(t, plain)
+
+	_, err := s.loadPolicyAudit(context.Background())
+	require.Error(t, err)
 }
