@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- `perfharness run` and `perfharness validate` for local job-submit and approval
+  workloads, recording per-step HTTP latency percentiles, achieved throughput,
+  saturation thresholds and queue-depth samples with explicit gaps. The approval
+  workload needs `CORDUM_APPROVER_API_KEY`, a second credential with its own
+  principal, because the gateway denies self-approval (PR2-09-DRIVER).
+
 ### Fixed
 
 - Packs: `POST /api/v1/packs/install` no longer ends without a response when the
