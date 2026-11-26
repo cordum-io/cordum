@@ -1,7 +1,7 @@
 import { Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { EdgeSession } from "@/api/types";
-import { fireEvent, renderWithProviders, screen } from "@/test-utils/render";
+import { fireEvent, renderWithProviders, screen, within } from "@/test-utils/render";
 import { useEdgeSessions } from "@/hooks/useEdgeSessions";
 import EdgeSessionsPage from "./EdgeSessionsPage";
 
@@ -134,6 +134,45 @@ describe("EdgeSessionsPage", () => {
     const rows = screen.getAllByTestId("edge-sessions-row");
     expect(rows).toHaveLength(1);
     expect(rows[0].getAttribute("data-session-id")).toBe("edge_sess_b");
+  });
+
+  it("shows each row's server-reported assurance state, and says enforced only for executor-enforced", () => {
+    const cases = [
+      ["executor-enforced", "Executor-enforced"],
+      ["hook-mediated", "Hook-mediated"],
+      ["compatibility", "Compatibility"],
+      ["unsupported", "Unsupported"],
+      ["stale", "Stale"],
+      [undefined, "Not reported"],
+    ] as const;
+    setupHook({
+      sessions: cases.map(([state], i) => makeSession({ sessionId: `edge_sess_${i}`, assuranceState: state })),
+    });
+    renderPage();
+    const rows = screen.getAllByTestId("edge-sessions-row");
+    expect(rows).toHaveLength(cases.length);
+    cases.forEach(([state, label], i) => {
+      expect(within(rows[i]).getByTestId("edge-assurance-badge").textContent).toBe(label);
+      expect(/enforced/i.test(rows[i].textContent ?? "")).toBe(state === "executor-enforced");
+      expect(rows[i].textContent).toContain("policy enforce");
+    });
+  });
+
+  it("filters sessions by assurance state client-side, and All restores them", () => {
+    setupHook({
+      sessions: [
+        makeSession({ sessionId: "edge_sess_hook", assuranceState: "hook-mediated" }),
+        makeSession({ sessionId: "edge_sess_stale", assuranceState: "stale" }),
+        makeSession({ sessionId: "edge_sess_none" }),
+      ],
+    });
+    renderPage();
+    const select = screen.getByTestId("edge-sessions-filter-assurance");
+    fireEvent.change(select, { target: { value: "stale" } });
+    const rows = screen.getAllByTestId("edge-sessions-row");
+    expect(rows.map((row) => row.getAttribute("data-session-id"))).toEqual(["edge_sess_stale"]);
+    fireEvent.change(select, { target: { value: "" } });
+    expect(screen.getAllByTestId("edge-sessions-row")).toHaveLength(3);
   });
 
   it("filters sessions by search across sessionId and principalId", () => {

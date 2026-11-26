@@ -71,6 +71,17 @@ Policy-mode fail behavior:
 | `enterprise-strict` | Deny all governed actions that require a fresh decision. | Deny all governed actions because local enforcement cannot prove safety. | Fail closed with support/doctor instructions; no bypass-by-timeout. | Auditable fail-closed decision with tenant, mode, component, and bounded redacted reason. |
 | `workflow requires=edge-governance` | Fail fast before dispatch or fail the action/attempt if already running. | Fail the job/attempt because required governance is unavailable. | Workflow-visible failure with retry-after-governance guidance. | Job/workflow audit event plus Edge degraded/fail-closed event linked when possible. |
 
+**Outage status:** the table above records P0 design intent, not measured outage
+guarantees. agentd's Gateway-outage handling in enforce and observe is not measured
+(G04). For measured component decisions, see the
+[failure contract](../contract/failure-behavior.md#behavior-table):
+gateway-from-edge/low [a] (`TestRunEnforceModeDeniesPreToolUseOnAgentdTimeoutWithoutFailClosed`),
+low [b] (`TestRunObserveModeAllowsNoopWhenAgentdUnavailable`), low [c]
+(`TestApplyFailModeMatrixCoversObserveEnforceEnterpriseStrict`, enterprise-strict cases only),
+and protected [a]/[b] (`TestRunEnforceDeniesDegradedPreToolUse`,
+`TestRunEnterpriseStrictDeniesMalformedAgentdResponse`). Other table outcomes and
+agent-runtime compliance are not measured; see the contract's Scope paragraph.
+
 ### Security, token storage, and product scope
 
 Token storage decisions:

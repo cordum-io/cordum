@@ -217,6 +217,7 @@ type EdgeSession struct {
 	EnforcementLayers    EnforcementLayers `json:"enforcement_layers"`
 	PolicyMode           PolicyMode        `json:"policy_mode"`
 	Status               SessionStatus     `json:"status"`
+	AssuranceState       AssuranceState    `json:"assurance_state,omitempty"`
 	RiskSummary          RiskSummary       `json:"risk_summary"`
 	StartedAt            time.Time         `json:"started_at"`
 	EndedAt              *time.Time        `json:"ended_at"`

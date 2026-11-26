@@ -158,7 +158,7 @@ manifests/TLS patch above; **A** = [gateway auth](../../core/controlplane/gatewa
 | Management/application workload service-account tokens | No ordinary workload holder in this selected profile | No Kubernetes API authority for ordinary services or the reference application | Require automount and alternate delivery absent; future broker identity handled separately | None | Planned profile requirement; K disables automount, Helm equivalence not established |
 | Future broker target credential | Future isolated broker only; trusted provisioner | Minimum mutation authority for named target namespace/objects, never cluster admin | Broker-only protected delivery/storage; no agent or application mount | None, directly or indirectly | Planned M2B-01; delivery/identity/RBAC undecided |
 | Future broker/authority-service caller credential | Trusted broker/authority endpoints | Authenticate their control channel, not caller-selected target access | Trusted management custody; mechanism/delivery undecided | None | Planned M2A/M2B decision; no new credential format specified |
-| Future grant issuer private material (if the ADR requires it) | Future authorized issuer only | Issue bounded execution authority; distinct from policy or audit keys | Issuer-only protected custody, no executor/agent distribution of private material | None | Planned M2A-01; public trust material listed separately below |
+| Future grant issuer private material (Ed25519 signing keys, proposed in [ADR-011](../adr/011-execution-grant-format.md)) | Future authorized issuer only | Issue bounded execution authority; distinct from policy or audit keys | Issuer-only protected custody, no executor/agent distribution of private material | None | Proposed in ADR-011; issuance planned (M2A-09); public trust material listed separately below |
 | Redis password | Authorized Cordum services; Redis verifier; trusted operator | Access control-plane state; not a target API credential | Management secret delivery/processes and Redis configuration | None | Existing V/D/S/T mechanism; selected external TLS Redis provision not measured |
 | NATS client certificate private keys | Authorized Cordum services and trusted provisioner | mTLS bus identity; server-side authorization must limit use | Management TLS secrets/processes; NATS verifier has public trust only | None | Existing N/D/T mechanisms; external NATS mTLS profile planned; token/password/NKey alternatives absent |
 | Redis client TLS private keys | Authorized Redis clients and provisioner | TLS client identity for state access | Management TLS secrets/processes | None | Existing D/T mechanism; no credential shared with agent |
@@ -238,9 +238,11 @@ bypass resistance, full regression, latency or deployment qualification.
 
 ## Open questions
 
-M2A-01 (`task-8018d60680844da9bdc9805b90f2e319`) owns the future grant/authority
-ADR; M2B-01 (`task-0c4e8c43b2a44d9593e0e20b84888c41`) owns the future broker
-ADR. Neither design nor implementation is decided by this contract.
+M2A-01 (`task-8018d60680844da9bdc9805b90f2e319`) proposed the grant format in
+[ADR-011](../adr/011-execution-grant-format.md), a Proposed design that
+implements no schema, verifier, broker or protected operation. M2B-01
+(`task-0c4e8c43b2a44d9593e0e20b84888c41`) owns the future broker ADR. Neither
+design nor implementation is decided by this contract.
 
 **M2A-01 — grant and durable authority ADR:**
 

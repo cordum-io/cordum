@@ -195,6 +195,14 @@ var reservedPolicyLabelPrefixes = []string{
 	// classifier.complete=true to short-circuit the fail-closed path
 	// for an actually-partial classification.
 	"classifier.",
+	// "_" is the system-label namespace, owned by Cordum services. The
+	// Safety Kernel reads _delegation.* as gateway-verified delegation
+	// metadata, _action.descriptor_json as a gateway-validated action and
+	// _content.* as gateway-built input. Edge has no path that verifies
+	// any of them, so request and session labels must not use the
+	// namespace. Same rule as the gateway's stripReservedLabels on job
+	// submit. GHSA-j33m-mr27-pmw3.
+	"_",
 }
 
 // reservedPolicyLabelPrefix reports whether key is in a reserved

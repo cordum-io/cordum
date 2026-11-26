@@ -1051,6 +1051,10 @@ EDGE_EXECUTION_ID=""
 # blank (core/controlplane/gateway/auth/basic.go:HeaderValue) — required by
 # EDGE-008.7 hardening on resolveEdgeAuthPrincipal which refuses body fields.
 EDGE_PRINCIPAL_ID="edge-fake-hook-e2e-$$"
+# Gateway-direct evaluate calls stand in for cordum-agentd, which sends a
+# keyed commitment to the original tool input; enforce sessions deny a
+# hook evaluation without one. Any fixed value works for these gates.
+EDGE_INPUT_COMMITMENT="hmac-sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 # ---------------------------------------------------------------------------
 # Gate routing — default is hook mode (EDGE-027 acceptance path); bypass
@@ -1257,6 +1261,7 @@ gate_pretooluse_deny_bypass() {
   "agent_product": "cordum-edge-fake-hook-e2e",
   "layer": "hook",
   "kind": "hook.pre_tool_use",
+  "input_commitment": "${EDGE_INPUT_COMMITMENT}",
   "tool_name": "Read",
   "input_redacted": {
     "file_path": "${FIXTURE_DENY_PATH}"
@@ -1474,6 +1479,7 @@ gate_approval_flow_bypass() {
   "agent_product": "cordum-edge-fake-hook-e2e",
   "layer": "hook",
   "kind": "hook.pre_tool_use",
+  "input_commitment": "${EDGE_INPUT_COMMITMENT}",
   "tool_name": "Edit",
   "input_redacted": {
     "file_path": "${FIXTURE_APPROVE_PATH}"
@@ -1539,6 +1545,7 @@ JSON
   "agent_product": "cordum-edge-fake-hook-e2e",
   "layer": "hook",
   "kind": "hook.pre_tool_use",
+  "input_commitment": "${EDGE_INPUT_COMMITMENT}",
   "tool_name": "Edit",
   "input_redacted": {
     "file_path": "${FIXTURE_APPROVE_PATH}"
@@ -1616,6 +1623,7 @@ gate_approval_rejected() {
   "agent_product": "cordum-edge-fake-hook-e2e",
   "layer": "hook",
   "kind": "hook.pre_tool_use",
+  "input_commitment": "${EDGE_INPUT_COMMITMENT}",
   "tool_name": "Edit",
   "input_redacted": {
     "file_path": "${rejected_path}"
@@ -1735,6 +1743,7 @@ gate_approval_expired() {
   "agent_product": "cordum-edge-fake-hook-e2e",
   "layer": "hook",
   "kind": "hook.pre_tool_use",
+  "input_commitment": "${EDGE_INPUT_COMMITMENT}",
   "tool_name": "Edit",
   "input_redacted": {
     "file_path": "${expired_path}"
@@ -1789,6 +1798,7 @@ JSON
   "agent_product": "cordum-edge-fake-hook-e2e",
   "layer": "hook",
   "kind": "hook.pre_tool_use",
+  "input_commitment": "${EDGE_INPUT_COMMITMENT}",
   "tool_name": "Edit",
   "input_redacted": {
     "file_path": "${recovery_path}"

@@ -61,10 +61,20 @@ The kernel uses this id to look up the trusted public key.
 | `CORDUM_POLICY_SIGNING_KEY`       | Yes\*    | Ed25519 private key (PEM or base64-encoded DER).             |
 | `CORDUM_POLICY_SIGNING_KEY_PATH`  | —        | Alternative: path to a file containing the same formats.     |
 | `CORDUM_POLICY_SIGNING_KEY_ID`    | No       | Key id embedded in every signature. Default: `default`.      |
-| `CORDUM_POLICY_STRICT`            | No       | `off` / `warn` (default) / `enforce`.                        |
+| `CORDUM_POLICY_STRICT`            | No       | `off` / `warn` / `enforce`. Unset: see the note below. |
 
 \* Required when `CORDUM_POLICY_STRICT` is `warn` or `enforce`. In `off`
-mode the gateway will save bundles without signing them.
+mode the gateway will save bundles without signing them. Without a key it
+refuses a bundle save with `503` and error code `POLICY_SIGNING_REQUIRED`.
+
+With `CORDUM_POLICY_STRICT` unset, bundle saves use `warn`. In the production
+profile (`CORDUM_PRODUCTION=true`, or `CORDUM_ENV` set to `prod` or
+`production`) the writes the gateway signs into the policy store itself use
+`enforce`: velocity rules, output-rule toggles, pack policy fragments and
+`cordumctl policy resign`. Under `enforce` such a write also needs the signing
+key's public half in the gateway's trust store (`CORDUM_POLICY_PUBLIC_KEY_<ID>`);
+otherwise the gateway refuses it with `503` and `POLICY_SIGNING_REQUIRED` before
+writing anything. An explicit `off`, `warn` or `enforce` applies to every write.
 
 ### Safety kernel (`cordum-safety-kernel`)
 
@@ -73,11 +83,15 @@ mode the gateway will save bundles without signing them.
 | `CORDUM_POLICY_PUBLIC_KEY_<ID>`        | Yes\*    | Trusted public key for `<ID>`. Repeat for multiple keys.         |
 | `SAFETY_POLICY_PUBLIC_KEY`             | —        | Legacy single-key fallback. Honoured during migration only.      |
 | `SAFETY_POLICY_PUBLIC_KEY_ID`          | —        | Key id for the legacy key. Default: `default`.                   |
-| `CORDUM_POLICY_STRICT`                 | No       | `off` / `warn` (default) / `enforce`.                            |
-| `SAFETY_POLICY_SIGNATURE_REQUIRED`     | —        | Legacy boolean. `true` upgrades file-based path to `enforce`.    |
+| `CORDUM_POLICY_STRICT`                 | No       | `off` / `warn` / `enforce`. Unset: `enforce` in the production profile, `warn` otherwise. |
+| `SAFETY_POLICY_SIGNATURE_REQUIRED`     | —        | Legacy boolean. With `CORDUM_POLICY_STRICT` unset, `true` selects `enforce`. |
 
 \* Required in `enforce` mode; the kernel refuses to start without at
-least one trusted key.
+least one trusted key. One rule sets the mode for every policy source (file,
+URL and policy store): an explicit `CORDUM_POLICY_STRICT` wins, so `warn` or
+`off` in the production profile is a deliberate downgrade. Admins can read the
+mode each source resolves to in `signature_enforcement.policy.sources` of
+`GET /api/v1/status`.
 
 ### File-based policies (`SAFETY_POLICY_PATH`)
 
@@ -94,12 +108,15 @@ backward compatibility.
 
 ## 4. Rollout — `off` → `warn` → `enforce`
 
-Signing is opt-in through three modes. Move left-to-right to avoid
-outages.
+Three modes stage the rollout. Move left-to-right to avoid outages. In the
+production profile an unset `CORDUM_POLICY_STRICT` already means `enforce` for
+the safety kernel and for the gateway's policy-store writes (section 3), so set
+`off` or `warn` explicitly while you roll out.
 
 ### Phase 1: `off` (install / dev)
 
-Default behaviour matches pre-signing releases.
+`off` behaves like pre-signing releases. Set it explicitly: outside the
+production profile an unset mode means `warn`.
 
 ```env
 CORDUM_POLICY_STRICT=off
@@ -138,8 +155,10 @@ advance to enforce.
 CORDUM_POLICY_STRICT=enforce
 ```
 
-The gateway refuses to save unsigned bundles (`503 Service Unavailable`
-with a hint referencing `CORDUM_POLICY_SIGNING_KEY`). The kernel refuses
+Without a signing key the gateway refuses to save a bundle
+(`503 Service Unavailable`, error code `POLICY_SIGNING_REQUIRED`, with a hint
+referencing `CORDUM_POLICY_SIGNING_KEY`); a policy-store write also needs the
+key's public half in the gateway's trust store. The kernel refuses
 to load unsigned, tampered, or untrusted-key bundles — the previous
 known-good policy stays active until a valid replacement arrives.
 

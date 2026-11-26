@@ -718,37 +718,37 @@ The scheduler exposes the following metrics:
 
 | Metric                           | Type      | Labels         |
 |----------------------------------|-----------|----------------|
-| `jobs_received`                  | Counter   | `topic`        |
-| `jobs_dispatched`                | Counter   | `topic`        |
-| `jobs_completed`                 | Counter   | `topic`, `status` |
-| `safety_denied`                  | Counter   | `topic`        |
-| `safety_unavailable`             | Counter   | `topic`        |
-| `dispatch_latency`               | Histogram | `topic`        |
-| `job_lock_wait`                  | Histogram | —              |
-| `active_goroutines`              | Gauge     | —              |
-| `stale_jobs`                     | Gauge     | `state`        |
-| `orphan_replayed`                | Counter   | `topic`        |
+| `cordum_scheduler_jobs_received_total` | Counter   | `topic`        |
+| `cordum_scheduler_jobs_dispatched_total` | Counter   | `topic`        |
+| `cordum_scheduler_jobs_completed_total` | Counter   | `topic`, `status` |
+| `cordum_scheduler_safety_denied_total` | Counter   | `topic`        |
+| `cordum_scheduler_safety_unavailable_total` | Counter   | `topic`        |
+| `cordum_scheduler_scheduler_dispatch_latency_seconds` | Histogram | `topic`        |
+| `cordum_scheduler_scheduler_job_lock_wait_seconds` | Histogram | —              |
+| `cordum_scheduler_scheduler_active_goroutines` | Gauge     | —              |
+| `cordum_scheduler_scheduler_stale_jobs` | Gauge     | `state`        |
+| `cordum_scheduler_scheduler_orphan_replayed_total` | Counter   | `topic`        |
 
 ### Output Policy
 
 | Metric                           | Type      | Labels              |
 |----------------------------------|-----------|---------------------|
-| `output_policy_checked`          | Counter   | `topic`             |
-| `output_policy_quarantined`      | Counter   | `topic`             |
-| `output_policy_skipped`          | Counter   | `topic`             |
-| `output_check_latency`           | Histogram | `topic`, `phase`    |
+| `cordum_scheduler_output_policy_checked_total` | Counter   | `topic`             |
+| `cordum_scheduler_output_policy_quarantined_total` | Counter   | `topic`             |
+| `cordum_scheduler_output_policy_skipped_total` | Counter   | `topic`             |
+| `cordum_scheduler_output_check_latency_seconds` | Histogram | `topic`, `phase`    |
 
 ### Saga
 
 | Metric                           | Type      |
 |----------------------------------|-----------|
-| `saga_recorded`                  | Counter   |
-| `saga_rollback_triggered`        | Counter   |
-| `saga_compensation_dispatched`   | Counter   |
-| `saga_compensation_failed`       | Counter   |
-| `saga_rollback_duration`         | Histogram |
-| `saga_active`                    | Gauge     |
-| `saga_unmarshal_error`           | Counter   |
+| `cordum_scheduler_saga_recorded_total` | Counter   |
+| `cordum_scheduler_saga_rollbacks_total` | Counter   |
+| `cordum_scheduler_saga_compensation_dispatched_total` | Counter   |
+| `cordum_scheduler_saga_compensation_failed_total` | Counter   |
+| `cordum_scheduler_saga_rollback_duration_seconds` | Histogram |
+| `cordum_scheduler_saga_active` | Gauge     |
+| `cordum_scheduler_saga_unmarshal_errors_total` | Counter   |
 
 ---
 
