@@ -172,7 +172,9 @@ func TestRejectJobAuditFailureStillRejects(t *testing.T) {
 func TestCancelRunAuditFailureStillCancels(t *testing.T) {
 	s, _, hooked, _ := auditPersistServer(t)
 	s.workflowEng = wf.NewEngine(s.workflowStore, s.bus)
-	run := &wf.WorkflowRun{ID: "audit-cancel", OrgID: "default", Status: wf.RunStatusRunning}
+	workflow := &wf.Workflow{ID: "audit-workflow", OrgID: "default"}
+	require.NoError(t, s.workflowStore.SaveWorkflow(context.Background(), workflow))
+	run := &wf.WorkflowRun{ID: "audit-cancel", WorkflowID: workflow.ID, OrgID: "default", Status: wf.RunStatusRunning}
 	require.NoError(t, s.workflowStore.CreateRun(context.Background(), run))
 	hooked.AddHook(auditPersistHook{failKey: auditPersistLogKey})
 	logs := storeWriterLogs(t)
