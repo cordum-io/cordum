@@ -347,6 +347,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   and writes. A call with no earlier deadline is still bounded by the client's
   socket timeouts (`REDIS_READ_TIMEOUT` and `REDIS_WRITE_TIMEOUT` for
   `NewClient`) (task-031de737).
+- Store: `store.RedisStore` operations (`PutContext`, `GetContext`,
+  `DeleteContext`, `PutResult` and `GetResult`) keep a caller's context
+  deadline, whether longer or shorter than 2s, and apply their 2s default
+  only to a context without a deadline (task-46ad2f61).
 - Docs: Edge overview, Claude Code, CLI and runbook outage statements now follow
   the failure and partition behavior contract's measured hook and Gateway probes.
   The P0 decision table is labeled design intent; agentd Gateway-outage handling
