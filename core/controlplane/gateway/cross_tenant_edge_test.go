@@ -389,7 +389,24 @@ func crossTenantShadowCase(name, method, path string) crossTenantCase {
 		} else {
 			assertCrossTenantRefused(t, rr, "A "+name, marker)
 		}
+		if name == "shadow-list" {
+			crossTenantShadowSignalList(t, sw, seed.findingID, marker)
+		}
 	}}
+}
+
+// crossTenantShadowSignalList asks for two signals. The store then reads the
+// per-signal indexes, which all tenants share, so this covers the per-finding
+// tenant filter on that path.
+func crossTenantShadowSignalList(t *testing.T, sw *crossTenantSweep, findingID, marker string) {
+	t.Helper()
+	path := "/api/v1/edge/shadow-agents?signal=unmanaged_claude_settings&signal=unmanaged_mcp_server"
+	assertCrossTenantAbsent(t, sw.as(t, sw.tenantA, "GET", path, ""), "A shadow signal list", marker, findingID)
+	owner := sw.as(t, sw.tenantB, "GET", path, "")
+	assertCrossTenantAbsent(t, owner, "owner shadow signal list")
+	if !strings.Contains(owner.Body.String(), findingID) || !strings.Contains(owner.Body.String(), marker) {
+		t.Error("owner shadow signal list missing B finding")
+	}
 }
 
 func crossTenantUpstream(t *testing.T, sw *crossTenantSweep) *edgecore.UpstreamServer {
