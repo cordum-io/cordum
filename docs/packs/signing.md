@@ -168,8 +168,8 @@ see CLM-083 in the [claim register](../contract/claims.yaml).
 
 | Mode | Unsigned pack | Tampered or bad signature | Typical deployment |
 |------|---------------|---------------------------|--------------------|
-| **Non-strict** (default) | Install proceeds with a loud `WARNING` on stderr | Install refused | Dev or pre-Phase-1-moat pilots where ecosystem signing is still rolling out |
-| **Strict** | Install refused with `pack.unsigned` | Install refused | Production, compliance-gated tenants, and any deploy where supply-chain attestation is non-negotiable |
+| **Non-strict** (client default; gateway default outside the production profile) | Install proceeds with a loud `WARNING` on stderr | Install refused | Dev or pre-Phase-1-moat pilots where ecosystem signing is still rolling out |
+| **Strict** (gateway default in the production profile) | Install refused with `pack.unsigned` | Install refused | Production, compliance-gated tenants, and any deploy where supply-chain attestation is non-negotiable |
 
 Strict mode flips two ways on each side:
 
@@ -178,7 +178,13 @@ Strict mode flips two ways on each side:
   `SET cfg:packs:strict_mode true` in Redis at runtime (propagates
   across gateway replicas within one second via the in-process
   cache). Use the Redis flip for incident response; env for
-  steady-state.
+  steady-state. In the production profile (`CORDUM_PRODUCTION=true`, or
+  `CORDUM_ENV` set to `prod` or `production`) the gateway is strict without
+  either. `CORDUM_GATEWAY_PACK_STRICT=false`, or `false` in
+  `cfg:packs:strict_mode`, is the explicit downgrade, and a `true` in either
+  one wins over it. The gateway logs a downgrade at startup and on every
+  unsigned install, and admins see the result in
+  `signature_enforcement.packs.strict` of `GET /api/v1/status`.
 
 ### Trust-store setup
 

@@ -42,7 +42,7 @@ The production overlay includes:
 - Configure API keys (`CORDUM_API_KEYS` or `CORDUM_API_KEY`); production mode fails without keys.
 - Configure user authentication (`CORDUM_USER_AUTH_ENABLED=true`) for dashboard access with proper user credentials.
 - Set a strong admin password (`CORDUM_ADMIN_PASSWORD`) for initial admin user creation.
-- Configure policy signature verification (`SAFETY_POLICY_PUBLIC_KEY` + signature); production mode fails without a public key.
+- Configure policy signing ([Policy Bundle Signing](deployment/policy-signing.md)): a gateway signing key (`CORDUM_POLICY_SIGNING_KEY`) whose public half is set as `CORDUM_POLICY_PUBLIC_KEY_<ID>` on the gateway and the safety kernel (`SAFETY_POLICY_PUBLIC_KEY` is the legacy single key). Unless `CORDUM_POLICY_STRICT` is set explicitly, production mode enforces policy signatures: the safety kernel refuses to start without a trusted public key and activates only policy whose signature verifies. The gateway also refuses unsigned packs unless `CORDUM_GATEWAY_PACK_STRICT=false`.
 - Keep gRPC reflection disabled (enable only for debugging with `CORDUM_GRPC_REFLECTION=1`).
 - HSTS headers are set automatically in production mode (`Strict-Transport-Security: max-age=63072000; includeSubDomains`).
 - NetworkPolicies to restrict lateral traffic (gateway <-> redis/nats/safety).
@@ -820,7 +820,8 @@ groups:
 | TLS everywhere | All inter-service traffic encrypted | `kubectl exec ... -- env \| grep TLS` |
 | API keys | Strong, unique keys per tenant | Check `CORDUM_API_KEYS` length (>= 32 hex chars) |
 | Admin password | Strong password set | `CORDUM_ADMIN_PASSWORD` is non-empty, >= 12 chars |
-| Policy signatures | Signature verification enabled | `SAFETY_POLICY_PUBLIC_KEY` is set |
+| Policy signatures | Signature verification enforced | `CORDUM_POLICY_STRICT` is unset or `enforce`, a `CORDUM_POLICY_PUBLIC_KEY_<ID>` (or legacy `SAFETY_POLICY_PUBLIC_KEY`) is set, and `signature_enforcement.policy.sources` in `GET /api/v1/status` reports `enforce` for each source |
+| Pack signatures | Unsigned packs refused | `signature_enforcement.packs.strict` in `GET /api/v1/status` is `true` (`CORDUM_GATEWAY_PACK_STRICT=false` turns it off) |
 | gRPC reflection | Disabled in production | `CORDUM_GRPC_REFLECTION` is unset or `0` |
 | HSTS | Auto-enabled in production mode | Response includes `Strict-Transport-Security` header |
 | CORS | Explicit allowlist (not `*`) | `CORDUM_ALLOWED_ORIGINS` lists specific domains |
@@ -876,7 +877,7 @@ Complete list of production-relevant environment variables:
 | `SAFETY_KERNEL_ADDR` | Gateway, Scheduler | Safety kernel gRPC address |
 | `SAFETY_KERNEL_TLS_REQUIRED` | Gateway, Scheduler | Require TLS for safety kernel connection |
 | `SAFETY_KERNEL_TLS_CA` | Gateway, Scheduler | CA cert for safety kernel TLS |
-| `SAFETY_POLICY_PUBLIC_KEY` | Safety Kernel | ECDSA public key for policy signature verification |
+| `SAFETY_POLICY_PUBLIC_KEY` | Safety Kernel | Legacy single Ed25519 public key for policy signature verification; `CORDUM_POLICY_PUBLIC_KEY_<ID>` is the current form |
 | `SAFETY_POLICY_SIGNATURE_REQUIRED` | Safety Kernel | Require policy signatures |
 | `SCHEDULER_METRICS_ADDR` | Scheduler | Metrics listen address (default `:9090`) |
 | `SCHEDULER_METRICS_PUBLIC` | Scheduler | Allow public metrics bind (`1` to allow) |
