@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Approvals: store the audit entry before applying an approval; if it cannot be
+  stored, return 500 without applying the approval. An approval repair whose audit
+  entry cannot be stored returns 500 and states that the repair was applied.
+
 - Policy: policy bundle, output-rule, velocity-rule, publish, rollback and global
   policy writes now store the change and its policy audit entry together. A request
   whose audit entry cannot be stored fails and changes nothing, a write that races
