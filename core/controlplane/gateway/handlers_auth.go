@@ -483,7 +483,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		if err == nil && user != nil {
 			// Brute-force protection: check throttle before password validation.
 			if redisStore, ok := userStore.(*auth.RedisUserStore); ok {
-				if err := redisStore.CheckLoginThrottle(r.Context(), username, clientIP(r)); err != nil {
+				if err := redisStore.CheckLoginThrottle(r.Context(), tenant, username, clientIP(r)); err != nil {
 					// Same shape as wrong-password — rate-limit must not be a
 					// user-enumeration oracle. Spend bcrypt time and emit
 					// AUTH_INVALID_CREDENTIALS; slog.Warn retains the throttle
@@ -505,7 +505,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 				s.spendLoginTimingHash(password)
 				s.emitAuthFailure(r, username, "password", "user_disabled")
 				if redisStore, ok := userStore.(*auth.RedisUserStore); ok {
-					redisStore.RecordFailedLogin(r.Context(), username, clientIP(r))
+					redisStore.RecordFailedLogin(r.Context(), tenant, username, clientIP(r))
 				}
 				writeJSONError(w, http.StatusUnauthorized, errorCodeAuthInvalidCredentials, "invalid credentials")
 				return
@@ -514,7 +514,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			if userStore.ValidatePassword(r.Context(), user, password) {
 				// User/password authentication successful — clear failed counter.
 				if redisStore, ok := userStore.(*auth.RedisUserStore); ok {
-					redisStore.ClearFailedLogins(r.Context(), username, clientIP(r))
+					redisStore.ClearFailedLogins(r.Context(), tenant, username, clientIP(r))
 				}
 				resp, err := buildUserLoginResponse(r.Context(), user)
 				if err != nil {
@@ -539,7 +539,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			// Password validation failed — record the attempt and emit audit event.
 			s.emitAuthFailure(r, username, "password", "invalid_credentials")
 			if redisStore, ok := userStore.(*auth.RedisUserStore); ok {
-				redisStore.RecordFailedLogin(r.Context(), username, clientIP(r))
+				redisStore.RecordFailedLogin(r.Context(), tenant, username, clientIP(r))
 			}
 		} else if err != nil && !errors.Is(err, auth.ErrUserNotFound) {
 			s.spendLoginTimingHash(password)
