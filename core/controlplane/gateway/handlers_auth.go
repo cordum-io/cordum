@@ -277,8 +277,14 @@ type updateOIDCGroupRoleMappingRequest struct {
 	OIDCGroupRoleMapping map[string]string `json:"oidc_group_role_mapping"`
 }
 
+var errDeploymentSettingsAuthority = errors.New("deployment settings need platform authority")
+
 func (s *server) handleUpdateOIDCGroupRoleMapping(w http.ResponseWriter, r *http.Request) {
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermConfigWrite, []string{"admin"}, s.configSvc) {
+		return
+	}
+	if !s.hasPlatformAuthority(r) {
+		writeForbidden(w, r, errDeploymentSettingsAuthority)
 		return
 	}
 	updater, ok := s.auth.(auth.OIDCGroupRoleMappingUpdater)
