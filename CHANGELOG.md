@@ -46,6 +46,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- `DELETE /api/v1/topics/{name}` removes the caller's registration. The topic's
+  pool mapping is removed only by a caller with platform authority (no auth
+  provider, an auth context that spans all tenants, or the gateway's own
+  tenant, `TENANT_ID` or `default` when unset) once no tenant registers the
+  topic; otherwise the mapping stays for the pool routes to manage
+  (task-e2277e8a).
+
 - Custom roles belong to the tenant that creates them; role names remain unique
   deployment-wide. Custom roles stored without a tenant belong to the gateway's
   own tenant (`TENANT_ID`, or `default` when unset); other tenants must re-create
