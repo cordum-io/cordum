@@ -13,6 +13,7 @@ import (
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	edgecore "github.com/cordum/cordum/core/edge"
+	"github.com/cordum/cordum/core/edge/shadow"
 	"github.com/cordum/cordum/core/model"
 )
 
@@ -39,6 +40,21 @@ func init() {
 	registerCrossTenantFamily("PR1-02-EDGE-MCP",
 		crossTenantCase{"POST /api/v1/edge/binary-integrity/events", "binary-ingest", crossTenantBinaryIngest},
 		crossTenantCase{"GET /api/v1/edge/binary-integrity/events", "binary-list", crossTenantBinaryList})
+	for _, tc := range []struct{ name, method, path string }{
+		{"shadow-create", "POST", "/shadow-agents"},
+		{"shadow-list", "GET", "/shadow-agents"},
+		{"shadow-get", "GET", "/shadow-agents/{finding_id}"},
+		{"shadow-resolve", "POST", "/shadow-agents/{finding_id}/resolve"},
+		{"shadow-suppress", "POST", "/shadow-agents/{finding_id}/suppress"},
+		{"shadow-ignore", "POST", "/shadow-agents/{finding_id}/ignore"},
+		{"shadow-remediation", "POST", "/shadow-agents/{finding_id}/remediation"},
+		{"exception-create", "POST", "/shadow/exception"},
+		{"exception-get", "GET", "/shadow/exception/{exception_id}"},
+		{"exception-revoke", "DELETE", "/shadow/exception/{exception_id}"},
+		{"exception-list", "GET", "/shadow/exceptions"},
+	} {
+		registerCrossTenantFamily("PR1-02-EDGE-MCP", crossTenantShadowCase(tc.name, tc.method, "/api/v1/edge"+tc.path))
+	}
 }
 
 func TestCrossTenantSweepEdge(t *testing.T) {
@@ -257,4 +273,108 @@ func crossTenantBinaryList(t *testing.T, sw *crossTenantSweep) {
 	if !strings.Contains(owner.Body.String(), "private-edge-b-binary") {
 		t.Fatal("owner binary list missing private marker")
 	}
+}
+
+type crossTenantShadowSeed struct {
+	findingID, exceptionID string
+	audit                  *testAuditSender
+}
+
+func seedCrossTenantShadow(t *testing.T, sw *crossTenantSweep) crossTenantShadowSeed {
+	t.Helper()
+	store, err := shadow.NewRedisStore(sw.server.jobStore.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sw.server.shadowFindingStore = store
+	seed := crossTenantShadowSeed{audit: &testAuditSender{}}
+	sw.server.auditExporter = seed.audit
+	finding := createSeedFinding(t, sw.server, sw.tenantB.tenantID)
+	if finding.Status != shadow.FindingStatusDetected {
+		t.Fatal("finding seed is not detected")
+	}
+	seed.findingID = finding.FindingID
+	body := validExceptionCreateBody()
+	body.Reason = "private-edge-exception-reason"
+	rr := sw.as(t, sw.tenantB, "POST", "/api/v1/edge/shadow/exception", mustJSON(body))
+	assertCrossTenantAbsent(t, rr, "owner exception seed")
+	var exception shadow.Exception
+	decodeEdgeRouteJSON(t, rr, &exception)
+	if exception.Status != shadow.ExceptionStatusActive {
+		t.Fatal("exception seed is not active")
+	}
+	seed.exceptionID = exception.ExceptionID
+	return seed
+}
+
+func crossTenantShadowState(t *testing.T, sw *crossTenantSweep, seed crossTenantShadowSeed) map[string]string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	finding, err := sw.server.shadowFindingStore.GetFinding(ctx, sw.tenantB.tenantID, seed.findingID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exception, err := sw.server.shadowFindingStore.GetException(ctx, sw.tenantB.tenantID, seed.exceptionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := map[string]string{"finding": mustJSON(finding), "exception": mustJSON(exception)}
+	for _, path := range []string{"/api/v1/edge/shadow-agents", "/api/v1/edge/shadow/exceptions"} {
+		rr := sw.as(t, sw.tenantB, "GET", path, "")
+		assertCrossTenantAbsent(t, rr, "owner shadow snapshot")
+		state[path] = rr.Body.String()
+	}
+	var events []audit.SIEMEvent
+	for i := 0; i < seed.audit.Len(); i++ {
+		if event := seed.audit.Get(i); event.TenantID == sw.tenantB.tenantID {
+			events = append(events, event)
+		}
+	}
+	state["audit"] = mustJSON(events)
+	return state
+}
+
+func crossTenantShadowCase(name, method, path string) crossTenantCase {
+	return crossTenantCase{method + " " + path, name, func(t *testing.T, sw *crossTenantSweep) {
+		seed := seedCrossTenantShadow(t, sw)
+		target := strings.NewReplacer("{finding_id}", seed.findingID, "{exception_id}", seed.exceptionID).Replace(path)
+		body, marker, attacker := `{}`, "1 mcp servers configured (transports: stdio)", sw.tenantA
+		if strings.HasPrefix(name, "exception-") {
+			marker = "private-edge-exception-reason"
+		}
+		if name == "shadow-create" {
+			request := validShadowCreateBody(sw.tenantB.tenantID)
+			request.TenantID = sw.tenantB.tenantID
+			body = mustJSON(request)
+		} else if name == "exception-create" {
+			body = mustJSON(validExceptionCreateBody())
+			attacker.tenantID = sw.tenantB.tenantID
+		}
+		before, mark := crossTenantShadowState(t, sw, seed), sw.publishMark()
+		rr := sw.as(t, attacker, method, target, body)
+		after, published := crossTenantShadowState(t, sw, seed), sw.publishedSince(mark)
+		owner := sw.as(t, sw.tenantB, method, target, body)
+		assertCrossTenantAbsent(t, owner, "owner "+name)
+		if method == "GET" && !strings.Contains(owner.Body.String(), marker) {
+			t.Error("owner shadow read missing marker")
+		}
+		if name == "shadow-remediation" {
+			var result shadowRemediationResponse
+			decodeEdgeRouteJSON(t, owner, &result)
+			if result.FindingID != seed.findingID || result.TenantID != sw.tenantB.tenantID || result.Remediation == nil || !result.Remediation.AdvisoryOnly {
+				t.Error("owner missing advisory remediation plan")
+			}
+		} else if method != "GET" && reflect.DeepEqual(after, crossTenantShadowState(t, sw, seed)) {
+			t.Error("owner shadow write had no observable effect")
+		}
+		if !reflect.DeepEqual(before, after) || len(published) != 0 {
+			t.Error("cross-tenant shadow request changed B state or published a packet")
+		}
+		if strings.HasSuffix(name, "-list") {
+			assertCrossTenantAbsent(t, rr, "A "+name, marker)
+		} else {
+			assertCrossTenantRefused(t, rr, "A "+name, marker)
+		}
+	}}
 }
