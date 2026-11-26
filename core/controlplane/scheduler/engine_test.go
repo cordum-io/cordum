@@ -3662,7 +3662,7 @@ func (s *fenceLossSlotStore) ReserveTenantSlot(ctx context.Context, tenant, jobI
 	if ok, _, err := s.RedisJobStore.ReserveTenantSlot(context.Background(), tenant, jobID, limit); err != nil || !ok {
 		s.errs = append(s.errs, fmt.Errorf("successor reservation = %v, %v; want admitted", ok, err))
 	}
-	if err := s.RedisJobStore.SetState(context.Background(), jobID, JobStateRunning); err != nil {
+	if err := s.SetState(context.Background(), jobID, JobStateRunning); err != nil {
 		s.errs = append(s.errs, fmt.Errorf("successor SetState(RUNNING): %w", err))
 	}
 	return reserved, others, err
