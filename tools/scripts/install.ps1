@@ -179,7 +179,13 @@ function Write-FloorAtomic {
     } | ConvertTo-Json -Compress
     $tmp = "$Path.tmp." + [Guid]::NewGuid().ToString('N')
     [System.IO.File]::WriteAllText($tmp, $payload, [System.Text.UTF8Encoding]::new($false))
-    [System.IO.File]::Move($tmp, $Path, $true)
+    # File.Move's overwrite overload is .NET Core only; Windows PowerShell 5.1
+    # runs on .NET Framework. [NullString]::Value passes a real null backup name.
+    if (Test-Path -LiteralPath $Path) {
+        [System.IO.File]::Replace($tmp, $Path, [NullString]::Value)
+    } else {
+        [System.IO.File]::Move($tmp, $Path)
+    }
 }
 
 function Normalise-Fpr {
@@ -241,7 +247,7 @@ function Verify-ManifestGpg {
         $tmpHomeArg = ConvertTo-CordumGpgArgPath -Path $tmpHome.FullName -Mode $gpgMode
         $pubkeyArg  = ConvertTo-CordumGpgArgPath -Path $pubkey           -Mode $gpgMode
 
-        $importOutput = & $gpg.Source --homedir $tmpHomeArg --batch --import $pubkeyArg 2>&1
+        $importOutput = Invoke-CordumNative $gpg.Source @('--homedir', $tmpHomeArg, '--batch', '--import', $pubkeyArg)
         if ($LASTEXITCODE -ne 0) {
             # Surface the gpg error so reviewers and CI logs can diagnose
             # path / format issues without re-running with --verbose by hand.
@@ -252,7 +258,8 @@ function Verify-ManifestGpg {
             Verify-Fail "gpg --import failed for $pubkey"
         }
 
-        $colonLines = & $gpg.Source --homedir $tmpHomeArg --with-colons --list-keys 2>$null
+        # gpg's stderr lines start with 'gpg: ', so they never match the anchored parses below.
+        $colonLines = Invoke-CordumNative $gpg.Source @('--homedir', $tmpHomeArg, '--with-colons', '--list-keys')
         $importedFpr = $null
         foreach ($cl in $colonLines) {
             if ($cl -match '^fpr:::::::::([0-9A-F]+):') {
@@ -286,7 +293,7 @@ function Verify-ManifestGpg {
 
         $sigArg = ConvertTo-CordumGpgArgPath -Path $sig      -Mode $gpgMode
         $manifestArg = ConvertTo-CordumGpgArgPath -Path $manifest -Mode $gpgMode
-        & $gpg.Source --homedir $tmpHomeArg --batch --quiet --verify $sigArg $manifestArg 2>$null
+        $null = Invoke-CordumNative $gpg.Source @('--homedir', $tmpHomeArg, '--batch', '--quiet', '--verify', $sigArg, $manifestArg)
         if ($LASTEXITCODE -ne 0) { Verify-Fail 'gpg signature invalid' }
 
     } finally {
