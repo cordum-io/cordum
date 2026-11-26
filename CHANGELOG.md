@@ -299,6 +299,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- `tools/perfharness/cmd/perfworker`: a perf-harness worker in pool `perf`. `job.perf`
+  succeeds after `--service-time`, `job.perf.fail` fails every handler attempt, and
+  `--handler-retries` sets the CAP runtime handler retries. It counts every handler run
+  per `perf_request_id` and serves the counts as JSON on a loopback-only `GET /counts`
+  (`--counts-addr`, default `127.0.0.1:9092`). No result is measured or published
+  (PR2-10-WORKER, task-f0acac46).
+
 - `POST /api/v1/edge/calibration-reports` summarizes the policy decisions recorded in
   observe-mode Edge sessions for a time window, repositories and labels: deny and
   require-approval counts per rule, policy rules with no matching event, the most affected
