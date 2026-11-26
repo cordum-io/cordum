@@ -38,7 +38,15 @@ func TestRetentionProofMapContract(t *testing.T) {
 }
 
 func TestRetentionProofMapRejects(t *testing.T) {
-	_, inventory, doc := retentionFixture(t)
+	// Independent fixture: filling pending cells in the real map must not change
+	// these negative controls or cause them to fail for an unrelated reference.
+	held := true
+	inventory := &DataInventory{EndpointOnly: []DataEntry{{ID: "DI-E01", Deletion: &DataDeletion{None: "local"}}},
+		ControlPlane: []DataEntry{{ID: "DI-C01", Deletion: &DataDeletion{}, LegalHold: &DataLegalHold{Applies: &held}}}}
+	doc := retentionHeader + "\n| --- | --- | --- | --- |\n| DI-E01 | no cleanup path | none | none: local |\n" +
+		"| DI-C01 | retention cleanup | sweep | pending PR2-08-EDGE |\n\n" +
+		holdHeader + "\n| --- | --- |\n| DI-C01 | pending PR2-08-EDGE |\n"
+	require.NoError(t, checkRetentionMap(doc, inventory, nil))
 	line := strings.Split(strings.Split(doc, "| DI-E01 |")[1], "\n")[0]
 	for _, tc := range []struct{ name, old, replacement, errorText string }{
 		{"missing", "| DI-E01 |" + line + "\n", "", "missing entry DI-E01"},
@@ -215,11 +223,15 @@ func TestRetentionBackupWindow(t *testing.T) {
 }
 
 func checkRetentionBackup(doc, manifest string) error {
+	var retention string
 	for name, schedule := range map[string]string{"cordum-redis-backup": "0 * * * *", "cordum-nats-backup": "0 * * * *", "cordum-backup-retention": "30 3 * * *"} {
 		found := 0
 		for _, part := range strings.Split(manifest, "---\n") {
 			if strings.Contains(part, "\n  name: "+name+"\n") && strings.Contains(part, "kind: CronJob\n") && strings.Contains(part, "\n  schedule: \""+schedule+"\"\n") {
 				found++
+				if name == "cordum-backup-retention" {
+					retention = part
+				}
 			}
 		}
 		if found != 1 {
@@ -232,7 +244,7 @@ func checkRetentionBackup(doc, manifest string) error {
 		"find /backup -name 'redis-*.sha256*' -mtime +7 -delete -print",
 		"find /backup -maxdepth 1 -name 'nats-*' -type d -mtime +7 -exec rm -rf {} + -print",
 	} {
-		if !strings.Contains(manifest, "\n              "+command+"\n") {
+		if !strings.Contains(retention, "\n              "+command+"\n") {
 			return fmt.Errorf("backup cleanup changed: %s", command)
 		}
 	}
