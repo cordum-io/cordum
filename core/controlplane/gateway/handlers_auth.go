@@ -895,6 +895,10 @@ func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if tenant == "" {
 		tenant = authCtx.Tenant
 	}
+	if tenant != authCtx.Tenant && !s.hasPlatformAuthority(r) {
+		writeForbidden(w, r, errors.New("creating users in another tenant requires platform authority"))
+		return
+	}
 
 	role := strings.TrimSpace(req.Role)
 	if role == "" {
