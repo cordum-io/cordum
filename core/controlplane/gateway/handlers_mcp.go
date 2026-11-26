@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"log/slog"
@@ -468,7 +469,8 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		// The Edge session stays one-shot because the Edge store caps events
 		// per execution and executions per session; mcpApprovalClaims lets
 		// the caller's `_approval_ref` retry claim an approval minted under an
-		// earlier one-shot session.
+		// earlier one-shot session. An SSE session rotates its Edge session
+		// and execution before those caps bite (mcpEdgeTrace).
 		sessionless := transportSessionID == "" && r.Method == http.MethodPost
 		// mcpSessionID is the MCP session the call's Copilot session and
 		// prompt-injection taint are kept for. A session-less caller gets one
@@ -480,8 +482,8 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 			mcpSessionID = mcpSessionlessCopilotSessionID(r, agentID, transportSessionID)
 		}
 		if transportSessionID != "" {
-			executionID := "mcp-" + transportSessionID
-			if err := s.ensureMCPHTTPTraceParents(r.Context(), tenantID, agentID, authenticatedPrincipal, transportSessionID, executionID); err != nil {
+			sessionID, executionID, err := s.mcpEdgeTrace(r.Context(), tenantID, agentID, authenticatedPrincipal, transportSessionID)
+			if err != nil {
 				writeErrorJSON(w, http.StatusInternalServerError, "mcp trace unavailable")
 				return
 			}
@@ -489,7 +491,7 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 				Tenant:       tenantID,
 				Principal:    authenticatedPrincipal,
 				AgentID:      agentID,
-				SessionID:    transportSessionID,
+				SessionID:    sessionID,
 				ExecutionID:  executionID,
 				MCPSessionID: mcpSessionID,
 			})
@@ -570,7 +572,100 @@ func mcpSessionOwner(r *http.Request) string {
 	return fmt.Sprintf("%q %q %q", tenantFromRequest(r), ac.AuthSource, submitterIdentity(r))
 }
 
-func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentID, principalID, sessionID, executionID string) error {
+// mcpEdgeTraceCaps is what mcpEdgeTrace needs from the Edge store to rotate
+// (edge.RedisStore). Without it an MCP session stays in one execution.
+type mcpEdgeTraceCaps interface {
+	ExecutionCaps() (maxExecutions, maxEvents int)
+	CountExecutionEvents(ctx context.Context, tenantID, executionID string) (int64, error)
+}
+
+// mcpSessionLabel links each Edge session an MCP session is recorded in to it.
+const mcpSessionLabel = "mcp_session_id"
+
+// mcpEdgeTrace returns the Edge session and execution the next call of MCP
+// session mcpSessionID records into, creating them when missing. The Edge
+// store caps executions per session and events per execution, and an
+// execution past the approval validation cap can neither mint nor claim an
+// approval, so a long-lived SSE session moves on before the caps bite: to a
+// new execution once the current one holds 80% of its event budget, and to
+// the next Edge session (<id>.s1, <id>.s2, ..., labelled mcp_session_id) once
+// the current one has no execution left. Earlier sessions and executions stay
+// running, so approvals minted in them stay claimable: mcpApprovalClaims binds
+// a claim to the approval's own session and execution.
+// ponytail: stateless, so each call re-reads the count and size of every full
+// Edge session before the current one (two O(1) reads each, one Edge session
+// per ~10k calls), and executions added to an MCP Edge session through the
+// Edge API make calls open new executions until that session fills. Track the
+// current session and execution per SSE session if either matters.
+func (s *server) mcpEdgeTrace(ctx context.Context, tenantID, agentID, principalID, mcpSessionID string) (sessionID, executionID string, err error) {
+	caps, rotates := s.edgeStore.(mcpEdgeTraceCaps)
+	for gen := 0; ; {
+		if err := ctx.Err(); err != nil {
+			return "", "", err
+		}
+		sessionID = mcpSessionID
+		if gen > 0 {
+			sessionID = fmt.Sprintf("%s.s%d", mcpSessionID, gen)
+		}
+		executionID = mcpEdgeExecutionID(sessionID, 0)
+		if rotates {
+			maxExecutions, maxEvents := caps.ExecutionCaps()
+			n, err := s.edgeStore.CountSessionExecutions(ctx, tenantID, sessionID)
+			if err != nil {
+				return "", "", err
+			}
+			if n > 0 {
+				executionID = mcpEdgeExecutionID(sessionID, n-1)
+				events, err := caps.CountExecutionEvents(ctx, tenantID, executionID)
+				if err != nil {
+					return "", "", err
+				}
+				if events >= max(int64(maxEvents)*4/5, 1) {
+					if n >= int64(maxExecutions) {
+						gen++
+						continue
+					}
+					executionID = mcpEdgeExecutionID(sessionID, n)
+				}
+			}
+		}
+		err = s.ensureMCPHTTPTraceParents(ctx, tenantID, agentID, principalID, mcpSessionID, sessionID, executionID)
+		if errors.Is(err, edge.ErrSessionExecutionFanoutExceeded) {
+			gen++
+			continue
+		}
+		if err != nil {
+			return "", "", err
+		}
+		if rotates {
+			// The count above may be stale: another caller can create and fill
+			// its successor while this call is selecting it. Recheck the actual
+			// selected execution, then reread this session on concurrent progress.
+			_, maxEvents := caps.ExecutionCaps()
+			events, err := caps.CountExecutionEvents(ctx, tenantID, executionID)
+			if err != nil {
+				return "", "", err
+			}
+			if events >= max(int64(maxEvents)*4/5, 1) {
+				continue
+			}
+		}
+		return sessionID, executionID, nil
+	}
+}
+
+// mcpEdgeExecutionID names execution n of an MCP Edge session.
+func mcpEdgeExecutionID(sessionID string, n int64) string {
+	if n == 0 {
+		return "mcp-" + sessionID
+	}
+	return fmt.Sprintf("mcp-%s.e%d", sessionID, n)
+}
+
+// ensureMCPHTTPTraceParents creates the Edge session and execution an MCP call
+// records into when missing. A concurrent call of the same MCP session may
+// create either first; that counts as created.
+func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentID, principalID, mcpSessionID, sessionID, executionID string) error {
 	if s == nil || s.edgeStore == nil || sessionID == "" || executionID == "" {
 		return nil
 	}
@@ -578,6 +673,8 @@ func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentI
 	if _, ok, err := s.edgeStore.GetSession(ctx, tenantID, sessionID); err != nil {
 		return err
 	} else if !ok {
+		sessionLabels := mcpTraceParentLabels(ctx, agentID)
+		sessionLabels[mcpSessionLabel] = mcpSessionID
 		if err := s.edgeStore.CreateSession(ctx, edge.EdgeSession{
 			SessionID: sessionID, TenantID: tenantID, PrincipalID: principalID,
 			PrincipalType: edge.PrincipalTypeService, AgentProduct: "mcp-gateway",
@@ -585,20 +682,26 @@ func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentI
 			PolicyMode: edge.PolicyModeEnforce, Status: edge.SessionStatusRunning,
 			StartedAt: now, EnforcementLayers: edge.EnforcementLayers{"mcp": true},
 			RiskSummary: edge.RiskSummary{MaxRisk: edge.RiskLevelLow},
-			Labels:      mcpTraceParentLabels(ctx, agentID),
+			Labels:      sessionLabels,
 		}); err != nil {
-			return err
+			if _, ok, _ := s.edgeStore.GetSession(ctx, tenantID, sessionID); !ok {
+				return err
+			}
 		}
 	}
 	if _, ok, err := s.edgeStore.GetExecution(ctx, tenantID, executionID); err != nil {
 		return err
 	} else if !ok {
-		return s.edgeStore.CreateExecution(ctx, edge.AgentExecution{
+		if err := s.edgeStore.CreateExecution(ctx, edge.AgentExecution{
 			ExecutionID: executionID, SessionID: sessionID, TenantID: tenantID,
 			Adapter: edge.AdapterMCPGateway, Mode: edge.ExecutionModeLocalDev,
 			WorkerID: principalID, Status: edge.ExecutionStatusRunning,
 			StartedAt: now, Labels: mcpTraceParentLabels(ctx, agentID),
-		})
+		}); err != nil {
+			if _, ok, _ := s.edgeStore.GetExecution(ctx, tenantID, executionID); !ok {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -1478,7 +1581,51 @@ func (s *server) newMCPServiceBridge() mcp.ServiceBridge {
 			}
 			return &mcp.ResourceItem{Kind: "status", Data: payload}, nil
 		},
+		GetJSONFunc: s.mcpReadJSON(s.mcpReadMux()),
 	})
+}
+
+// mcpReadMux holds exactly the read routes DirectServiceBridge's GetJSONFunc
+// may reach, each bound to the handler gateway.go registers for it. Any
+// other path, packs, workers and audit query included, answers 404.
+func (s *server) mcpReadMux() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/jobs", s.handleListJobs)
+	mux.HandleFunc("GET /api/v1/workflow-runs", s.handleListAllRuns)
+	mux.HandleFunc("GET /api/v1/workflow-runs/{id}", s.handleGetRun)
+	mux.HandleFunc("GET /api/v1/workflow-runs/{id}/timeline", s.handleGetRunTimeline)
+	mux.HandleFunc("GET /api/v1/workflows", s.handleListWorkflows)
+	mux.HandleFunc("GET /api/v1/topics", s.handleListTopics)
+	mux.HandleFunc("GET /api/v1/agents", s.handleListAgents)
+	mux.HandleFunc("GET /api/v1/approvals", s.handleListApprovals)
+	mux.HandleFunc("GET /api/v1/audit/verify", s.handleAuditVerify)
+	return mux
+}
+
+// mcpReadJSON returns DirectServiceBridge's GetJSONFunc. It serves path and
+// query from reads under the caller's ctx: invokeMCPAnyHandler builds the
+// request through newMCPBridgeRequest and stamps the tenant from the MCP
+// context, so each handler runs its own permission and tenant checks. A
+// non-2xx answer, a redirect included, becomes a BridgeError, and so does a
+// 2xx body that is not JSON.
+func (s *server) mcpReadJSON(reads *http.ServeMux) func(context.Context, string, url.Values, any) error {
+	return func(ctx context.Context, path string, query url.Values, out any) error {
+		target := path
+		if len(query) > 0 {
+			target += "?" + query.Encode()
+		}
+		status, _, raw, err := s.invokeMCPAnyHandler(ctx, http.MethodGet, target, nil, nil, nil, reads.ServeHTTP)
+		if err != nil {
+			return err
+		}
+		if status < 200 || status >= 300 {
+			return mcp.NewBridgeErrorFromHTTP(status, raw)
+		}
+		if err := json.Unmarshal(raw, out); err != nil {
+			return mcp.NewBridgeError(http.StatusBadGateway, "invalid_response", "invalid JSON in "+path+" response", nil)
+		}
+		return nil
+	}
 }
 
 // mcpGetJobPayload reads one job through handleGetJob for both MCP bridges.
@@ -1521,9 +1668,17 @@ func (s *server) mcpGetStatusPayload(ctx context.Context) (map[string]any, error
 // POST /api/v1/workflows handler under the caller's ctx, so permission
 // (workflows-write or admin), tenant resolution and validation are
 // identical to the REST endpoint. The registry's approval gate has
-// already admitted the call before this runs. Idempotency-Key is not
-// forwarded: handleCreateWorkflow does not honor it.
+// already admitted the call before this runs. A call with an
+// idempotency_key and no id gets the workflow id derived from the caller's
+// tenant, org_id, agent and that key. handleCreateWorkflow upserts by id,
+// so a repeated delivery of the call writes the same workflow, not a second.
 func (s *server) mcpCreateWorkflow(ctx context.Context, req mcp.CreateWorkflowInput) (*mcp.CreateWorkflowOutput, error) {
+	if key := strings.TrimSpace(req.IdempotencyKey); key != "" && strings.TrimSpace(req.ID) == "" {
+		meta, _ := MCPCallMetadataFromContext(ctx)
+		name := fmt.Sprintf("%q", []string{mcp.ToolCreateWorkflow, s.mcpTenantFromContext(ctx),
+			strings.TrimSpace(req.OrgID), meta.AgentID, key})
+		req.ID = uuid.NewSHA1(uuid.NameSpaceOID, []byte(name)).String()
+	}
 	body := map[string]any{"steps": req.Steps}
 	for key, value := range map[string]string{
 		"id": req.ID, "name": req.Name, "description": req.Description,

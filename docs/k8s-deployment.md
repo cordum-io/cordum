@@ -394,7 +394,10 @@ The production overlay deploys a 6-node Redis cluster (3 masters + 3 replicas).
 - **TLS**: Full TLS with `tls-auth-clients yes`
 - **Persistence**: AOF enabled (`appendonly yes`), 20Gi PVC per node
 - **Cluster mode**: `cluster-enabled yes`, `cluster-node-timeout 5000`
-- **Cluster bus**: port 16379 (`cluster-port 16379`; with `port 0` it would default to 10000)
+- **Cluster bus**: TLS (`tls-cluster yes`) on port 16379 (`cluster-port 16379`;
+  with `port 0` it would default to 10000), using the existing certificates.
+  For a running cluster, follow [Runbook H](./redis-operations.md#runbook-h-turn-on-tls-for-the-cluster-bus)
+  to switch every node before any Redis pod restarts.
 - **Replication**: replicas connect to their primary's TLS port (`tls-replication yes`),
   presenting the `cordum-client-tls` certificate and authenticating with `masterauth`
 - **Exporter sidecar**: `oliver006/redis_exporter:v1.58.0` on port 9121
@@ -625,10 +628,8 @@ The production overlay deploys Prometheus Operator CRDs.
 
 | Metric | Source | Description |
 |--------|--------|-------------|
-| `cordum_jobs_dispatched_total` | Scheduler | Jobs dispatched by pool/type |
-| `cordum_jobs_duration_seconds` | Scheduler | Job latency histogram |
-| `cordum_safety_evaluations_total` | Gateway | Policy evaluations by decision |
-| `cordum_http_requests_total` | Gateway | HTTP requests by method/path/status |
+| `cordum_scheduler_jobs_dispatched_total` | Scheduler | Jobs dispatched by pool/type |
+| `cordum_api_gateway_http_requests_total` | Gateway | HTTP requests by method/path/status |
 
 ---
 
@@ -681,10 +682,10 @@ The production overlay includes hourly CronJob backups for both Redis and NATS.
 ### Redis Backup
 
 - **Schedule**: `0 * * * *` (hourly)
-- **Method**: `redis-cli --rdb` against every node that `INFO replication` reports as a primary
+- **Method**: `redis-cli --rdb` against primaries from a stable `CLUSTER NODES` topology covering every slot exactly once
 - **Storage**: `cordum-backups` PVC (20Gi)
 - **Retention**: 7 days (`cordum-backup-retention`, daily at 03:30 UTC); the CronJob keeps its last 2 successful + 2 failed jobs
-- **File format**: `redis-YYYYMMDDTHHMMSSZ-node<N>.rdb`, one per primary, `N` being the pod ordinal
+- **File format**: `redis-YYYYMMDDTHHMMSSZ-node<N>.rdb`, one per primary, plus `.topology` and `.sha256` completion metadata
 
 ### NATS JetStream Backup
 
@@ -692,6 +693,7 @@ The production overlay includes hourly CronJob backups for both Redis and NATS.
 - **Method**: `nats stream snapshot` for `CORDUM_SYS` and `CORDUM_JOBS` streams
 - **Storage**: Same `cordum-backups` PVC
 - **File format**: `nats-YYYYMMDDTHHMMSSZ/{stream}.snapshot`
+- **Integrity**: each complete run writes `SHA256SUMS`; retain its printed digest in the external backup catalog before Job logs expire
 
 ### Restore Procedures
 
@@ -701,8 +703,10 @@ and there are no backup jobs, so the data lasts only as long as the pods. Use th
 production overlay, or add PVCs and backups of your own, for data you need to keep.
 
 **Production overlay**: follow [Backup + Restore](./production.md#restore-procedures).
-Stop the services and the backup CronJobs, restore Redis onto each primary's volume
-with Redis stopped ([Restore From Backup](./redis-operations.md#restore-from-backup)),
+Stop the services, suspend the backup and retention CronJobs, and delete active backup and retention Jobs
+with foreground deletion and wait for their pods to stop before creating a restore pod. Restore Redis by importing the backup
+into the running cluster, which sends each key to the primary that owns its slot
+([Restore From Backup](./redis-operations.md#restore-from-backup)),
 and restore the NATS streams from a nats-box pod. Do not copy an RDB into a running
 Redis pod and restart it: with `appendonly yes`, Redis loads its AOF on startup and
 ignores `dump.rdb`, and each backup file holds only one primary's slots.
@@ -716,8 +720,11 @@ ignores `dump.rdb`, and each backup file holds only one primary's slots.
 All Cordum Deployments use the default `RollingUpdate` strategy. To upgrade:
 
 1. Update image tags in `production/kustomization.yaml`
-2. Re-apply: `kubectl apply -k deploy/k8s/production`
-3. Watch rollout: `kubectl rollout status deployment/cordum-api-gateway -n cordum`
+2. Delete the retained init Job before changing its immutable pod template:
+   `kubectl delete job cordum-redis-cluster-init -n cordum --ignore-not-found --cascade=foreground --wait --timeout=5m`.
+   The replacement checks for an already healthy cluster and does not reinitialize it.
+3. Re-apply: `kubectl apply -k deploy/k8s/production`
+4. Watch rollout: `kubectl rollout status deployment/cordum-api-gateway -n cordum`
 
 ### Pre-Upgrade Checklist
 

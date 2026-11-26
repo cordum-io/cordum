@@ -999,6 +999,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/edge/calibration-reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate an Edge calibration report
+         * @description Summarizes the policy decisions recorded on the Edge events of the
+         *     tenant's observe-mode sessions in the window [since, until), narrowed
+         *     to the given repositories and labels when set. The window may not
+         *     exceed 90 days. The report is stored under its content-derived id and
+         *     returned. Requires policy.write or the admin role.
+         */
+        post: operations["createEdgeCalibrationReport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/edge/calibration-reports/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Fetch a stored Edge calibration report
+         * @description Returns the report stored under id for the caller's tenant. An id that
+         *     is not cal- followed by 32 hex characters, or that belongs to another
+         *     tenant, returns 404. Requires policy.read or the admin role.
+         */
+        get: operations["getEdgeCalibrationReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/edge/evaluate": {
         parameters: {
             query?: never;
@@ -4588,6 +4634,43 @@ export interface components {
             /** @description Internal artifact URI such as `artifact://...` or `edge-artifact://...`; signed URLs, query-string tokens, userinfo, fragments, and external HTTP(S) storage URLs are rejected before persistence. */
             uri: string;
         };
+        /**
+         * @description Calibration report built by core/edge/calibration from the decisions
+         *     recorded on Edge events. An open object: the fields below are always
+         *     present, and other report fields may be added without a schema change.
+         */
+        EdgeCalibrationReport: {
+            /** @description Distinct events of the window that were counted. */
+            events_scanned?: number;
+            /** @description Content-derived id, cal- followed by 32 hex characters. */
+            id: string;
+            /** @description Sessions with at least one counted event. */
+            sessions_observed?: number;
+            /** Format: date-time */
+            since?: string;
+            tenant_id?: string;
+            /** @description Set when a scan cap stopped the scan early. */
+            truncated?: boolean;
+            /** Format: date-time */
+            until?: string;
+        } & {
+            [key: string]: unknown;
+        };
+        EdgeCalibrationReportRequest: {
+            labels?: components["schemas"]["EdgeLabels"];
+            /** @description When set, only sessions in these repositories are counted. */
+            repos?: string[];
+            /**
+             * Format: date-time
+             * @description Start of the window, inclusive.
+             */
+            since: string;
+            /**
+             * Format: date-time
+             * @description End of the window, exclusive. At most 90 days after since.
+             */
+            until: string;
+        };
         EdgeEndExecutionRequest: {
             /** Format: date-time */
             ended_at?: string;
@@ -4937,6 +5020,11 @@ export interface components {
         EdgeSession: {
             agent_product?: string;
             agent_version?: string;
+            /**
+             * @description Server-derived on each response from the policy mode, the enforcement layers, the session status and the agent heartbeat. `stale` means the session has ended or has no heartbeat within the session heartbeat TTL. Combinations that match no rule report `unsupported`. `executor-enforced` is reserved and not reported. Managed-settings status and binary integrity are not inputs yet.
+             * @enum {string}
+             */
+            assurance_state?: "compatibility" | "hook-mediated" | "executor-enforced" | "unsupported" | "stale";
             cwd?: string;
             device_id?: string;
             /** Format: date-time */
@@ -9010,6 +9098,68 @@ export interface operations {
             401: components["responses"]["EdgeUnauthorized"];
             403: components["responses"]["EdgeForbidden"];
             413: components["responses"]["EdgePayloadTooLarge"];
+            500: components["responses"]["EdgeInternalServerError"];
+            503: components["responses"]["EdgeServiceUnavailable"];
+        };
+    };
+    createEdgeCalibrationReport: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EdgeCalibrationReportRequest"];
+            };
+        };
+        responses: {
+            /** @description Stored calibration report */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeCalibrationReport"];
+                };
+            };
+            400: components["responses"]["EdgeBadRequest"];
+            401: components["responses"]["EdgeUnauthorized"];
+            403: components["responses"]["EdgeForbidden"];
+            500: components["responses"]["EdgeInternalServerError"];
+            503: components["responses"]["EdgeServiceUnavailable"];
+        };
+    };
+    getEdgeCalibrationReport: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Stored calibration report */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeCalibrationReport"];
+                };
+            };
+            401: components["responses"]["EdgeUnauthorized"];
+            403: components["responses"]["EdgeForbidden"];
+            404: components["responses"]["EdgeNotFound"];
             500: components["responses"]["EdgeInternalServerError"];
             503: components["responses"]["EdgeServiceUnavailable"];
         };
@@ -15514,6 +15664,8 @@ export enum ApiPaths {
     getEdgeSession = "/api/v1/edge/sessions/{session_id}",
     heartbeatEdgeSession = "/api/v1/edge/sessions/{session_id}/heartbeat",
     endEdgeSession = "/api/v1/edge/sessions/{session_id}/end",
+    createEdgeCalibrationReport = "/api/v1/edge/calibration-reports",
+    getEdgeCalibrationReport = "/api/v1/edge/calibration-reports/{id}",
     listEdgeExecutions = "/api/v1/edge/executions",
     createEdgeExecution = "/api/v1/edge/executions",
     getEdgeExecution = "/api/v1/edge/executions/{execution_id}",

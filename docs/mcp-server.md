@@ -211,6 +211,19 @@ requester identity, agent, tool, args and policy snapshot all match.
 Once a reviewer resolves the approval, it is no longer reused. Another
 requester asking for the same call gets their own approval.
 
+An SSE session records its calls in the Edge session with its own id,
+in execution `mcp-<id>`. The Edge store caps the events of an execution
+and the executions of a session, and an approval can only be minted or
+claimed while its execution holds at most 500 events. So a long-lived
+SSE session moves on before it reaches them: its next call goes to a
+new execution (`mcp-<id>.e1`, ...) once the current one holds 80% of
+the smaller of the event cap and 500, and to a new Edge session
+(`<id>.s1`, ..., labelled `mcp_session_id=<id>`) once the current
+session holds its last execution. Earlier sessions and executions stay
+running, so an approval minted before a rotation is still claimed
+through `_approval_ref`, and the session's prompt-injection taint is
+kept for the MCP session, not its current Edge session.
+
 #### Retry dedupe
 
 `InvokeToolWithPolicy` collapses idempotent retries of the same MCP
@@ -1137,10 +1150,9 @@ whether `mcp.policy_gate_enabled` is off or on:
   consumes that approval, and gets the same `-32098` instead of a `-32097`
   error.
 - With the gate on, a request that is missing its tenant, session or execution
-  metadata still fails closed with its own error: `-32603` for a plain call, or
-  `-32097` for one that carries an `_approval_ref`, both with
-  `missing_mcp_metadata`. The `-32098` answer applies only when that metadata
-  is present and the agent ID is blank.
+  metadata still fails closed with `-32097` and `error.data="missing_mcp_metadata"`,
+  for a plain call and for one that carries an `_approval_ref`. The `-32098`
+  answer applies only when that metadata is present and the agent ID is blank.
 
 When `/mcp` fronts a registered upstream (EDGE-101), the upstream catalog is
 not scope-filtered, and the bound ID only feeds the policy gate.

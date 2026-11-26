@@ -420,7 +420,7 @@ func (b *BasicAuthProvider) authenticateWithScope(ctx context.Context, key, prin
 	if tenant == "" {
 		tenant = b.defaultTenant
 	}
-	role := NormalizeRole(meta.Role)
+	role := normalizeStaticKeyRole(meta.Role)
 	if role == "" {
 		role = "admin"
 	}

@@ -1,10 +1,27 @@
 # Releasing Cordum
 
 This checklist governs tagging and publishing a Cordum release. The
-publish pipeline (`.github/workflows/docker.yml`) runs on tag push and
-produces multi-arch signed container images, SBOMs, provenance, and an
-OCI-packaged Helm chart. These steps exist to catch breakage **before**
-the tag hits the world.
+publish pipeline (`.github/workflows/docker.yml`) is configured for `v*`
+tag pushes and `release-dry-run/**` branch pushes. It builds eight multi-arch
+images once, pushes them without tags by digest, and runs the smoke and
+Trivy gates against those digests. On tag runs, signing and release tags
+are applied through `release-qual publish`; image builds also request SBOMs
+and provenance. The reusable `release.yml` builds 15 Edge binaries in the
+same run. The `qualification-record` workflow artifact contains one JSON
+record binding the source SHA to the eight image and 15 binary digests,
+gate results, log URLs and open exceptions. Binary publication checks the
+staged bytes against that record. The Helm chart follows the published-image
+smoke and record jobs.
+
+The record is not a claim that every platform or binary was tested:
+image smoke and Trivy cover linux/amd64 only, not linux/arm64; control-plane
+smoke tolerates service-binary failure and checks only pull/shell execution.
+Trivy blocks fixed OS-package findings at any severity, ignores unfixed
+findings and does not scan application dependencies. The production gate
+is source-built, not bound to these digests. No release-time test or scan
+runs against the Edge binaries; their entries pin the staged bytes by SHA-256.
+Inspect the record's exceptions before relying on it. This describes the
+configured pipeline, not qualification of an existing tagged release.
 
 Anything in this document is authoritative — if something here
 contradicts a wiki page or a Slack thread, this file wins. Update it
@@ -17,18 +34,29 @@ often depends on the earlier one having succeeded.
 
 ### 1. Dry-run the publish workflow
 
-Before tagging, trigger the publish workflow against `main` to confirm
-the build graph is green:
+Before tagging, push the exact candidate commit to a uniquely named
+`release-dry-run/**` branch; `docker.yml` has no `workflow_dispatch` trigger.
+Do not use a throwaway `v*` tag as a dry run: it reaches real publication.
 
 ```bash
-gh workflow run docker.yml --ref main
-gh run watch --exit-status
+DRY_REF="release-dry-run/check-$(date -u +%Y%m%dT%H%M%SZ)"
+git push origin "HEAD:refs/heads/${DRY_REF}"
+gh run list --workflow docker.yml --branch "$DRY_REF"
+# Select the run for the candidate SHA from the list above:
+RUN_ID="<run-id>"
+gh run watch "$RUN_ID" --exit-status
+gh run download "$RUN_ID" --name qualification-record --dir "qualification-${RUN_ID}"
+# After recording the run URL and inspecting qualification-record.json:
+git push origin --delete "$DRY_REF"
 ```
 
-If `docker.yml` does not yet expose a `workflow_dispatch` trigger, push
-a throwaway pre-release tag instead (`v0.0.0-dryrun.N`) — the stable-tag
-guard means this will publish version-pinned images without moving
-`:latest`. Delete the tag afterwards.
+The dry run uses job-local registries and calls the binary build workflow
+without secrets. It skips real registry logins, Docker Hub, signing,
+SARIF upload, issue creation, GitHub Release publication, the published-image
+smoke and Helm push. Confirm the record's source SHA matches the candidate,
+`dry_run` is true, all eight images and 15 binaries are present, and every
+gate result and exception is understood. A successful dry run does not
+verify those skipped publication steps or a production deployment.
 
 ### 2. Confirm every image published
 
@@ -37,14 +65,14 @@ to complete, then check that every package exists at the new tag:
 
 ```bash
 TAG=1.2.3   # strip leading v
-for pkg in api-gateway scheduler safety-kernel workflow-engine context-engine mcp dashboard; do
+for pkg in api-gateway scheduler safety-kernel workflow-engine context-engine mcp dashboard demo-quickstart-worker; do
   docker manifest inspect "ghcr.io/cordum-io/cordum/${pkg}:${TAG}" >/dev/null \
     && echo "OK   ${pkg}:${TAG}" \
     || echo "MISS ${pkg}:${TAG}"
 done
 ```
 
-All 7 packages must print `OK`. Investigate any `MISS` immediately —
+All 8 packages must print `OK`. Investigate any `MISS` immediately —
 the release is incomplete.
 
 If this is the **first** time a package is published (e.g. the initial
@@ -122,7 +150,7 @@ set -euo pipefail
 
 : "${TAG:?export TAG=<version-without-v> first}"
 
-packages=(api-gateway scheduler safety-kernel workflow-engine context-engine mcp dashboard)
+packages=(api-gateway scheduler safety-kernel workflow-engine context-engine mcp dashboard demo-quickstart-worker)
 
 echo "--- manifest presence"
 for pkg in "${packages[@]}"; do
@@ -158,9 +186,10 @@ be amd64-only during the transition period — see Issue #TBD).
 
 ## Post-release
 
-1. Create the GitHub Release via `gh release create v${TAG}`, attaching
-   the changelog and any platform binaries uploaded by the publish
-   workflow.
+1. Confirm `docker.yml`'s `publish-binaries` job created the GitHub Release
+   with the staged binaries and manifest, through `release-qual publish`.
+   On the canonical repository it also requires `SHA256SUMS.asc`. Do not
+   bypass that gate with a separate manual `gh release create` command.
 2. Announce in `#general` with a link to the release page.
 3. Open an issue tagged `post-release` to track any deferred follow-ups.
 

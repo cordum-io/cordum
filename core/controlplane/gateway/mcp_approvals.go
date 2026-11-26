@@ -267,7 +267,9 @@ func validateMCPApprovalRequest(req *MCPApprovalRequest) error {
 }
 
 // EnqueueMCPApproval creates a PENDING approval record, writes it to
-// Redis, and registers it in the lookup index.
+// Redis, and registers it in the lookup index. When the requester already
+// has a PENDING record for the same tenant/agent/tool/args it returns that
+// record instead, without writing or auditing anything.
 //
 // Returns the created MCPApprovalRecord on success. The approval ID is
 // crypto/rand-derived so callers can safely use it as a stable handle.
@@ -326,21 +328,69 @@ func (s *MCPApprovalStore) EnqueueMCPApproval(ctx context.Context, req *MCPAppro
 		return nil, fmt.Errorf("mcp approval: marshal: %w", err)
 	}
 
-	pipe := s.client.TxPipeline()
-	pipe.Set(ctx, mcpApprovalKey(rec.ID), raw, ttl+time.Minute)
-	// Index goes into a per-tuple set so a single agent/tool/args trio
-	// can have at most one outstanding PENDING approval. The set member
-	// is the approval ID — pre-approval lookup walks members and picks
-	// an APPROVED+unconsumed record via CAS.
+	// The per-tuple index holds each requester's one outstanding PENDING
+	// approval for an agent/tool/args trio: a repeat of a still-pending call
+	// (a redelivered or concurrent duplicate) gets that record back instead
+	// of a second one. WATCH on the index makes a concurrent enqueue of the
+	// same trio retry and find the winner's record. An Edge-paired request
+	// always writes its own record, since the gate minted that Edge approval
+	// for this id (pendingMCPPair is its re-ask path). Pre-approval lookup
+	// walks the same members and picks an APPROVED+unconsumed record via CAS.
 	idxKey := mcpApprovalIndexKey(rec.Tenant, rec.AgentID, rec.ToolName, rec.ArgsHash)
-	pipe.SAdd(ctx, idxKey, rec.ID)
-	pipe.Expire(ctx, idxKey, ttl+time.Minute)
-	if _, err := pipe.Exec(ctx); err != nil {
+	var reused *MCPApprovalRecord
+	write := func(tx *redis.Tx) error {
+		reused = nil
+		if rec.EdgeApprovalRef == "" {
+			var err error
+			if reused, err = pendingApprovalFor(ctx, tx, idxKey, rec); err != nil || reused != nil {
+				return err
+			}
+		}
+		_, err := tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			pipe.Set(ctx, mcpApprovalKey(rec.ID), raw, ttl+time.Minute)
+			pipe.SAdd(ctx, idxKey, rec.ID)
+			pipe.Expire(ctx, idxKey, ttl+time.Minute)
+			return nil
+		})
+		return err
+	}
+	if err := redisutil.Retry(ctx, s.client, write,
+		redisutil.WithKeys(idxKey),
+		redisutil.WithMaxAttempts(mcpCASMaxAttempts),
+	); err != nil {
 		return nil, fmt.Errorf("mcp approval: write redis: %w", err)
+	}
+	if reused != nil {
+		return reused, nil
 	}
 
 	s.emitAudit(rec, "enqueued", "", audit.SeverityMedium)
 	return rec, nil
+}
+
+// pendingApprovalFor returns the PENDING, unexpired, non-Edge record in the
+// index at idxKey that rec's requester enqueued, or nil. It reads on the
+// transaction's own connection, the one holding the WATCH.
+func pendingApprovalFor(ctx context.Context, tx *redis.Tx, idxKey string, rec *MCPApprovalRecord) (*MCPApprovalRecord, error) {
+	ids, err := tx.SMembers(ctx, idxKey).Result()
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		raw, err := tx.Get(ctx, mcpApprovalKey(id)).Bytes()
+		if errors.Is(err, redis.Nil) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		var prior MCPApprovalRecord
+		if json.Unmarshal(raw, &prior) == nil && prior.Status == model.ApprovalStatusPending &&
+			prior.ExpiresAt > rec.CreatedAt && prior.EdgeApprovalRef == "" && prior.Requester == rec.Requester {
+			return &prior, nil
+		}
+	}
+	return nil, nil
 }
 
 // Get returns the approval record by ID. Returns (nil, redis.Nil) when

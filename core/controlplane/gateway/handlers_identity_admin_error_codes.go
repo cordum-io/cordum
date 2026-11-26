@@ -14,6 +14,7 @@ const (
 	errorCodeAgentRequestInvalid = "AGENT_REQUEST_INVALID"
 	errorCodeAgentNotFound       = "AGENT_NOT_FOUND"
 	errorCodeAgentWorkerConflict = "AGENT_WORKER_CONFLICT"
+	errorCodeAgentSelfPreapprove = "AGENT_SELF_PREAPPROVAL_DENIED"
 
 	errorCodeConfigRequestInvalid  = "CONFIG_REQUEST_INVALID"
 	errorCodeConfigKeyForbidden    = "CONFIG_KEY_FORBIDDEN"

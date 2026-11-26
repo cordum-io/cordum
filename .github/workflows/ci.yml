@@ -102,7 +102,8 @@ jobs:
         go mod tidy
 
     - name: Run tests
-      run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+      # -timeout applies per package; slowest measured is core/controlplane/gateway at 457.5s under -race (f837b288), so 1200s leaves 2.6x margin over Go's 10m default.
+      run: go test -v -race -timeout 20m -coverprofile=coverage.out -covermode=atomic ./...
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
@@ -235,7 +236,8 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Measured job max 1127s (self-test step max 801s); 30m (1800s) leaves over 50% headroom.
+    timeout-minutes: 30
 
     steps:
     - uses: actions/checkout@v7
@@ -304,6 +306,9 @@ jobs:
         bash tools/scripts/validate_deploy_manifests.test.sh
         bash tools/scripts/validate_deploy_manifests.sh --strict
 
+    - name: Test backup and restore safety guards
+      run: python tools/scripts/redis_backup_recovery.test.py
+
     - name: Self-test workflow and production-gate contracts
       run: |
         bash tools/scripts/fetch_stargazers.test.sh
@@ -313,6 +318,7 @@ jobs:
         bash tools/scripts/nightly_workflows.test.sh
         bash tools/scripts/soak_test_lib.test.sh
         bash tools/scripts/handshake_interop_workflow.test.sh
+        bash tools/scripts/quickstart_policy_bootstrap_test.sh
 
   dashboard-test:
     name: Dashboard Tests

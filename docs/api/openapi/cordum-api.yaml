@@ -8,8 +8,8 @@ info:
   license:
     name: Proprietary
 servers:
-- url: http://localhost:8081
-  description: Gateway HTTP (local default)
+- url: https://localhost:8081
+  description: Gateway on the default compose stack (HTTPS; development CA in ./certs/ca/ca.crt)
 - url: /
   description: Relative gateway base
 tags:
@@ -677,6 +677,77 @@ paths:
                 $ref: '#/components/schemas/EdgeSession'
         '400':
           $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '404':
+          $ref: '#/components/responses/EdgeNotFound'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/calibration-reports:
+    post:
+      operationId: createEdgeCalibrationReport
+      summary: Generate an Edge calibration report
+      description: |
+        Summarizes the policy decisions recorded on the Edge events of the
+        tenant's observe-mode sessions in the window [since, until), narrowed
+        to the given repositories and labels when set. The window may not
+        exceed 90 days. The report is stored under its content-derived id and
+        returned. Requires policy.write or the admin role.
+      tags:
+      - Edge
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EdgeCalibrationReportRequest'
+      responses:
+        '201':
+          description: Stored calibration report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeCalibrationReport'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
+  /api/v1/edge/calibration-reports/{id}:
+    get:
+      operationId: getEdgeCalibrationReport
+      summary: Fetch a stored Edge calibration report
+      description: |
+        Returns the report stored under id for the caller's tenant. An id that
+        is not cal- followed by 32 hex characters, or that belongs to another
+        tenant, returns 404. Requires policy.read or the admin role.
+      tags:
+      - Edge
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      responses:
+        '200':
+          description: Stored calibration report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeCalibrationReport'
         '401':
           $ref: '#/components/responses/EdgeUnauthorized'
         '403':
@@ -7670,6 +7741,7 @@ paths:
       x-cordum-error-codes:
       - AGENT_REQUEST_INVALID
       - AGENT_WORKER_CONFLICT
+      - AGENT_SELF_PREAPPROVAL_DENIED
       summary: Create an agent identity
       tags:
       - Agents
@@ -7777,6 +7849,7 @@ paths:
       - AGENT_REQUEST_INVALID
       - AGENT_NOT_FOUND
       - AGENT_WORKER_CONFLICT
+      - AGENT_SELF_PREAPPROVAL_DENIED
       summary: Update an agent identity
       tags:
       - Agents
@@ -10080,6 +10153,55 @@ components:
         ended_at:
           type: string
           format: date-time
+    EdgeCalibrationReportRequest:
+      type: object
+      additionalProperties: false
+      required: [since, until]
+      properties:
+        since:
+          type: string
+          format: date-time
+          description: Start of the window, inclusive.
+        until:
+          type: string
+          format: date-time
+          description: End of the window, exclusive. At most 90 days after since.
+        repos:
+          type: array
+          description: When set, only sessions in these repositories are counted.
+          items:
+            type: string
+        labels:
+          $ref: '#/components/schemas/EdgeLabels'
+    EdgeCalibrationReport:
+      type: object
+      description: |
+        Calibration report built by core/edge/calibration from the decisions
+        recorded on Edge events. An open object: the fields below are always
+        present, and other report fields may be added without a schema change.
+      additionalProperties: true
+      required: [id]
+      properties:
+        id:
+          type: string
+          description: Content-derived id, cal- followed by 32 hex characters.
+        tenant_id:
+          type: string
+        since:
+          type: string
+          format: date-time
+        until:
+          type: string
+          format: date-time
+        sessions_observed:
+          type: integer
+          description: Sessions with at least one counted event.
+        events_scanned:
+          type: integer
+          description: Distinct events of the window that were counted.
+        truncated:
+          type: boolean
+          description: Set when a scan cap stopped the scan early.
     EdgeExecutionCreateRequest:
       type: object
       required: [session_id]
@@ -10265,6 +10387,16 @@ components:
         status:
           type: string
           enum: [starting, running, waiting_for_approval, degraded, ended, failed]
+        assurance_state:
+          type: string
+          enum: [compatibility, hook-mediated, executor-enforced, unsupported, stale]
+          description: >-
+            Server-derived on each response from the policy mode, the enforcement layers,
+            the session status and the agent heartbeat. `stale` means the session has
+            ended or has no heartbeat within the session heartbeat TTL. Combinations
+            that match no rule report `unsupported`. `executor-enforced` is reserved
+            and not reported. Managed-settings status and binary integrity are not
+            inputs yet.
         risk_summary:
           $ref: '#/components/schemas/EdgeRiskSummary'
         started_at:

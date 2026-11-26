@@ -344,12 +344,26 @@ func degradedReason(input HookInput, kind edge.EventKind) string {
 	return ""
 }
 
-// redactHookActionInput pulls the action-relevant fields from the hook
-// payload and runs them through the EDGE-004 redactor. The result is the
-// authoritative `input_redacted` shape passed to ClassifyEvent and embedded
-// in MappedHookAction.InputRedacted. Hook-level fields like prompt and
-// tool_response are merged in for events that don't carry tool_input.
-func redactHookActionInput(input HookInput, kind edge.EventKind) (map[string]any, error) {
+// OriginalActionInput returns the canonical JSON of the action fields that
+// InputRedacted shows, taken from a raw hook payload before redaction. The
+// bytes hold raw secrets: they are for the local Edge client only and must
+// never be logged, stored or sent.
+func OriginalActionInput(raw []byte) ([]byte, error) {
+	input, err := parseHookInput(raw)
+	if err != nil {
+		return nil, err
+	}
+	kind, ok := mapHookEventToKind(input.HookEventName)
+	if !ok {
+		return nil, errors.New("unsupported hook event")
+	}
+	return json.Marshal(hookActionSource(input, kind))
+}
+
+// hookActionSource pulls the action-relevant fields from the hook payload.
+// Hook-level fields like prompt and tool_response are merged in for events
+// that don't carry tool_input.
+func hookActionSource(input HookInput, kind edge.EventKind) map[string]any {
 	source := map[string]any{}
 	switch kind {
 	case edge.EventKindHookPreToolUse:
@@ -385,7 +399,15 @@ func redactHookActionInput(input HookInput, kind edge.EventKind) (map[string]any
 			source["event"] = input.FileEvent
 		}
 	}
+	return source
+}
 
+// redactHookActionInput runs the action-relevant fields of the hook payload
+// through the EDGE-004 redactor. The result is the authoritative
+// `input_redacted` shape passed to ClassifyEvent and embedded in
+// MappedHookAction.InputRedacted.
+func redactHookActionInput(input HookInput, kind edge.EventKind) (map[string]any, error) {
+	source := hookActionSource(input, kind)
 	if len(source) == 0 {
 		return map[string]any{}, nil
 	}
@@ -820,6 +842,10 @@ type EdgeDecisionResponse struct {
 	// WaitAfterSeconds optionally tells the operator how long to wait
 	// before retrying after REQUIRE_APPROVAL/THROTTLE.
 	WaitAfterSeconds int
+	// Constraints is the evaluate response's constraints map, keyed by the
+	// PolicyConstraints JSON names. An ALLOW or CONSTRAIN that carries a kind
+	// the hook cannot apply maps to deny.
+	Constraints map[string]any
 }
 
 // errUnknownEdgeDecision is returned by MapEdgeDecisionToHookOutput when
@@ -856,6 +882,10 @@ func MapEdgeDecisionToHookOutput(eventName string, resp EdgeDecisionResponse) (C
 	decision := normalizeEdgeDecision(resp.Decision)
 	if decision == "" {
 		return ClaudeHookOutput{}, errUnknownEdgeDecision
+	}
+	if kinds := edge.UnenforceableConstraintKinds(resp.Constraints); len(kinds) > 0 && (decision == edgeDecisionAllow || decision == edgeDecisionConstrain) {
+		decision = edgeDecisionDeny
+		resp.Reason = redactHookBoundaryString(edge.UnenforceableConstraintReason(kinds))
 	}
 	switch eventName {
 	case "PreToolUse":
