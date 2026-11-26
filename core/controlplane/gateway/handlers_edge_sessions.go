@@ -117,7 +117,7 @@ type edgeEndExecutionRequest struct {
 }
 
 func (s *server) handleCreateEdgeSession(w http.ResponseWriter, r *http.Request) {
-	if !s.requireEdgePermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
+	if !s.requireEdgeDecisionPermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
 		return
 	}
 	store := s.edgeStoreOrUnavailable(w, r)
@@ -499,7 +499,7 @@ func (s *server) handleGetEdgeSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleHeartbeatEdgeSession(w http.ResponseWriter, r *http.Request) {
-	if !s.requireEdgePermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
+	if !s.requireEdgeDecisionPermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
 		return
 	}
 	store := s.edgeStoreOrUnavailable(w, r)
@@ -531,7 +531,7 @@ func (s *server) handleHeartbeatEdgeSession(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *server) handleEndEdgeSession(w http.ResponseWriter, r *http.Request) {
-	if !s.requireEdgePermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
+	if !s.requireEdgeDecisionPermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
 		return
 	}
 	store := s.edgeStoreOrUnavailable(w, r)
@@ -589,7 +589,7 @@ func (s *server) handleEndEdgeSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleCreateEdgeExecution(w http.ResponseWriter, r *http.Request) {
-	if !s.requireEdgePermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
+	if !s.requireEdgeDecisionPermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
 		return
 	}
 	store := s.edgeStoreOrUnavailable(w, r)
@@ -884,7 +884,7 @@ func (s *server) handleListEdgeExecutions(w http.ResponseWriter, r *http.Request
 }
 
 func (s *server) handleEndEdgeExecution(w http.ResponseWriter, r *http.Request) {
-	if !s.requireEdgePermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
+	if !s.requireEdgeDecisionPermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
 		return
 	}
 	store := s.edgeStoreOrUnavailable(w, r)
