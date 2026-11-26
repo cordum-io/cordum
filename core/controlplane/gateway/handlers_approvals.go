@@ -848,6 +848,7 @@ func (s *server) publishApprovalRepair(ctx context.Context, repaired *store.Appr
 		packet := approvalRejectionPacket(
 			repaired.TraceID, repaired.JobID, errorMessage, request.GetIdentity(),
 		)
+		s.attachServiceToken(packet)
 		if err := s.bus.Publish(capsdk.SubjectDLQ, packet); err != nil {
 			return err
 		}
@@ -1672,6 +1673,7 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 			errorMessage = reason
 		}
 		packet := approvalRejectionPacket(resolved.TraceID, jobID, errorMessage, req.GetIdentity())
+		s.attachServiceToken(packet)
 		if err := s.bus.Publish(capsdk.SubjectDLQ, packet); err != nil {
 			slog.Error("publish dlq on approval reject failed", "job_id", jobID, "error", err)
 		} else {

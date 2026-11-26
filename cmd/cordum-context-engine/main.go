@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -94,54 +96,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	serverCreds := grpc.Creds(insecure.NewCredentials())
-	certFile := strings.TrimSpace(os.Getenv("CONTEXT_ENGINE_TLS_CERT"))
-	keyFile := strings.TrimSpace(os.Getenv("CONTEXT_ENGINE_TLS_KEY"))
-	if certFile != "" || keyFile != "" {
-		if certFile == "" || keyFile == "" {
-			slog.Error("context engine tls requires both CONTEXT_ENGINE_TLS_CERT and CONTEXT_ENGINE_TLS_KEY")
-			os.Exit(1)
-		}
-		reloader, err := tlsreload.NewCertReloader(certFile, keyFile, "context-engine")
-		if err != nil {
-			slog.Error("context engine tls keypair failed", "error", err)
-			os.Exit(1)
-		}
-		go reloader.WatchLoop(context.Background(), 30*time.Second)
-		tlsCfg := &tls.Config{
-			GetCertificate: reloader.GetCertificate,
-			MinVersion:     tls.VersionTLS12,
-		}
-		if env.TLSMinVersion() == tls.VersionTLS13 {
-			tlsCfg.MinVersion = tls.VersionTLS13
-		}
-		serverCreds = grpc.Creds(credentials.NewTLS(tlsCfg))
-	}
-	if env.IsProduction() && certFile == "" {
-		slog.Error("context engine tls required in production")
+	serverCreds, err := serverTransportCredentials(context.Background())
+	if err != nil {
+		slog.Error("context engine tls configuration failed", "error", err)
 		os.Exit(1)
 	}
 
-	server := grpc.NewServer(
-		serverCreds,
-		grpc.KeepaliveParams(keepalive.ServerParameters{
-			MaxConnectionAge:      env.DurationOr(envGRPCServerMaxConnectionAge, 2*time.Hour),
-			MaxConnectionAgeGrace: env.DurationOr(envGRPCServerMaxConnectionGrace, 30*time.Second),
-			Time:                  env.DurationOr(envGRPCServerKeepaliveTime, 30*time.Second),
-			Timeout:               env.DurationOr(envGRPCServerKeepaliveTimeout, 10*time.Second),
-		}),
-		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-			MinTime:             env.DurationOr(envGRPCServerEnforcementMinTime, 15*time.Second),
-			PermitWithoutStream: true,
-		}),
-	)
-	pb.RegisterContextEngineServer(server, svc)
-	healthSrv := health.NewServer()
-	healthpb.RegisterHealthServer(server, healthSrv)
-	healthSrv.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
-	if env.Bool(env.EnvGRPCReflection) {
-		reflection.Register(server)
-	}
+	server := newGRPCServer(svc, serverCreds)
 
 	ceProbes.SetStartupComplete()
 	slog.Info("context engine listening", "addr", addr, "redis", cfg.RedisURL)
@@ -181,4 +142,74 @@ func main() {
 		slog.Error("context engine server error", "error", err)
 		os.Exit(1)
 	}
+}
+
+func serverTransportCredentials(ctx context.Context) (grpc.ServerOption, error) {
+	serverCreds := grpc.Creds(insecure.NewCredentials())
+	cert := strings.TrimSpace(os.Getenv("CONTEXT_ENGINE_TLS_CERT"))
+	key := strings.TrimSpace(os.Getenv("CONTEXT_ENGINE_TLS_KEY"))
+	clientCA := strings.TrimSpace(os.Getenv("CONTEXT_ENGINE_TLS_CLIENT_CA"))
+	if clientCA != "" && (cert == "" || key == "") {
+		return nil, fmt.Errorf("CONTEXT_ENGINE_TLS_CLIENT_CA requires CONTEXT_ENGINE_TLS_CERT and CONTEXT_ENGINE_TLS_KEY")
+	}
+	if env.IsProduction() && cert == "" {
+		return nil, fmt.Errorf("context engine tls required in production")
+	}
+	if env.IsProduction() && clientCA == "" {
+		return nil, fmt.Errorf("CONTEXT_ENGINE_TLS_CLIENT_CA required in production")
+	}
+	if cert != "" || key != "" {
+		if cert == "" || key == "" {
+			return nil, fmt.Errorf("context engine tls requires both CONTEXT_ENGINE_TLS_CERT and CONTEXT_ENGINE_TLS_KEY")
+		}
+		reloader, err := tlsreload.NewCertReloader(cert, key, "context-engine")
+		if err != nil {
+			return nil, fmt.Errorf("context engine tls keypair: %w", err)
+		}
+		tlsCfg := &tls.Config{
+			GetCertificate: reloader.GetCertificate,
+			MinVersion:     tls.VersionTLS12,
+		}
+		if env.TLSMinVersion() == tls.VersionTLS13 {
+			tlsCfg.MinVersion = tls.VersionTLS13
+		}
+		if clientCA != "" {
+			pem, err := os.ReadFile(clientCA) // #nosec G304 -- the client CA path is configured by the operator.
+			if err != nil {
+				return nil, fmt.Errorf("read CONTEXT_ENGINE_TLS_CLIENT_CA: %w", err)
+			}
+			tlsCfg.ClientCAs = x509.NewCertPool()
+			if !tlsCfg.ClientCAs.AppendCertsFromPEM(pem) {
+				return nil, fmt.Errorf("CONTEXT_ENGINE_TLS_CLIENT_CA contains no certificates")
+			}
+			tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
+		}
+		go reloader.WatchLoop(ctx, 30*time.Second)
+		serverCreds = grpc.Creds(credentials.NewTLS(tlsCfg))
+	}
+	return serverCreds, nil
+}
+
+func newGRPCServer(svc *engine.Service, serverCreds grpc.ServerOption) *grpc.Server {
+	server := grpc.NewServer(
+		serverCreds,
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			MaxConnectionAge:      env.DurationOr(envGRPCServerMaxConnectionAge, 2*time.Hour),
+			MaxConnectionAgeGrace: env.DurationOr(envGRPCServerMaxConnectionGrace, 30*time.Second),
+			Time:                  env.DurationOr(envGRPCServerKeepaliveTime, 30*time.Second),
+			Timeout:               env.DurationOr(envGRPCServerKeepaliveTimeout, 10*time.Second),
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             env.DurationOr(envGRPCServerEnforcementMinTime, 15*time.Second),
+			PermitWithoutStream: true,
+		}),
+	)
+	pb.RegisterContextEngineServer(server, svc)
+	healthSrv := health.NewServer()
+	healthpb.RegisterHealthServer(server, healthSrv)
+	healthSrv.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
+	if env.Bool(env.EnvGRPCReflection) {
+		reflection.Register(server)
+	}
+	return server
 }

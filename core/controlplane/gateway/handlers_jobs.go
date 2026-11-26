@@ -1553,7 +1553,13 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	// audit every denial.
 	audienceOverride := strings.TrimSpace(req.DelegationAudienceAgentID)
 	if audienceOverride != "" && audienceOverride != authDerivedAgentID {
-		if !s.requirePermissionOrRole(w, r, auth.PermDelegationImpersonate, "admin") {
+		allowed := s.requirePermissionOrRole(w, r, auth.PermDelegationImpersonate, "admin")
+		rbacActive := s != nil && s.auth != nil && s.permChecker != nil && auth.RBACEntitled(s.currentEntitlements())
+		if ac := auth.FromRequest(r); allowed && !rbacActive && ac != nil && ac.AuthSource == auth.AuthSourceAPIKey && ac.Role != "admin" {
+			writeErrorJSON(w, http.StatusForbidden, "admin role required for delegation audience override")
+			allowed = false
+		}
+		if !allowed {
 			actorID, role := "anonymous", "none"
 			if ac := auth.FromRequest(r); ac != nil {
 				actorID, role = ac.PrincipalID, ac.Role
@@ -2234,6 +2240,7 @@ func (s *server) persistSubmitDeniedJob(
 		},
 	}
 	if s.bus != nil {
+		s.attachServiceToken(packet)
 		if err := s.bus.Publish(capsdk.SubjectDLQ, packet); err != nil {
 			slog.Warn("publish dlq on submit deny failed", "job_id", jobID, "error", err)
 		}

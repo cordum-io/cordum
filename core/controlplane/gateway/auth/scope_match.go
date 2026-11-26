@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
 // ScopeError reports that a managed API key is valid but not permitted for the
-// canonical resource:verb required by the current HTTP request.
+// canonical resource:verb required by the current HTTP or gRPC request.
 type ScopeError struct {
 	Required string
 	Granted  []string
@@ -129,6 +131,22 @@ func PathToScope(method, path string) (scope string, ok bool) {
 	return resource + ":" + verb, true
 }
 
+// grpcMethodScopes holds the scope of every method on the gateway's gRPC
+// server, keyed by full method name.
+var grpcMethodScopes = map[string]string{
+	pb.CordumApi_SubmitJob_FullMethodName:    "jobs:write",
+	pb.CordumApi_GetJobStatus_FullMethodName: "jobs:read",
+}
+
+// GRPCMethodToScope maps a full gRPC method name, as grpc.Method returns it,
+// to a canonical resource:verb scope. Like PathToScope, ok=false means
+// unmapped: scoped API keys are refused, and empty-scope legacy keys keep
+// their role-only behavior.
+func GRPCMethodToScope(fullMethod string) (scope string, ok bool) {
+	scope, ok = grpcMethodScopes[fullMethod]
+	return scope, ok
+}
+
 func verbForMethod(method string) (string, bool) {
 	switch strings.ToUpper(strings.TrimSpace(method)) {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
@@ -154,10 +172,13 @@ func resourceForPath(path string) (string, bool) {
 		prefix   string
 		resource string
 	}{
+		{"/mcp", "mcpgateway"},
 		{"/api/v1/auth/keys", "apikeys"},
 		{"/api/v1/workflow-runs", "workflows"},
 		{"/api/v1/workflows", "workflows"},
 		{"/api/v1/jobs", "jobs"},
+		{"/api/v1/audit/legal-hold", "legalhold"},
+		{"/api/v1/audit/legal-holds", "legalhold"},
 		{"/api/v1/audit", "audit"},
 		{"/api/v1/approvals", "approvals"},
 		{"/api/v1/agents", "agents"},
@@ -177,6 +198,14 @@ func resourceForPath(path string) (string, bool) {
 		{"/api/v1/artifacts", "artifacts"},
 		{"/api/v1/evals", "evals"},
 		{"/api/v1/governance", "governance"},
+		// Edge routes map by domain, so the specific prefixes come before
+		// the /api/v1/edge catch-all: the first match wins.
+		{"/api/v1/edge/approvals", "approvals"},
+		{"/api/v1/edge/mcp", "mcp"},
+		{"/api/v1/edge/shadow-agents", "audit"},
+		{"/api/v1/edge/shadow", "audit"},
+		{"/api/v1/edge/binary-integrity", "audit"},
+		{"/api/v1/edge", "edge"},
 	} {
 		if path == candidate.prefix || strings.HasPrefix(path, candidate.prefix+"/") {
 			return candidate.resource, true

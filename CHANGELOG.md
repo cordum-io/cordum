@@ -156,6 +156,89 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   cluster needs [Runbook H](docs/redis-operations.md#runbook-h-turn-on-tls-for-the-cluster-bus)'s
   runtime switch on every node before any Redis pod restarts (task-2a7ba91e).
 
+- Keys created by a managed API key with an expiry inherit that expiry when
+  `expiresAt` is omitted or empty. An explicit later expiry returns 403;
+  callers must request an equal or earlier expiry.
+
+- Production requires `SAFETY_KERNEL_TLS_CLIENT_CA` and
+  `CONTEXT_ENGINE_TLS_CLIENT_CA`; the respective service will not start without
+  its client CA. Safety Kernel callers must set `SAFETY_KERNEL_TLS_CLIENT_CERT`
+  and `SAFETY_KERNEL_TLS_CLIENT_KEY` to a client keypair signed by that CA.
+  External Context Engine callers must present a client certificate from its CA.
+
+- Without advanced RBAC, a managed API key needs the `admin` scope to submit
+  `delegation_audience_agent_id` for an agent other than its own. Keys holding
+  only job-write scopes must use their own agent as the audience. With RBAC,
+  the existing `delegation.impersonate` permission check is unchanged.
+
+- Managed API key grants are limited to scopes held by the calling key;
+  requests for other scopes return 403. A bare scope (`admin`, `write`,
+  `operator`, `read` or `viewer`) is held only by a key that has the same bare
+  scope, and a `<resource>:<verb>` or `<resource>:*` scope by a key whose own
+  scopes match it. Existing `admin`, `write` and `operator` keys must request
+  held scopes when creating keys. A managed key can no longer create a key
+  without scopes. `/api/v1/audit/legal-hold` and `/api/v1/audit/legal-holds`
+  use the `legalhold` resource: `audit:write` and `audit:*` keys no longer
+  authorize those routes. Static keys are unchanged.
+
+- Managed API key scopes now apply to the gateway gRPC API, matched as on the
+  HTTP routes: `SubmitJob` requires a scope covering `jobs:write`, and
+  `GetJobStatus` a scope covering `jobs:read`. A managed key with scopes is
+  refused on any other gRPC method. Scoped keys whose scopes do not cover
+  `jobs:write`, such as `policy:write` keys, can no longer submit jobs over
+  gRPC, and scoped keys whose scopes do not cover `jobs:read`, such as
+  `jobs:write` keys, can no longer read job status over gRPC. Managed keys
+  without scopes, static keys and JWT callers are unchanged.
+
+- The gateway gRPC API no longer accepts a user session token in `x-api-key`
+  or `api-key` metadata and refuses it as an invalid API key. gRPC clients
+  present an API key there, or a gateway JWT or OIDC token as
+  `authorization: Bearer <token>`. Sessions on the HTTP API are unchanged.
+
+- With `AUDIT_TRANSPORT=nats`, the gateway's audit consumer chains and exports
+  only `sys.audit.export` packets that carry a valid audit-publisher service
+  token: `api-gateway` or `cordum-scheduler` signed by a key in
+  `CORDUM_POLICY_PUBLIC_KEY_<ID>` (or derived from
+  `CORDUM_POLICY_DEV_SIGNING_SEED`), or `cordum-mcp` or `cordum-safety-kernel`
+  signed by its own `CORDUM_AUDIT_PUBLIC_KEY_` key (or derived from
+  `CORDUM_AUDIT_DEV_SIGNING_SEED`). Any other packet is acknowledged, logged
+  without its token or payload, counted in
+  `cordum_audit_events_dropped_total{reason="service_token"}`, and neither
+  chained nor exported. A malformed key in either set fails gateway startup.
+  Before upgrading, configure the publishers' signing keys and give the gateway
+  their public keys, in development too: a publisher without a key sends
+  events the consumer drops.
+
+- Under the production profile, `CORDUM_AUDIT_DEV_SIGNING_SEED` and `CORDUM_POLICY_DEV_SIGNING_SEED` are refused; set a real signing key. (task-b0318ca0)
+
+- Worker ids `cordum-mcp` and `cordum-safety-kernel` are reserved. The handshake
+  and bound session tokens refuse these worker ids; rename any worker registered
+  under either id before upgrading.
+
+- The deployment manifests provision the audit-publisher keys for
+  `sys.audit.export` service tokens; create them before upgrading
+  (task-022f53b0). Helm: `audit.publisherKeys.safetyKernel.privateKeySecret`
+  (`name`, `key`) renders the safety kernel's `CORDUM_AUDIT_SIGNING_KEY` and is
+  required when `global.production=true`; `audit.publisherKeys.keyId` sets its
+  key id; `audit.publisherKeys.safetyKernel.publicKeySecret` and
+  `audit.publisherKeys.mcp.publicKeySecret` give the gateway its
+  `CORDUM_AUDIT_PUBLIC_KEY_` variables. With `audit.transport=nats`,
+  `workerTrust.sessionSigning` is required even when `workerTrust.mode=off`.
+  K8s production overlay: the safety kernel needs Secret `cordum-audit-signing`
+  (`signing-key`, optional `key-id`); Secrets `cordum-policy-signing`
+  (`signing-key`, `key-id`) for the scheduler and `cordum-audit-trust`
+  (`cordum-safety-kernel`, `cordum-mcp`) for the gateway are optional.
+  `docker-compose.release.yml` requires `CORDUM_AUDIT_SIGNING_KEY`.
+
+- cordum-mcp and the safety kernel attach a service token, with subject
+  `cordum-mcp` or `cordum-safety-kernel`, to the audit events they publish on
+  `sys.audit.export`. The token is minted with `CORDUM_AUDIT_SIGNING_KEY`,
+  `CORDUM_AUDIT_SIGNING_KEY_PATH` or `CORDUM_AUDIT_DEV_SIGNING_SEED`, with the
+  key id in `CORDUM_AUDIT_SIGNING_KEY_ID`. Under the production profile each
+  refuses to start without that key: cordum-mcp once `CORDUM_NATS_URL` dials,
+  and the safety kernel with NATS and shadow evaluation on. Provision the key
+  before upgrading.
+
 - Edge managed settings: managed-settings verification fails closed on
   unsupported conditional or background hook modifiers, and command hooks
   must have the correct type and tool-event coverage (#492, task-99f50a3d).
@@ -226,6 +309,38 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `--allow-unauthenticated-http` is passed (#492, task-ee0dc819).
 
 ### Changed
+
+- A key that a managed API key creates through `POST /api/v1/auth/keys` is
+  stored only if the calling key is unexpired when the gateway checks it and
+  still unrevoked when the key is written; otherwise the request gets 403 and
+  no key is stored.
+
+- Managed API key scopes now cover the `/api/v1/edge` routes. `/api/v1/edge/approvals` maps to
+  the `approvals` resource, `/api/v1/edge/mcp` to `mcp`, `/api/v1/edge/shadow-agents`,
+  `/api/v1/edge/shadow` and `/api/v1/edge/binary-integrity` to `audit`, and every other
+  `/api/v1/edge` path to the new `edge` resource. `edge:read`, `edge:write` and `edge:*` can be
+  minted, so an `edge:write` key can create an Edge session, which records the key id as its
+  principal. The legacy role scopes (`read`/`viewer`, `write`/`operator`, `admin`) now reach the
+  Edge routes at their verb level, as on every other mapped resource. Unscoped managed keys still
+  act as `viewer`.
+
+- With `CORDUM_SDK_HANDSHAKE=enforce`, the workflow engine verifies the
+  `cordum-scheduler` service token before applying a result from
+  `sys.internal.job.result.accepted`. Verification uses
+  `CORDUM_POLICY_PUBLIC_KEY_<ID>` or the public half of the engine's own
+  `CORDUM_POLICY_SIGNING_KEY` when its key id is not already configured.
+  Other results are dropped and logged without credentials or payloads.
+  Off and warn modes are unchanged.
+
+- A managed API key (`ck_`) now authenticates as its own principal, its key id. In the
+  production profile, where `X-Principal-Id` is ignored by default, it can therefore submit a
+  job through `POST /api/v1/jobs` or gRPC `SubmitJob`, and the job records that id as its
+  principal and actor; before, both refused it with `authenticated job identity mismatch`.
+  Existing keys take their id as principal with no migration, and a stored managed key without
+  an id is refused. Where `X-Principal-Id` is honored (outside production, or with
+  `CORDUM_ALLOW_HEADER_PRINCIPAL=true`), the header still replaces the key's principal as an
+  asserted one, for attribution only. Audit records for a managed key keep `identity_source`
+  `api_key:<id>` and the key's name.
 
 - Redis: clients built by `core/infra/redisutil` (`NewClient`, and `ParseOptions`
   passed to `redis.NewClient`) apply a call's context deadline to socket reads
@@ -347,6 +462,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   instead of TanStack, without changing table behavior (task-fc8b600a).
 
 ### Added
+
+- Managed API keys: the scope resource `mcpgateway` covers the gateway's MCP endpoints.
+  `GET /mcp/sse` and `GET /mcp/status` need `mcpgateway:read`, and `POST /mcp/message`
+  needs `mcpgateway:write`. `mcpgateway:read`, `mcpgateway:write` and `mcpgateway:*`
+  can be minted. The bare `admin`, `write` and `operator` scopes match it as they
+  match other resources, and `read` and `viewer` match its read routes. `mcp:*`
+  scopes do not cover these endpoints (task-10c21744).
+
+- Gateway, scheduler and workflow engine: the Safety Kernel clients can present a TLS client certificate from `SAFETY_KERNEL_TLS_CLIENT_CERT` and `SAFETY_KERNEL_TLS_CLIENT_KEY` (both or neither, and only with `SAFETY_KERNEL_TLS_CA`), reloaded when the files change. The bundled Compose files, Helm chart and k8s production overlay point them at the existing client keypair under `/etc/cordum/tls/client/` (task-0102f2cc)
 
 - Retry-layer contract: `docs/contract/retry-layers.md` lists each retry layer on the job and
   workflow-step paths (client, bus, scheduler, worker handler, workflow step, manual DLQ retry)
@@ -532,6 +656,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   ruleset (task-fd34e921).
 
 ### Security
+
+- With `CORDUM_SDK_HANDSHAKE=warn` or `enforce`, the gateway's heartbeat,
+  DLQ and event-stream subscriptions check packet session or service tokens.
+  Warn mode still admits packets without a token. DLQ and output-policy audit
+  publishers attach their service token; relayed stream events carry no credential.
+  Set `CORDUM_SDK_HANDSHAKE` and `CORDUM_HEARTBEAT_MODE` identically on the
+  gateway and scheduler (as in Docker Compose, Helm and the production K8s overlay).
+
+- The workflow engine's accepted-result consumer checks the scheduler service
+  token at `bus.PublishedAt` when JetStream delivery metadata is present,
+  otherwise at receive time.
+
+- The audit consumer checks publisher service tokens at `bus.PublishedAt`
+  when JetStream delivery metadata is present, otherwise at receive time.
+
+- Gateway and scheduler NATS audit publishers attach a control-plane service
+  token (`servicetoken`, type `cordum-service`, subjects `api-gateway` and
+  `cordum-scheduler`) to events on `sys.audit.export` when
+  `CORDUM_POLICY_SIGNING_KEY`, `CORDUM_POLICY_SIGNING_KEY_PATH`, or
+  `CORDUM_POLICY_DEV_SIGNING_SEED` is configured. With `CORDUM_ENV=production`
+  and `AUDIT_TRANSPORT=nats`, the gateway requires that key when the NATS audit
+  pipeline is enabled.
 
 - MCP gateway: the Edge session that `POST /api/v1/mcp/gateway/clients/connect`
   creates, and its events, record only the principal a credential vouches
@@ -1088,7 +1234,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - `dashboard/package.json` overrides `minimatch@^10.0.0` to `^11.0.1`, in `pnpm.overrides` and in the npm `overrides` mirror. No minimatch 10.x release carries the fix. eslint, `@eslint/config-array` and `@typescript-eslint/typescript-estree` still declare `^10`, and they call only `Minimatch#match` and `minimatch()`, which 11.x keeps.
 - typedoc, typedoc-plugin-coverage and typedoc-plugin-markdown are removed from the install with pnpm `-` overrides. typedoc 0.28 calls `Minimatch#matchOne`, which 11.x removed. orval 8.31.0 loads typedoc only for its `docs` output, which the dashboard does not configure. Until typedoc supports minimatch 11, enabling that output fails at import. orval stays at 8.31.0.
 
+#### Service client certificate requirement (2026-11-16, task-66bee998)
+
+- The Safety Kernel and Context Engine require and verify client certificates
+  against their configured client CA before serving gRPC calls. Outside
+  production, an unset client CA retains server-only TLS or plaintext behavior.
+
 ### Fixed
+
+- `cordumctl governance tail` records a decision only from a `sys.audit.export` packet whose service token verifies as the audit export consumer requires: an `api-gateway` or `cordum-scheduler` token under the control-plane keys (`CORDUM_POLICY_PUBLIC_KEY_*`), or a publisher's token under its own `CORDUM_AUDIT_PUBLIC_KEY_*` key. The tail reads these keys from its environment, like the gateway. Other packets are counted as `refused` and write nothing (task-876183dc).
+
+- In production mode, the scheduler applies the API gateway's cancel and
+  approval-rejection job results, which carry no dispatch fence, and forwards
+  them to the workflow engine. Any other result without a fence is dropped and
+  logged as `no_dispatch_fence`.
 
 - Delegation issuance: a parent-token tenant mismatch returns HTTP 400 with
   `DELEGATION_REQUEST_INVALID` and `tenant_mismatch` (task-9b21101b).

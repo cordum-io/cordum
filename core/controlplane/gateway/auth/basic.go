@@ -15,6 +15,7 @@ import (
 
 	"github.com/cordum/cordum/core/infra/env"
 	"github.com/gorilla/websocket"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -274,7 +275,15 @@ func (b *BasicAuthProvider) AuthenticateGRPC(ctx context.Context) (*AuthContext,
 	if b.jwtRequired {
 		return nil, errors.New("jwt required")
 	}
-	return b.authenticate(ctx, key, principalID)
+	// A context without a method name maps to no scope, so it fails closed.
+	method, _ := grpc.Method(ctx)
+	required, mapped := GRPCMethodToScope(method)
+	authCtx, err := b.authenticateWithScope(ctx, key, principalID, required, mapped)
+	// A user session is an HTTP credential; gRPC refuses it like an unknown key.
+	if err == nil && authCtx.AuthSource == AuthSourceSession {
+		return nil, errors.New("invalid api key")
+	}
+	return authCtx, err
 }
 
 // roleFromScopes maps API key scopes to a role, using the highest privilege
@@ -300,15 +309,15 @@ func roleFromScopes(scopes []string) string {
 	return role
 }
 
-func (b *BasicAuthProvider) authenticate(ctx context.Context, key, principalID string) (*AuthContext, error) {
-	return b.authenticateWithScope(ctx, key, principalID, "", "", false)
-}
-
 func (b *BasicAuthProvider) authenticateHTTP(ctx context.Context, key, principalID, method, path string) (*AuthContext, error) {
-	return b.authenticateWithScope(ctx, key, principalID, method, path, true)
+	required, mapped := PathToScope(method, path)
+	return b.authenticateWithScope(ctx, key, principalID, required, mapped)
 }
 
-func (b *BasicAuthProvider) authenticateWithScope(ctx context.Context, key, principalID, method, path string, enforceScopes bool) (*AuthContext, error) {
+// authenticateWithScope checks a managed key's scopes against required, the
+// scope of the request; mapped=false means the request has no scope, which
+// refuses every scoped key.
+func (b *BasicAuthProvider) authenticateWithScope(ctx context.Context, key, principalID, required string, mapped bool) (*AuthContext, error) {
 	if b == nil {
 		return &AuthContext{}, nil
 	}
@@ -343,15 +352,20 @@ func (b *BasicAuthProvider) authenticateWithScope(ctx context.Context, key, prin
 		// Fall back to managed key store (runtime-created keys in Redis)
 		if b.keyStore != nil {
 			mk, err := b.keyStore.ValidateKey(ctx, key)
+			if err == nil && strings.TrimSpace(mk.ID) == "" {
+				// A key's id is its principal and its revocation handle, so a
+				// stored key without one is refused.
+				slog.Warn("api key rejected", "reason", "managed_key_without_id")
+				err = ErrInvalidKey
+			}
 			if err == nil {
 				role := roleFromScopes(mk.Scopes)
 				tenant := strings.TrimSpace(mk.Tenant)
 				if tenant == "" {
 					tenant = b.defaultTenant
 				}
-				if enforceScopes && len(mk.Scopes) > 0 {
-					required, ok := PathToScope(method, path)
-					matched := ""
+				if len(mk.Scopes) > 0 {
+					matched, ok := "", mapped
 					if ok {
 						matched, ok = MatchedScope(mk.Scopes, required)
 					}
@@ -373,17 +387,18 @@ func (b *BasicAuthProvider) authenticateWithScope(ctx context.Context, key, prin
 						slog.Warn("failed to record api key usage", "key_id", keyID, "error", err) // #nosec -- key id is validated and safe for logs.
 					}
 				}(mk.ID)
-				// A ManagedKey carries no principal, so any principal here
-				// came from the caller: honored only where header principals
-				// are allowed, and then only as an asserted one.
-				if !b.allowHeaderPrincipal {
-					principalID = ""
+				// A managed key's own principal is its id. A caller-named
+				// principal replaces it only where header principals are
+				// allowed, and then only as an asserted one.
+				principal, asserted := strings.TrimSpace(mk.ID), false
+				if named := strings.TrimSpace(principalID); named != "" && b.allowHeaderPrincipal {
+					principal, asserted = named, true
 				}
 				return &AuthContext{
 					APIKey:            key,
 					Tenant:            tenant,
-					PrincipalID:       strings.TrimSpace(principalID),
-					PrincipalAsserted: strings.TrimSpace(principalID) != "",
+					PrincipalID:       principal,
+					PrincipalAsserted: asserted,
 					KeyID:             mk.ID,
 					KeyName:           mk.Name,
 					Role:              role,
