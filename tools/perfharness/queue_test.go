@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -67,5 +68,24 @@ func TestQueueTimeSeries(t *testing.T) {
 		if s.TMS < 0 || i > 0 && s.TMS <= samples[i-1].TMS {
 			t.Fatal("unordered samples")
 		}
+	}
+}
+
+func TestQueueRunEndDropsCutOffSample(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) > 1 {
+			<-r.Context().Done() // Outlasts the run, never its own interval.
+			return
+		}
+		writeFixture(t, w, "queue 3\n")
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	samples := collectQueue(ctx, server.Client(), server.URL, QueueSource{Kind: "prometheus", Metric: "queue", IntervalMS: 200}, start)
+	if len(samples) != 1 || samples[0].TMS != 0 || samples[0].Value == nil || *samples[0].Value != 3 {
+		t.Fatalf("%+v", samples)
 	}
 }

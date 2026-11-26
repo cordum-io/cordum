@@ -106,6 +106,9 @@ func collectQueue(ctx context.Context, client *http.Client, address string, sour
 		sampleCtx, cancel := context.WithTimeout(ctx, interval)
 		value := sampleQueue(sampleCtx, client, address, source)
 		cancel()
+		if value == nil && ctx.Err() != nil {
+			return samples // Cut off by the run's end: the source did not fail, so it is no gap.
+		}
 		samples = append(samples, QueueSample{TMS: float64(at.Sub(start)) / float64(time.Millisecond), Value: value})
 		select {
 		case <-ctx.Done():
