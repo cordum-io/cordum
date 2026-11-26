@@ -938,8 +938,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   Missing cosign is refused unless `--insecure-allow-missing-cosign` /
   `-InsecureAllowMissingCosign` is passed; that flag logs a
   `binary-signature-unverified` audit event and still enforces checksums.
-  The release workflow does not publish this signature yet (PR2-03-PIPELINE).
   (PR2-03, task-83a43ecf)
+
+- The binary release workflow signs `SHA256SUMS` keylessly with GitHub OIDC and
+  Sigstore: `release.yml` job `sign-manifest` runs `cosign sign-blob` and writes
+  `SHA256SUMS.sigstore.json`. Before the upload, the same job runs
+  `tools/scripts/install.sh` on the release, which checks the signature and
+  every checksum, and requires it to refuse a copy with one changed byte.
+  `publish-binaries` in `docker.yml` requires `SHA256SUMS.sigstore.json` on the
+  canonical repository and publishes it with the binaries; `SHA256SUMS.asc`
+  stays optional. A `release-dry-run/**` run shows this end to end; no tagged
+  release has used it yet. (PR2-03-PIPELINE, task-182f2cd5)
 
 - HTTP job submit (task-ed8bd5e2): a client `labels.agent_id` is honored only when the request's principal is the authenticated principal; naming another worker's `principal_id` to validate the label is now refused with 403 before the policy check, matching gRPC SubmitJob. Requests without the label are unchanged.
 
