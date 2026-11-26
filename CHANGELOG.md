@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Edge routes take the license break-glass decision in every license state and on every
+  plan, as other API routes do. A request that break-glass does not allow answers 503,
+  with code `license.grace_restricted` in grace (for example an MCP upstream change or
+  an Edge approval decision) and `license.degraded` in degraded and invalid. The agent
+  decision path (session, execution and event writes, and `POST /api/v1/edge/evaluate`)
+  answers in every license state. In degraded and invalid, `cordumctl edge doctor`
+  reports its Edge routes check as failed with status 503, and an agent's inline
+  approval wait denies the action (task-e122b1f4).
 - Gateway authorization: when the RBAC entitlement is not active, permission checks use
   the built-in role permissions. admin holds every permission, and operator, viewer,
   runtime_collector and llm_proxy hold the ones listed for them; other roles, including
