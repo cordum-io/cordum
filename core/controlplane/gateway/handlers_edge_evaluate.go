@@ -152,6 +152,18 @@ func (s *server) handleEdgeEvaluate(w http.ResponseWriter, r *http.Request) {
 		writeEdgeEventRequestError(w, r, err, "invalid edge evaluate request")
 		return
 	}
+	// The Safety Kernel reads agent_id as the agent identity of the caller. It
+	// comes from the worker link of the credential, as on job submit; the
+	// mapper already dropped any agent_id a request or session label carried.
+	agentID, err := s.linkedAgentID(r.Context(), evalCtx.tenantID, auth.FromRequest(r).AuthenticatedPrincipal())
+	if err != nil {
+		writeEdgeInternalError(w, r, "edge evaluate agent link lookup", err)
+		return
+	}
+	if agentID != "" {
+		policyInput.policyRequest.Labels["agent_id"] = agentID
+		policyInput.policyRequest.Meta.Labels["agent_id"] = agentID
+	}
 	safetyResp, err := s.evaluateEdgeSafety(r.Context(), policyInput.policyRequest)
 	if err != nil {
 		outcome := edgeEvaluateOutcomeFromSafetyUnavailable(policyInput.event.EventID, evalCtx.session.PolicyMode, policyInput.classification)
@@ -165,7 +177,9 @@ func (s *server) handleEdgeEvaluate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	outcome := edgeEvaluateOutcomeFromSafety(policyInput.event.EventID, safetyResp)
-	outcome = s.decorateEdgeEvaluateTierEvidence(r.Context(), policyInput.event.Labels, outcome)
+	// Scope evidence follows the labels the Safety Kernel received, not the
+	// labels the caller sent.
+	outcome = s.decorateEdgeEvaluateTierEvidence(r.Context(), edgecore.Labels(policyInput.policyRequest.GetLabels()), outcome)
 	actionHash, err := edgeEvaluateActionHash(policyInput.event, outcome.policySnapshot)
 	if err != nil {
 		writeEdgeEventRequestError(w, r, err, "invalid edge evaluate request")

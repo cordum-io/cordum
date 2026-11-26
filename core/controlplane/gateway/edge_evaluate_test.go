@@ -1931,6 +1931,157 @@ func TestGatewayEdgeEvaluateDropsClientSystemLabels(t *testing.T) {
 	}
 }
 
+// The Safety Kernel loads the agent identity named by the agent_id label and
+// matches agent_risk_tiers rules against it. Edge takes agent_id from the
+// worker link of the credential, as job submit does. A request or session
+// label never sets it.
+func TestGatewayEdgeEvaluateBindsAgentIDToCredential(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		link bool
+		want string
+	}{
+		{name: "linked credential", link: true, want: "agent-bound"},
+		{name: "credential with no link", want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			safety := &edgeEvaluateStubSafetyClient{}
+			s, handler := newEdgeEvaluateTestServer(t, safety)
+			createDelegationAgent(t, s, edgeRouteTenant, "agent-bound", []string{"read"}, []string{"job.default"})
+			createDelegationAgent(t, s, edgeRouteTenant, "agent-other", []string{"read"}, []string{"job.default"})
+			if tc.link {
+				if err := s.agentIdentityStore.LinkWorker(context.Background(), "agent-bound", "principal-edge-a"); err != nil {
+					t.Fatalf("link worker: %v", err)
+				}
+			}
+
+			rr := edgeRoutePOST(t, handler, "/api/v1/edge/sessions", `{
+				"agent_product":"claude-code",
+				"agent_version":"1.2.3",
+				"mode":"local-dev",
+				"policy_snapshot":"snap-edge-evaluate",
+				"policy_mode":"observe",
+				"labels":{"agent_id":"agent-other"}
+			}`)
+			if rr.Code != http.StatusCreated {
+				t.Fatalf("create session status = %d, want 201 body=%s", rr.Code, rr.Body.String())
+			}
+			var session edgeSessionCreateResponseJSON
+			decodeEdgeRouteJSON(t, rr, &session)
+
+			body, err := json.Marshal(map[string]any{
+				"session_id":     session.SessionID,
+				"execution_id":   session.ExecutionID,
+				"agent_product":  "claude-code",
+				"layer":          "hook",
+				"kind":           "hook.pre_tool_use",
+				"tool_name":      "Bash",
+				"input_redacted": map[string]any{"command": "npm test"},
+				"labels":         map[string]string{"agent_id": "agent-other"},
+			})
+			if err != nil {
+				t.Fatalf("marshal evaluate body: %v", err)
+			}
+			rr = edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", string(body))
+			if rr.Code != http.StatusOK {
+				t.Fatalf("evaluate status = %d, want 200 body=%s", rr.Code, rr.Body.String())
+			}
+			requests := safety.capturedRequests()
+			if len(requests) != 1 {
+				t.Fatalf("captured safety requests = %d, want 1", len(requests))
+			}
+			if got := requests[0].GetLabels()["agent_id"]; got != tc.want {
+				t.Errorf("labels agent_id = %q, want %q", got, tc.want)
+			}
+			if got := requests[0].GetMeta().GetLabels()["agent_id"]; got != tc.want {
+				t.Errorf("meta.labels agent_id = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The workflow_run_id and job_id of a session, and workflow or job labels on
+// a request, are what the caller says. They stay on the stored event as
+// evidence. They do not pick workflow or job override rules: the only policy
+// scope of an Edge request is the session attachment the gateway set.
+func TestGatewayEdgeEvaluateCallerScopeLabelsDoNotReachKernel(t *testing.T) {
+	// The scope snapshots in the response need a policy snapshot to hash.
+	safety := &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{
+		Decision: pb.DecisionType_DECISION_TYPE_ALLOW, Reason: "allowed", PolicySnapshot: "snap-edge-evaluate",
+	}}
+	_, handler := newEdgeEvaluateTestServer(t, safety)
+
+	rr := edgeRoutePOST(t, handler, "/api/v1/edge/sessions", `{
+		"agent_product":"claude-code",
+		"agent_version":"1.2.3",
+		"mode":"local-dev",
+		"policy_snapshot":"snap-edge-evaluate",
+		"policy_mode":"observe",
+		"workflow_run_id":"run-claimed",
+		"job_id":"job-claimed",
+		"labels":{"workflow_id":"wf-claimed"}
+	}`)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create session status = %d, want 201 body=%s", rr.Code, rr.Body.String())
+	}
+	var session edgeSessionCreateResponseJSON
+	decodeEdgeRouteJSON(t, rr, &session)
+
+	callerScope := []string{
+		"workflow_id", "workflow.id", "workflow", "workflow_run_id", "workflow.run_id",
+		"run_id", "step_id", "job_id", "job.id", "session_id",
+	}
+	requestLabels := map[string]string{"custom.team": "platform"}
+	for _, key := range callerScope {
+		requestLabels[key] = "claimed"
+	}
+	body, err := json.Marshal(map[string]any{
+		"session_id":     session.SessionID,
+		"execution_id":   session.ExecutionID,
+		"agent_product":  "claude-code",
+		"layer":          "hook",
+		"kind":           "hook.pre_tool_use",
+		"tool_name":      "Bash",
+		"input_redacted": map[string]any{"command": "npm test"},
+		"labels":         requestLabels,
+	})
+	if err != nil {
+		t.Fatalf("marshal evaluate body: %v", err)
+	}
+	rr = edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", string(body))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("evaluate status = %d, want 200 body=%s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		WorkflowOverrideSnapshot string `json:"workflow_override_snapshot"`
+		JobOverrideSnapshot      string `json:"job_override_snapshot"`
+	}
+	decodeEdgeRouteJSON(t, rr, &resp)
+	if resp.WorkflowOverrideSnapshot != "" {
+		t.Errorf("workflow_override_snapshot = %q, want empty: no workflow scope reached the kernel", resp.WorkflowOverrideSnapshot)
+	}
+	if resp.JobOverrideSnapshot == "" {
+		t.Errorf("job_override_snapshot is empty, want the session attachment scope")
+	}
+
+	requests := safety.capturedRequests()
+	if len(requests) != 1 {
+		t.Fatalf("captured safety requests = %d, want 1", len(requests))
+	}
+	labels := requests[0].GetLabels()
+	for _, key := range callerScope {
+		if value, ok := labels[key]; ok {
+			t.Errorf("caller scope label reached Safety Kernel: %s=%q", key, value)
+		}
+	}
+	if got, want := labels[edgecore.LabelPolicyAttachmentID], edgecore.SessionPolicyAttachmentID(session.SessionID); got != want {
+		t.Errorf("policy attachment = %q, want %q", got, want)
+	}
+	if labels["custom.team"] != "platform" {
+		t.Errorf("ordinary request label dropped: %#v", labels)
+	}
+}
+
 func TestJobAttachmentCleanupOnEnd(t *testing.T) {
 	safety := &edgeEvaluateStubSafetyClient{}
 	_, handler := newEdgeEvaluateTestServer(t, safety)
