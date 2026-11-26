@@ -360,13 +360,24 @@ func (s *server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	tenant := ""
 	if s.workflowStore != nil {
-		if run, err := s.workflowStore.GetRun(r.Context(), runID); err == nil && run != nil {
-			if err := s.requireTenantAccess(r, run.OrgID); err != nil {
-				writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
-				return
-			}
+		run, err := s.workflowStore.GetRun(r.Context(), runID)
+		if err != nil && !errors.Is(err, redis.Nil) {
+			writeErrorJSON(w, http.StatusServiceUnavailable, "workflow run lookup unavailable")
+			return
 		}
+		if run != nil {
+			tenant = run.OrgID
+		}
+	}
+	if !s.jobTenantAllowed(r, tenant) {
+		if strings.TrimSpace(tenant) == "" {
+			writeErrorJSON(w, http.StatusNotFound, "run not found")
+		} else {
+			writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
+		}
+		return
 	}
 
 	// Serialize workflow run mutations with the same lock used by the workflow-engine reconciler.
