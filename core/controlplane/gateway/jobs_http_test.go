@@ -554,6 +554,7 @@ func TestHandleSubmitJobHTTPUserAllowed(t *testing.T) {
 	s.auth = newBasicAuthForTest(t, map[string]string{
 		"CORDUM_API_KEYS": `[{"key":"user-key","role":"user","tenant":"default"}]`,
 	})
+	permBindingRBACUserRole(t, s, auth.PermJobsWrite)
 
 	payload := map[string]any{
 		"prompt": "hello",

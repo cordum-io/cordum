@@ -1382,12 +1382,15 @@ func (s *server) requireStoreAndRole(w http.ResponseWriter, r *http.Request, rol
 	return true
 }
 
-// requirePermissionOrRole enforces a named RBAC permission when advanced RBAC
-// is entitled, while still applying any supplied legacy role gate.
+// requirePermissionOrRole enforces a named permission together with any
+// supplied legacy role gate.
 //
-// This preserves historical admin/operator/viewer route boundaries when RBAC
-// is on or off, so a custom role cannot bypass legacy admin/operator/viewer
-// checks by holding the named permission alone.
+// With the RBAC entitlement the permission resolves through the RBAC store.
+// Without it, the legacy role gate and the license break-glass gate run first,
+// then the permission resolves from the built-in role map, so a role holds
+// only the permissions listed for it there. In both cases a custom role
+// cannot pass a legacy admin/operator/viewer gate by holding the named
+// permission alone.
 func (s *server) requirePermissionOrRole(w http.ResponseWriter, r *http.Request, permission string, legacyRoles ...string) bool {
 	if strings.TrimSpace(permission) == "" {
 		if len(legacyRoles) == 0 {
@@ -1414,14 +1417,22 @@ func (s *server) requirePermissionOrRole(w http.ResponseWriter, r *http.Request,
 		return s.requireLicensePermission(w, r, permission)
 	}
 
-	if len(legacyRoles) == 0 {
-		return s.requireLicensePermission(w, r, permission)
+	if len(legacyRoles) > 0 {
+		if err := s.requireRole(r, legacyRoles...); err != nil {
+			writeForbidden(w, r, err)
+			return false
+		}
 	}
-	if err := s.requireRole(r, legacyRoles...); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requireLicensePermission(w, r, permission) {
 		return false
 	}
-	return s.requireLicensePermission(w, r, permission)
+	if s != nil && s.auth != nil && s.permChecker != nil {
+		if err := s.permChecker.RequirePermission(r, permission); err != nil {
+			writeForbidden(w, r, err)
+			return false
+		}
+	}
+	return true
 }
 
 func (s *server) requireFeatureEntitlement(w http.ResponseWriter, feature, message string) bool {
@@ -1442,16 +1453,11 @@ func (s *server) requireFeatureEntitlement(w http.ResponseWriter, feature, messa
 // an additional sub-resource (e.g. include governance decisions inside a
 // session detail response only when the caller also has governance.read).
 //
-// When RBAC is not entitled or the permission checker is unavailable, the
-// basic role mapping is in force; admin/operator/viewer all share the same
-// {jobs,governance,...}.read alignment in basicRolePermissions, so callers
-// authorized at the primary permission are implicitly authorized for the
-// secondary one. Returning true in that case preserves existing behavior.
+// The permission checker answers from the RBAC store with the RBAC
+// entitlement and from the built-in role map without it. When auth or the
+// permission checker is unavailable, it reports true.
 func (s *server) hasPermissionSilent(r *http.Request, permission string) bool {
 	if s == nil || s.auth == nil || s.permChecker == nil {
-		return true
-	}
-	if !auth.RBACEntitled(s.currentEntitlements()) {
 		return true
 	}
 	return s.permChecker.RequirePermission(r, permission) == nil

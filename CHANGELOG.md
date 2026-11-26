@@ -7,6 +7,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Gateway authorization: when the RBAC entitlement is not active, permission checks use
+  the built-in role permissions. admin holds every permission, and operator, viewer,
+  runtime_collector and llm_proxy hold the ones listed for them; other roles, including
+  user, secops and custom roles, hold none, as when the entitlement is active. Give each
+  principal a built-in role, or activate RBAC to use custom roles (task-7c27a807).
 - Edge approvals: an approval of a Bash command now also covers the files the command
   names, the git HEAD of its working directory and, for kubectl, the target context and
   namespace. cordum-hook adds a keyed digest of them to the approval's action identity

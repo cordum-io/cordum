@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -48,6 +49,7 @@ func (f assertedAuthorityEdge) evaluate(t *testing.T, session edgeSessionCreateR
 func TestEdgeSessionOwner_AssertedPrincipalCannotEvaluateBoundSession(t *testing.T) {
 	assertedAuthorityProfiles(t, func(t *testing.T, env map[string]string) {
 		f, _ := edgeSessionOwnerFixture(t, env)
+		permBindingRBACUserRole(t, f.s, auth.PermJobsWrite)
 		session := f.createSession(t, edgeSessionOwnerCreateBody, assertedAuthorityEdgeBoundUserKey, "")
 		if got := session.Session; got.PrincipalID != "principal-edge-user" || got.PrincipalDisplayName != "" {
 			t.Fatalf("bound session principal_id=%q principal_display_name=%q, want %q and empty", got.PrincipalID, got.PrincipalDisplayName, "principal-edge-user")
@@ -65,6 +67,7 @@ func TestEdgeSessionOwner_AssertedPrincipalCannotEvaluateBoundSession(t *testing
 func TestEdgeSessionOwner_HeaderOnlySessionEvaluatesForItsCreator(t *testing.T) {
 	assertedAuthorityProfiles(t, func(t *testing.T, env map[string]string) {
 		f, stub := edgeSessionOwnerFixture(t, env)
+		permBindingRBACUserRole(t, f.s, auth.PermJobsWrite)
 		session := f.createSession(t, edgeSessionOwnerCreateBody, assertedAuthorityEdgeUserKey, "dev-alice")
 		assertedAuthorityStatus(t, f.evaluate(t, session, assertedAuthorityEdgeUserKey, "dev-alice"), http.StatusOK)
 
@@ -79,6 +82,7 @@ func TestEdgeSessionOwner_HeaderOnlySessionEvaluatesForItsCreator(t *testing.T) 
 func TestEdgeSessionOwner_HeaderOnlySessionKeepsAssertedNameAsDisplayLabel(t *testing.T) {
 	assertedAuthorityProfiles(t, func(t *testing.T, env map[string]string) {
 		f, _ := edgeSessionOwnerFixture(t, env)
+		permBindingRBACUserRole(t, f.s, auth.PermJobsRead, auth.PermJobsWrite)
 		session := f.createSession(t, edgeSessionOwnerCreateBody, assertedAuthorityEdgeUserKey, "dev-alice")
 		if got := session.Session; got.PrincipalID != "" || got.PrincipalDisplayName != "dev-alice" {
 			t.Fatalf("response principal_id=%q principal_display_name=%q, want empty and %q", got.PrincipalID, got.PrincipalDisplayName, "dev-alice")

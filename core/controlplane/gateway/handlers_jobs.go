@@ -1272,8 +1272,8 @@ func (s *server) linkedAgentID(ctx context.Context, tenant, principalID string) 
 }
 
 func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
-	// RBAC: custom roles may submit when they hold jobs.write. When advanced
-	// RBAC is disabled, preserve the historical admin/user fallback.
+	// The caller needs jobs.write and must pass the admin/user legacy gate.
+	// Without the RBAC entitlement, jobs.write resolves from the built-in role map.
 	if !s.requirePermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
 		actorID, role := "anonymous", "none"
 		if ac := auth.FromRequest(r); ac != nil {
