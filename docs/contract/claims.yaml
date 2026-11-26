@@ -730,7 +730,7 @@ claims:
     status: supported
     invariants: ["I04"]
     findings: []
-    enforcement_points: [{"path":"core/controlplane/gateway/handlers_policy_bundles.go","symbol":"server.capturePolicyBundleSnapshotWithBundles"},{"path":"core/controlplane/gateway/handlers_policy_bundles.go","symbol":"server.handleRollbackPolicyBundles"}]
+    enforcement_points: [{"path":"core/controlplane/gateway/handlers_policy_bundles.go","symbol":"buildPolicyBundleSnapshot"},{"path":"core/controlplane/gateway/handlers_policy_bundles.go","symbol":"server.storePolicyBundleSnapshots"},{"path":"core/controlplane/gateway/handlers_policy_bundles.go","symbol":"server.handleRollbackPolicyBundles"}]
     tests: [{"package":"core/controlplane/gateway","name":"TestPolicyBundleSnapshotHandlers"},{"package":"core/controlplane/gateway","name":"TestPolicyBundlePublishRollbackAndAudit"}]
     evidence: "Snapshot capture deep-copies bundles, forms a timestamp/hash identifier and trims the list to ten; the snapshot and rollback handler tests cover retrieval and rollback, not immutable lifetime history."
     public_sources: ["Cordum-site:site/public/llms-full.txt:1209","Cordum-site:site/src/app/for/compliance-officers/page.tsx:56","Cordum-site:site/src/app/blog/defining-deterministic-ai/page.tsx:455"]
