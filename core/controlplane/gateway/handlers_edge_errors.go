@@ -176,7 +176,9 @@ func writeEdgeJSONDecodeError(w http.ResponseWriter, r *http.Request, err error,
 
 // requireEdgePermissionOrRole is the Edge analogue of requirePermissionOrRole.
 // On allow, returns true. On deny, emits the Edge access_denied envelope and
-// returns false; callers should bail immediately.
+// returns false; callers should bail immediately. Without the RBAC
+// entitlement, the legacy role gate runs, then the permission resolves from
+// the built-in role map.
 func (s *server) requireEdgePermissionOrRole(w http.ResponseWriter, r *http.Request, permission string, legacyRoles ...string) bool {
 	if strings.TrimSpace(permission) == "" {
 		if len(legacyRoles) == 0 {
@@ -198,12 +200,17 @@ func (s *server) requireEdgePermissionOrRole(w http.ResponseWriter, r *http.Requ
 		}
 		return true
 	}
-	if len(legacyRoles) == 0 {
-		return true
+	if len(legacyRoles) > 0 {
+		if err := s.requireRole(r, legacyRoles...); err != nil {
+			writeEdgeForbidden(w, r, err)
+			return false
+		}
 	}
-	if err := s.requireRole(r, legacyRoles...); err != nil {
-		writeEdgeForbidden(w, r, err)
-		return false
+	if s != nil && s.auth != nil && s.permChecker != nil {
+		if err := s.permChecker.RequirePermission(r, permission); err != nil {
+			writeEdgeForbidden(w, r, err)
+			return false
+		}
 	}
 	return true
 }

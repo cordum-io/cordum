@@ -264,7 +264,7 @@ func TestHandleListEvalRunsFiltersByRegressionAndPaginates(t *testing.T) {
 	}
 
 	mux := bindEvalRunRoutes(t, s)
-	rr := evalRunList(t, mux, dataset.ID, "?has_regression=true&limit=1", "viewer")
+	rr := evalRunList(t, mux, dataset.ID, "?has_regression=true&limit=1", "admin")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
@@ -279,7 +279,7 @@ func TestHandleListEvalRunsFiltersByRegressionAndPaginates(t *testing.T) {
 		t.Fatalf("expected next cursor, got %#v", page1)
 	}
 
-	rr = evalRunList(t, mux, dataset.ID, "?has_regression=true&limit=1&cursor="+page1.NextCursor, "viewer")
+	rr = evalRunList(t, mux, dataset.ID, "?has_regression=true&limit=1&cursor="+page1.NextCursor, "admin")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("page2 status=%d body=%s", rr.Code, rr.Body.String())
 	}

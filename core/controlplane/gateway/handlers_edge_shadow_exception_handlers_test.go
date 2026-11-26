@@ -169,6 +169,7 @@ func TestEdgeErrorEnum_IncludesStepUpAndLimitExceeded(t *testing.T) {
 
 func TestShadowException_Create_HighRisk_RequiresStepUp(t *testing.T) {
 	s := newShadowGateway(t)
+	permBindingRBACUserRole(t, s, auth.PermAuditExport)
 	rec := postShadowAs(t, s, "user", "tenant-a", "/api/v1/edge/shadow/exception", validExceptionCreateBody())
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("high-risk POST as user: status = %d, want 403; body=%s", rec.Code, rec.Body.String())
@@ -184,6 +185,7 @@ func TestShadowException_Create_HighRisk_RequiresStepUp(t *testing.T) {
 
 func TestShadowException_Create_CriticalRisk_RequiresStepUp(t *testing.T) {
 	s := newShadowGateway(t)
+	permBindingRBACUserRole(t, s, auth.PermAuditExport)
 	body := validExceptionCreateBody()
 	body.ScopeRiskLevel = shadow.FindingRiskCritical
 	rec := postShadowAs(t, s, "user", "tenant-a", "/api/v1/edge/shadow/exception", body)
@@ -261,6 +263,7 @@ func TestShadowException_Create_CriticalRisk_AdminStepUp(t *testing.T) {
 
 func TestShadowException_Create_MediumRisk_RegularAuth(t *testing.T) {
 	s := newShadowGateway(t)
+	permBindingRBACUserRole(t, s, auth.PermAuditExport)
 	body := validExceptionCreateBody()
 	body.ScopeRiskLevel = shadow.FindingRiskMedium
 	rec := postShadowAs(t, s, "user", "tenant-a", "/api/v1/edge/shadow/exception", body)
@@ -278,6 +281,7 @@ func TestShadowException_Create_MediumRisk_RegularAuth(t *testing.T) {
 
 func TestShadowException_Create_LowRisk_RegularAuth(t *testing.T) {
 	s := newShadowGateway(t)
+	permBindingRBACUserRole(t, s, auth.PermAuditExport)
 	body := validExceptionCreateBody()
 	body.ScopeRiskLevel = shadow.FindingRiskLow
 	rec := postShadowAs(t, s, "user", "tenant-a", "/api/v1/edge/shadow/exception", body)
@@ -314,12 +318,12 @@ func TestShadowException_List_FiltersHonored(t *testing.T) {
 		body := validExceptionCreateBody()
 		body.ScopeSourceType = src
 		body.ScopeRiskLevel = shadow.FindingRiskMedium
-		rec := postShadowAs(t, s, "user", "tenant-a", "/api/v1/edge/shadow/exception", body)
+		rec := postShadowAs(t, s, "admin", "tenant-a", "/api/v1/edge/shadow/exception", body)
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("create %s: %d", src, rec.Code)
 		}
 	}
-	listRec := getShadowAs(t, s, "user", "tenant-a", "/api/v1/edge/shadow/exceptions?source_type=kubernetes")
+	listRec := getShadowAs(t, s, "admin", "tenant-a", "/api/v1/edge/shadow/exceptions?source_type=kubernetes")
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("list status = %d, want 200; body=%s", listRec.Code, listRec.Body.String())
 	}
@@ -334,6 +338,7 @@ func TestShadowException_List_FiltersHonored(t *testing.T) {
 
 func TestShadowException_Delete_HighRiskRequiresStepUp(t *testing.T) {
 	s := newShadowGateway(t)
+	permBindingRBACUserRole(t, s, auth.PermAuditExport)
 	// Create a HIGH-risk exception (admin path).
 	rec := postShadowAs(t, s, "admin", "tenant-a", "/api/v1/edge/shadow/exception", validExceptionCreateBody())
 	if rec.Code != http.StatusCreated {
@@ -363,6 +368,7 @@ func TestShadowException_Delete_HighRiskRequiresStepUp(t *testing.T) {
 
 func TestShadowException_Delete_CriticalRiskRequiresStepUp(t *testing.T) {
 	s := newShadowGateway(t)
+	permBindingRBACUserRole(t, s, auth.PermAuditExport)
 	body := validExceptionCreateBody()
 	body.ScopeRiskLevel = shadow.FindingRiskCritical
 	rec := postShadowAs(t, s, "admin", "tenant-a", "/api/v1/edge/shadow/exception", body)
@@ -409,6 +415,7 @@ func TestShadowException_Delete_CriticalRiskRequiresStepUp(t *testing.T) {
 
 func TestShadowException_Delete_LowRiskByUser(t *testing.T) {
 	s := newShadowGateway(t)
+	permBindingRBACUserRole(t, s, auth.PermAuditExport)
 	body := validExceptionCreateBody()
 	body.ScopeRiskLevel = shadow.FindingRiskLow
 	rec := postShadowAs(t, s, "user", "tenant-a", "/api/v1/edge/shadow/exception", body)
@@ -429,7 +436,7 @@ func TestShadowException_AuditEvent_StepUpFactorRecorded(t *testing.T) {
 	// Medium-risk create → step_up_factor=none recorded.
 	body := validExceptionCreateBody()
 	body.ScopeRiskLevel = shadow.FindingRiskMedium
-	rec := postShadowAs(t, s, "user", "tenant-a", "/api/v1/edge/shadow/exception", body)
+	rec := postShadowAs(t, s, "admin", "tenant-a", "/api/v1/edge/shadow/exception", body)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d", rec.Code)
 	}
