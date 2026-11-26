@@ -57,7 +57,7 @@ func TestTenantIsolationStatusCache(t *testing.T) {
 		rec := httptest.NewRecorder()
 		s.handleStatus(rec, tenantCacheRequest(httptest.NewRequest(http.MethodGet, "/api/v1/status", nil), tc.tenant, tc.role))
 		var body struct {
-			Pipeline struct{ Running int }
+			Pipeline   struct{ Running int }
 			InstanceID *string `json:"instance_id"`
 		}
 		tenantCacheBody(t, rec, &body)
@@ -74,7 +74,8 @@ func TestTenantIsolationApprovalAnalyticsCache(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	s.auth = governanceAuth{}
 	s.approvalAnalyticsCache = newApprovalAnalyticsCache()
-	const since = int64(1_700_000_000_000)
+	// AppendDecision prunes indices outside its retention window.
+	since := time.Now().Add(-time.Minute).UnixMilli()
 	for i, tenant := range []string{"cache-a", "cache-b", "cache-b"} {
 		err := s.decisionLogStore.AppendDecision(context.Background(), model.DecisionLogRecord{
 			Tenant: tenant, JobID: fmt.Sprintf("approval-%d", i), RuleID: tenant,

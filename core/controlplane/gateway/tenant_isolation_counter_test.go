@@ -96,6 +96,41 @@ func TestTenantIsolationRedisRateLimit(t *testing.T) {
 	}
 }
 
+func TestTenantIsolationRedisIPRateLimit(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	const windows = 60
+	now := time.Now().Unix()
+	for i := range windows {
+		key := fmt.Sprintf("cordum:rl:ip:192.0.2.1:%d", now+int64(i))
+		if err := s.redisClient().Set(context.Background(), key, 1, time.Minute).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var reached []string
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = append(reached, r.RemoteAddr)
+		w.WriteHeader(http.StatusNoContent)
+	})
+	handler := rateLimitMiddleware(governanceAuth{}, nil, newRedisRateLimiter(s.redisClient(), 1, 1), next)
+	for i, ip := range []string{"192.0.2.1", "192.0.2.2"} {
+		// Public health reads use IP budgets, even with an authenticated tenant.
+		req := tenantCacheRequest(httptest.NewRequest(http.MethodGet, "/health", nil), "counter-a", "admin")
+		req.RemoteAddr = ip + ":1234"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		want := []int{http.StatusTooManyRequests, http.StatusNoContent}[i]
+		if rec.Code != want {
+			t.Fatalf("%s: status=%d body=%s", ip, rec.Code, rec.Body.String())
+		}
+	}
+	if !reflect.DeepEqual(reached, []string{"192.0.2.2:1234"}) {
+		t.Fatalf("wrong IP admitted downstream: %v", reached)
+	}
+	if a, b := tenantCounterTotal(t, s, "cordum:rl:ip:192.0.2.1:*"), tenantCounterTotal(t, s, "cordum:rl:ip:192.0.2.2:*"); a != windows+1 || b != 1 {
+		t.Fatalf("IP budgets not independently incremented: A=%d B=%d", a, b)
+	}
+}
+
 func issueTenantDelegation(t *testing.T, s *server, tenant string, want int) delegateTokenResponse {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/agents/shared-agent/delegate",
@@ -191,7 +226,10 @@ func startTenantWorkflow(t *testing.T, s *server, tenant string, want int) {
 	if rec.Code != want {
 		t.Fatalf("%s: status=%d body=%s", tenant, rec.Code, rec.Body.String())
 	}
-	var body struct { RunID string `json:"run_id"`; Current, Limit int }
+	var body struct {
+		RunID          string `json:"run_id"`
+		Current, Limit int
+	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
