@@ -43,9 +43,10 @@ func checkTenantRateLimit(t *testing.T, limiter rateLimiter, firstStatus int) {
 	handler := rateLimitMiddleware(governanceAuth{}, limiter, nil, next)
 	for i, tenant := range []string{"counter-a", "counter-a", "counter-b"} {
 		want := http.StatusTooManyRequests
-		if i == 0 {
+		switch i {
+		case 0:
 			want = firstStatus
-		} else if i == 2 {
+		case 2:
 			want = http.StatusNoContent
 		}
 		req := tenantCacheRequest(httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil), tenant, "admin")
