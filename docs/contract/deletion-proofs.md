@@ -57,7 +57,7 @@ A failing proof stays an open finding under the review process, not a weaker tes
 | DI-C28 | retention cleanup | `core/infra/store/dlq_store.go` (`DLQStore.Add`); `core/infra/store/dlq_store.go` (`DLQStore.Delete`); `core/infra/store/dlq_store.go` (`DLQStore.CleanupStaleEntries`) | pending PR2-08-JOBS |
 | DI-C29 | no cleanup path | none | none: No identity deletion; Delete rewrites the record as revoked and UnlinkWorker removes only worker links |
 | DI-C30 | retention cleanup | `core/edge/store_redis.go` (`RedisStore.ReserveIdempotency`); `core/edge/store_redis.go` (`RedisStore.ReleaseIdempotency`) | `TestRetentionProofDIC30` |
-| DI-C31 | retention cleanup | `core/edge/shadow/finding_store_redis.go` (`RedisStore.cleanupStaleIDTx`) | pending PR2-08-EDGE |
+| DI-C31 | retention cleanup | `core/edge/shadow/finding_store_redis.go` (`RedisStore.cleanupStaleIDTx`) | open finding PR2-08-F1 |
 | DI-C32 | no cleanup path | none | none: No exception deletion path; revoke drops the id from the tenant index and CreateException deletes only its own failed write |
 | DI-C33 | no cleanup path | none | none: No upstream deletion path at reviewed_at; Disable only flips the enabled flag |
 | DI-C34 | retention cleanup | `core/mcp/dedupe_redis.go` (`RedisDedupeStore.Delete`); `core/edge/runtimeingest/replay.go` (`ReplayWindow.Release`); `core/infra/bus/nats.go` (`NatsBus.jsCallbackCtx`) | `TestRetentionProofDIC34`, pending PR2-08-DATA |
