@@ -108,6 +108,10 @@ func (s *server) handleAdminLocks(w http.ResponseWriter, r *http.Request) {
 		writeForbidden(w, r, err)
 		return
 	}
+	if !s.hasPlatformAuthority(r) {
+		writeForbidden(w, r, errDeploymentSettingsAuthority)
+		return
+	}
 	if !s.requireLicensePermission(w, r, licensing.BreakGlassPermissionAdminLocksRead) {
 		return
 	}
