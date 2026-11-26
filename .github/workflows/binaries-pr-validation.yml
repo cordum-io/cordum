@@ -30,6 +30,13 @@ on:
 permissions:
   contents: read
 
+# Cancel superseded runs of the same pull request. Every other event (push,
+# merge_group, schedule, workflow_dispatch) gets its own group, so no run on
+# main or in the merge queue is ever cancelled or replaced.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   verifier-tests:
     name: tools/sign unit tests
@@ -114,6 +121,19 @@ jobs:
           }
           Write-Host "Running install_test.ps1 against Git/MSYS gpg: $msysGpg"
           pwsh -NoProfile -File tools/scripts/install_test.ps1 -GpgExe $msysGpg
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: install_test.ps1 — Git/MSYS gpg, Windows PowerShell 5.1
+        # install.ps1 declares `#Requires -Version 5.1`, so run the harness
+        # and install.ps1 itself under Windows PowerShell, not only pwsh.
+        shell: powershell
+        run: |
+          $msysGpg = 'C:\Program Files\Git\usr\bin\gpg.exe'
+          if (-not (Test-Path -LiteralPath $msysGpg)) {
+            Write-Host "Git/MSYS gpg not present on runner; skipping MSYS flavor"
+            exit 0
+          }
+          Write-Host "Running install_test.ps1 under Windows PowerShell $($PSVersionTable.PSVersion) against Git/MSYS gpg: $msysGpg"
+          powershell -NoProfile -File tools/scripts/install_test.ps1 -GpgExe $msysGpg -InstallerShell powershell
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Install Gpg4Win
         shell: pwsh

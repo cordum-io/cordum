@@ -589,7 +589,7 @@ func TestWorkerLinkTenantIsolation_AgentAndCredentialPaths(t *testing.T) {
 	mcpReq.Header.Set("X-Tenant-ID", "tenant-a")
 	mcpReq = mcpReq.WithContext(context.WithValue(mcpReq.Context(), auth.ContextKey{},
 		&auth.AuthContext{PrincipalID: worker, Tenant: "tenant-a"}))
-	if got := s.resolveMCPIdentity(mcpReq); got == nil || got.ID != aID {
+	if gotID, got := s.resolveMCPIdentity(mcpReq); got == nil || got.ID != aID || gotID != aID {
 		t.Fatalf("tenant-a MCP identity for %s = %+v, want ID %q", worker, got, aID)
 	}
 

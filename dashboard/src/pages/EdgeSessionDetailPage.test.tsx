@@ -163,6 +163,41 @@ describe("EdgeSessionDetailPage", () => {
     expect(screen.getByText(/2 events/)).toBeTruthy();
   });
 
+  it.each([
+    ["executor-enforced", "Executor-enforced"],
+    ["hook-mediated", "Hook-mediated"],
+    ["compatibility", "Compatibility"],
+    ["unsupported", "Unsupported"],
+    ["stale", "Stale"],
+    [undefined, "Not reported"],
+  ] as const)("shows assurance state %s as %s in the header", (state, label) => {
+    setupHooks({ session: makeSession({ assuranceState: state }) });
+    const { container } = renderPage();
+    const badge = screen.getByTestId("edge-assurance-badge");
+    expect(badge.textContent).toBe(label);
+    const header = badge.closest("header");
+    expect(header?.querySelector("h1")?.textContent).toBe("edge_sess_1");
+    expect(header?.textContent).toContain("policy enforce");
+    expect(/enforced/i.test(container.textContent ?? "")).toBe(state === "executor-enforced");
+  });
+
+  it("shows the display name, marked as one, when the session has no principal id", () => {
+    setupHooks({ session: makeSession({ principalId: undefined, principalDisplayName: "dev-alice" }) });
+    renderPage();
+    const facts = screen.getByTestId("edge-session-facts").textContent;
+    expect(facts).toContain("dev-alice");
+    expect(facts).toContain("display name");
+  });
+
+  it("shows the principal id, not the display name, when both are set", () => {
+    setupHooks({ session: makeSession({ principalId: "user-a", principalDisplayName: "Alice Example" }) });
+    renderPage();
+    const facts = screen.getByTestId("edge-session-facts").textContent;
+    expect(facts).toContain("user-a");
+    expect(facts).not.toContain("Alice Example");
+    expect(facts).not.toContain("display name");
+  });
+
   it("orders events by seq within an execution (one group per distinct hook fire)", () => {
     setupHooks({
       events: [

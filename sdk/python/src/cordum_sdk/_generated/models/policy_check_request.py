@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 from typing import List
 
@@ -49,9 +49,6 @@ class PolicyCheckRequest:
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.policy_check_request_labels import PolicyCheckRequestLabels
-        from ..models.policy_check_request_context import PolicyCheckRequestContext
-
         job_id = self.job_id
 
         topic = self.topic

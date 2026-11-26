@@ -1558,6 +1558,59 @@ func TestHandleSubmitJob_DeniedIdempotencyReplay(t *testing.T) {
 	}
 }
 
+// TestHandleSubmitJobHTTP_IdempotencyKeySources: clients such as the Python
+// SDK and curl send the key as an Idempotency-Key header rather than the body
+// idempotency_key field. Both must dedupe a retry; the body wins when both
+// are set.
+func TestHandleSubmitJobHTTP_IdempotencyKeySources(t *testing.T) {
+	for _, tc := range []struct {
+		name, bodyKey, headerKey, wantKey string
+	}{
+		{"header only", "", "header-key", "header-key"},
+		{"body only", "body-key", "", "body-key"},
+		{"both, body wins", "body-key", "header-key", "body-key"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _, _ := newTestGateway(t)
+			s.tenant = "default"
+			submit := func() string {
+				payload := map[string]any{"prompt": "hello", "topic": "job.test"}
+				if tc.bodyKey != "" {
+					payload["idempotency_key"] = tc.bodyKey
+				}
+				body, _ := json.Marshal(payload)
+				req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewReader(body))
+				req.Header.Set("X-Tenant-ID", "default")
+				if tc.headerKey != "" {
+					req.Header.Set("Idempotency-Key", tc.headerKey)
+				}
+				rec := httptest.NewRecorder()
+				s.handleSubmitJobHTTP(rec, req)
+				if rec.Code != http.StatusOK {
+					t.Fatalf("submit: status %d: %s", rec.Code, rec.Body.String())
+				}
+				var resp map[string]string
+				_ = json.NewDecoder(rec.Body).Decode(&resp)
+				return resp["job_id"]
+			}
+
+			first := submit()
+			if second := submit(); second != first {
+				t.Fatalf("retry job_id = %q; want %q (idempotent replay)", second, first)
+			}
+			ctx := context.Background()
+			if got, err := s.jobStore.GetJobByIdempotencyKeyScoped(ctx, "default", tc.wantKey); err != nil || got != first {
+				t.Fatalf("key %q maps to job %q (err %v); want %q", tc.wantKey, got, err, first)
+			}
+			if tc.headerKey != "" && tc.headerKey != tc.wantKey {
+				if got, _ := s.jobStore.GetJobByIdempotencyKeyScoped(ctx, "default", tc.headerKey); got != "" {
+					t.Errorf("header key %q also reserved for job %q; want only the body key", tc.headerKey, got)
+				}
+			}
+		})
+	}
+}
+
 // BUG-009: when submit fails AFTER PutContext (e.g. bus publish fails) the
 // orphaned context_ptr used to live in Redis for the full 24h TTL. The
 // gateway now early-GCs the context blob via DeleteContext.

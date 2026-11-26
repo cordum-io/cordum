@@ -195,3 +195,88 @@ func TestKernelInvariants_OutputDenyBlocksOtherwiseAllowed(t *testing.T) {
 		t.Fatalf("expected invariant rule to fire first; got rule=%q", resp.RuleID)
 	}
 }
+
+// TestKernelInvariants_MCPListsMatchGate runs MCP-only invariants through the
+// kernel for MCP tool calls and plain jobs. The expectations are the same
+// table as gateway TestMCPGateMatchesKernelRuleSemantics: deny_* lists deny
+// the listed values, a non-empty allow_* list denies every other value, and
+// a plain job is never touched by match.mcp lists.
+func TestKernelInvariants_MCPListsMatchGate(t *testing.T) {
+	plain := map[string]string(nil)
+	mcpCall := func(server, tool string) map[string]string {
+		return map[string]string{"mcp.server": server, "mcp.tool": tool}
+	}
+	for _, tc := range []struct {
+		name     string
+		lists    config.MCPPolicy
+		labels   map[string]string
+		wantDeny bool
+	}{
+		{"deny_tools listed tool", config.MCPPolicy{DenyTools: []string{"fs.read"}}, mcpCall("fs", "fs.read"), true},
+		{"deny_tools other tool", config.MCPPolicy{DenyTools: []string{"fs.read"}}, mcpCall("fs", "fs.write"), false},
+		{"deny_tools plain job", config.MCPPolicy{DenyTools: []string{"fs.read"}}, plain, false},
+		{"allow_tools listed tool", config.MCPPolicy{AllowTools: []string{"calculator"}}, mcpCall("tools", "calculator"), false},
+		{"allow_tools other tool", config.MCPPolicy{AllowTools: []string{"calculator"}}, mcpCall("tools", "shell.exec"), true},
+		{"allow_tools plain job", config.MCPPolicy{AllowTools: []string{"calculator"}}, plain, false},
+		{"deny_servers listed server", config.MCPPolicy{DenyServers: []string{"internal"}}, mcpCall("internal", "x"), true},
+		{"deny_servers other server", config.MCPPolicy{DenyServers: []string{"internal"}}, mcpCall("github", "x"), false},
+		{"allow_servers listed server", config.MCPPolicy{AllowServers: []string{"github"}}, mcpCall("github", "x"), false},
+		{"allow_servers other server", config.MCPPolicy{AllowServers: []string{"github"}}, mcpCall("jira", "x"), true},
+		{"allow_servers plain job", config.MCPPolicy{AllowServers: []string{"github"}}, plain, false},
+	} {
+		srv := &server{scanners: map[string]OutputScanner{}}
+		inv := &config.SafetyPolicy{Rules: []config.PolicyRule{{
+			ID: "inv-mcp", Decision: "deny", Match: config.PolicyMatch{MCP: tc.lists},
+		}}}
+		if err := srv.setPolicyWithInvariants(context.Background(), &config.SafetyPolicy{DefaultDecision: "allow"}, inv, "cfg:mcp-lists", 0); err != nil {
+			t.Fatalf("%s: setPolicyWithInvariants: %v", tc.name, err)
+		}
+		resp, err := srv.Evaluate(context.Background(), &pb.PolicyCheckRequest{
+			JobId: "job-" + tc.name, Topic: "job.default", Tenant: "default", Labels: tc.labels,
+		})
+		if err != nil {
+			t.Fatalf("%s: Evaluate: %v", tc.name, err)
+		}
+		denied := resp.GetDecision() == pb.DecisionType_DECISION_TYPE_DENY && resp.GetRuleId() == "inv-mcp"
+		if denied != tc.wantDeny {
+			t.Errorf("%s: decision %v rule %q; want invariant deny = %v", tc.name, resp.GetDecision(), resp.GetRuleId(), tc.wantDeny)
+		}
+	}
+}
+
+// TestKernelInvariants_BlockBeatsTenantAllow pins that block, which
+// normalizeDecision maps to deny, is deny-class for invariant precedence:
+// the invariant is prepended in the evaluation policy and in the
+// GlobalPolicy view, so it beats a tenant allow rule.
+func TestKernelInvariants_BlockBeatsTenantAllow(t *testing.T) {
+	srv := &server{}
+	base := &config.SafetyPolicy{
+		DefaultDecision: "deny",
+		Rules: []config.PolicyRule{{
+			ID:       "tenant-allow-payments",
+			Match:    config.PolicyMatch{Tenants: []string{"acme"}, Topics: []string{"job.payments.*"}},
+			Decision: "allow",
+		}},
+	}
+	invariants := &config.SafetyPolicy{Rules: []config.PolicyRule{{
+		ID:       "inv-block-payments",
+		Match:    config.PolicyMatch{Topics: []string{"job.payments.*"}},
+		Decision: "block",
+	}}}
+	if err := srv.setPolicyWithInvariants(context.Background(), base, invariants, "cfg:block", 0); err != nil {
+		t.Fatalf("setPolicyWithInvariants: %v", err)
+	}
+	resp, err := srv.Evaluate(context.Background(), &pb.PolicyCheckRequest{
+		JobId: "job-block", Topic: "job.payments.wire", Tenant: "acme",
+	})
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY || resp.GetRuleId() != "inv-block-payments" {
+		t.Fatalf("decision %v rule %q; want DENY by inv-block-payments", resp.GetDecision(), resp.GetRuleId())
+	}
+	rules := srv.currentGlobalPolicy().RulesForJobWorkflow("", "")
+	if len(rules) == 0 || rules[0].ID != "inv-block-payments" {
+		t.Fatalf("GlobalPolicy view must put the block invariant first; got %+v", rules)
+	}
+}

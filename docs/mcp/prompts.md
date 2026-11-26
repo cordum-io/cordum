@@ -7,9 +7,10 @@ audit lookups, version diffs) and returns a chat-shaped message chain
 the client feeds to its model.
 
 Every prompt is admin-gated at the gateway layer (same RBAC as the
-corresponding REST endpoints). Prompts never expose raw tenant secrets
-or signed bundle bytes — they render decision metadata + grammar
-descriptions the client's LLM turns into prose.
+corresponding REST endpoints). Prompts render decision metadata and
+grammar descriptions that the client's LLM turns into prose. No test
+checks prompt output for secrets; see CLM-054 in the
+[claim register](../contract/claims.yaml).
 
 All four first-party prompts are registered at gateway boot via
 `mcp.RegisterAllPrompts(registry)`. An MCP client lists them via

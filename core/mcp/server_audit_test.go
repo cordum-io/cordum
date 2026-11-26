@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/edge"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
 // TestServer_HandleToolsCall_EmitsInvocationAudit drives the full
@@ -413,4 +415,72 @@ func TestServer_HandleToolsCall_IdentityMissing(t *testing.T) {
 	}
 
 	closeServer(t, transport, errCh)
+}
+
+// denyFloor is an approval gate whose invariant floor denies every call with
+// err, as the gateway's floor does for a tool an invariant covers.
+type denyFloor struct{ err error }
+
+func (g denyFloor) CheckInvariants(context.Context, Tool) error { return g.err }
+
+func (g denyFloor) Check(context.Context, Tool, json.RawMessage) (*ApprovalRequired, error) {
+	return nil, nil
+}
+
+// TestServer_PolicyDeniedAnsweredLikeActionGateDeny: a PolicyDenied raised
+// past the action gates (the gateway's invariant floor) is answered like an
+// action-gate DENY: an isError result with the reason and decision=deny on
+// the invocation audit, plus, with the policy gate, a blocked mcp.tool.failed
+// event with decision=deny. Covers direct dispatch, a gate ALLOW that reaches
+// the floor, and a gate REQUIRE_HUMAN whose approval handoff hits the floor.
+func TestServer_PolicyDeniedAnsweredLikeActionGateDeny(t *testing.T) {
+	t.Parallel()
+	const reason = "agents may not delete boards (invariant inv-1)"
+	denied := &PolicyDenied{Reason: reason, SubReason: "secops_invariant", Err: errors.New("floor deny")}
+	for _, tc := range []struct {
+		name string
+		gate *PolicyDecision // nil: no policy gate
+	}{
+		{name: "direct"},
+		{name: "policy_gate_allow", gate: &PolicyDecision{}},
+		{name: "policy_gate_require_human", gate: &PolicyDecision{Decision: pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sender := &recordingSender{}
+			emitter := &fakeEventEmitter{}
+			reg := NewToolRegistry()
+			reg.SetApprovalGate(denyFloor{err: denied})
+			ran := false
+			if err := reg.Register(Tool{Name: "delete_board"}, func(context.Context, json.RawMessage) (*ToolCallResult, error) {
+				ran = true
+				return &ToolCallResult{}, nil
+			}); err != nil {
+				t.Fatalf("register: %v", err)
+			}
+			srv := NewServer(nil, reg, nil, ServerConfig{}).WithAuditor(NewToolInvocationAuditor(sender, DefaultRedactor()))
+			if tc.gate != nil {
+				deps := newToolCallDepsFixture(&fakePolicyDispatcher{decision: *tc.gate}, emitter, &fakeArtifactStore{})
+				deps.ApprovalHandoff = &fakeApprovalHandoff{err: denied}
+				srv = srv.WithPolicyGate("cordum.builtin", deps)
+			}
+
+			res, rpcErr := srv.handleToolsCall(newAuthedToolCallCtx(), json.RawMessage(`{"name":"delete_board","arguments":{}}`))
+			if rpcErr != nil || res == nil || !res.IsError || len(res.Content) != 1 || res.Content[0].Text != reason || ran {
+				t.Fatalf("want an isError result with the reason and no handler run: res=%+v rpcErr=%+v ran=%v", res, rpcErr, ran)
+			}
+			if ev := sender.last(); ev == nil || ev.Decision != "deny" || ev.Extra["sub_reason"] != "secops_invariant" {
+				t.Fatalf("invocation audit = %+v, want decision=deny sub_reason=secops_invariant", ev)
+			}
+			if tc.gate == nil {
+				return
+			}
+			if kinds := eventKinds(emitter); len(kinds) != 2 || kinds[1] != edge.EventKindMCPToolFailed {
+				t.Fatalf("events = %v, want [pre failed]", kinds)
+			}
+			if got := emitter.events[1]; got.Decision != edge.DecisionDeny || got.Status != edge.ActionStatusBlocked ||
+				got.DecisionReason != reason || got.ErrorMessage != "" {
+				t.Fatalf("failed event = %+v, want the action-gate DENY shape", got)
+			}
+		})
+	}
 }

@@ -45,14 +45,15 @@ Gates are classified as **blocking** (security/correctness fundamentals) or **ad
 | 14 | Policy Lifecycle | ADVISORY | Bundle CRUD, snapshots, simulation | Bundle store empty, snapshot endpoint not wired | Install policy bundles, check policy bundle handler routes |
 | 15 | Pack Management | ADVISORY | Pack install/upgrade, marketplace | Marketplace URL unreachable, pack validation failing | Check `validateMarketplaceURL`, verify pack store |
 | 16 | Degradation | ADVISORY | Graceful degradation, gRPC fallback | gRPC services unreachable, fallback not implemented | Verify gRPC health checks, check circuit breaker config |
-| 17 | Dashboard | ADVISORY | HTML, static assets, CSP, SPA fallback | Dashboard not built, static file serving misconfigured | Run `npm run build` in dashboard, verify nginx/gateway static routes |
+| 17 | Dashboard | ADVISORY | HTML, static assets, CSP, SPA fallback | Dashboard not built, static file serving misconfigured | Run `pnpm run build` in dashboard, verify nginx/gateway static routes |
 
 ## Prerequisites
 
 - Docker + Docker Compose plugin.
 - `curl`, `jq`, `go`, and `openssl`.
 - A valid `CORDUM_API_KEY`.
-- Gateway reachable at `CORDUM_API_BASE` (defaults to `http://localhost:8081`).
+- Gateway reachable at `CORDUM_API_BASE` (`https://localhost:8081` on the
+  default stack; see [Environment Variables](#environment-variables)).
 
 ## Usage
 
@@ -95,11 +96,17 @@ STRICT_MODE=1 ./tools/scripts/production_gate.sh
 Core:
 
 - `CORDUM_API_KEY`: required.
-- `CORDUM_API_BASE`: default `http://localhost:8081`.
+- `CORDUM_API_BASE`: default `https://localhost:8081` when `CORDUM_TLS_CA` is
+  set or `certs/ca/ca.crt` exists (as on the default stack; curl then gets
+  `--cacert` with that CA), otherwise `http://localhost:8081`.
 - `CORDUM_TENANT_ID`: default `default`.
 - `CORDUM_ORG_ID`: default `CORDUM_TENANT_ID`.
-- `REDIS_URL`: default `redis://:${REDIS_PASSWORD}@localhost:6379` (`REDIS_PASSWORD` is required).
-- `NATS_URL`: default `nats://localhost:4222`.
+- `REDIS_URL`: default `rediss://:${REDIS_PASSWORD}@localhost:6379` when the
+  CA is found (as for `CORDUM_API_BASE`), otherwise
+  `redis://:${REDIS_PASSWORD}@localhost:6379` (`REDIS_PASSWORD` is required).
+- `NATS_URL`: default `tls://localhost:4222` when the CA is found, otherwise
+  `nats://localhost:4222`. With the CA found, the script also points the
+  `NATS_TLS_*` and `REDIS_TLS_*` variables at `certs/` when they are unset.
 - `STRICT_MODE`: set to `1` to make all gates blocking (same as `--strict` flag).
 
 Performance gate tuning:
@@ -129,7 +136,7 @@ JSON structure:
 ```json
 {
   "generated_at": "2026-02-13T00:00:00Z",
-  "api_base": "http://localhost:8081",
+  "api_base": "https://localhost:8081",
   "tenant_id": "default",
   "selected_gate": "all",
   "all_passed": true,

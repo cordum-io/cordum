@@ -119,9 +119,12 @@ table-driven across the five scenarios with mutation-resistant
   confidence (already produced by the existing scanners), and whether
   the request carried an `ActionDescriptor`. There is no
   `EducationalContext` or `defensive_context` claim flowing through.
-- **`input_text` is never trusted to declare context.** An attacker
-  cannot spoof "this is educational" via input content because no such
-  field is read.
+- **`input_text` is not read as a context declaration.** The threshold takes
+  only the rule, the findings and the action descriptor
+  (`shouldDowngradeDenyToRequireHuman`), so input content that claims an
+  educational purpose is not one of its inputs. CLM-086 in the
+  [claims register](../contract/claims.yaml) records this as supported; its
+  tests do not yet include such input.
 - **Action-bound DENYs are unchanged.** A request with a non-nil
   `ActionDescriptor` whose finding is high-severity and high-confidence
   stays `DENY` — the architect amendment explicitly carved out the

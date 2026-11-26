@@ -69,6 +69,14 @@ type ApprovalGate interface {
 	Check(ctx context.Context, tool Tool, paramsJSON json.RawMessage) (*ApprovalRequired, error)
 }
 
+// InvariantFloor is an optional ApprovalGate extension for a security
+// floor that holds on every tools/call, approval-gated or not.
+// ToolRegistry.Call runs CheckInvariants after the scope filter and before
+// approval gating; a non-nil error denies the call.
+type InvariantFloor interface {
+	CheckInvariants(ctx context.Context, tool Tool) error
+}
+
 // ApprovalRequired.RetryHint values (JSON-RPC -32099 error.data.retry_hint).
 const (
 	RetryHintApprovalRef = "retry_with_approval_ref"
@@ -340,15 +348,22 @@ func (r *ToolRegistry) Call(ctx context.Context, name string, params json.RawMes
 		}
 	}
 
-	// Approval gating.
+	// Invariant floor, then approval gating. The floor sees every call with
+	// the same tool view (runtime approval scope applied) that Check gets.
 	effectiveGated, effectiveScope := r.effectiveApprovalForTool(entry.tool)
-	if effectiveGated {
-		gatedTool := entry.tool
-		gatedTool.RequiresApproval = true
-		if effectiveScope != "" {
-			gatedTool.ApprovalScope = effectiveScope
+	callTool := entry.tool
+	if effectiveScope != "" {
+		callTool.ApprovalScope = effectiveScope
+	}
+	gate := r.approvalGate()
+	if floor, ok := gate.(InvariantFloor); ok {
+		if err := floor.CheckInvariants(ctx, callTool); err != nil {
+			return nil, err
 		}
-		gate := r.approvalGate()
+	}
+	if effectiveGated {
+		gatedTool := callTool
+		gatedTool.RequiresApproval = true
 		if gate == nil {
 			// Fail closed: without a gate nothing can hold the call for
 			// approval, so the tool must not run.
@@ -393,6 +408,26 @@ func (r *ToolRegistry) isToolEnabled(name string) bool {
 		return true
 	}
 	return enabled
+}
+
+// EffectiveApprovalScope returns the registered tool's effective ApprovalScope,
+// including runtime overrides. The MCP invariant floor matches deny_servers
+// against this scope, as handed to the registry's approval gate.
+func (r *ToolRegistry) EffectiveApprovalScope(name string) (string, bool) {
+	if r == nil {
+		return "", false
+	}
+	r.mu.RLock()
+	entry, ok := r.tools[strings.TrimSpace(name)]
+	r.mu.RUnlock()
+	if !ok {
+		return "", false
+	}
+	_, scope := r.effectiveApprovalForTool(entry.tool)
+	if scope == "" {
+		scope = entry.tool.ApprovalScope
+	}
+	return scope, true
 }
 
 // effectiveApprovalForTool returns the RequiresApproval/ApprovalScope

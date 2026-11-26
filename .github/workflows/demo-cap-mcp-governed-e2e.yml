@@ -1,0 +1,118 @@
+name: demo-cap-mcp-governed-e2e
+# Heavy suite: nightly/on demand, and PRs changing this demo only.
+on:
+  schedule:
+    - cron: '49 3 * * *'
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/demo-cap-mcp-governed-e2e.yml'
+      - 'demo/cap-mcp-governed/**'
+
+permissions:
+  contents: read
+
+# Cancel superseded runs of the same pull request. Every other event (push,
+# merge_group, schedule, workflow_dispatch) gets its own group, so no run on
+# main or in the merge queue is ever cancelled or replaced.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  demo-cap-mcp-governed-e2e:
+    name: demo-cap-mcp-governed-e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build host binaries
+        run: |
+          mkdir -p ./bin
+          go build -o ./bin/cordumctl ./cmd/cordumctl
+          go build -o ./bin/cap-mcp-governed-worker ./demo/cap-mcp-governed/worker
+      - name: Configure masked CI credentials
+        run: |
+          source tools/scripts/github_actions_mask_env.sh
+          api_key="$(openssl rand -hex 32)" || exit 1
+          gha_mask_env CORDUM_API_KEY "${api_key}"
+          worker_key="$(openssl rand -hex 32)" || exit 1
+          gha_mask_env CAP_MCP_WORKER_API_KEY "${worker_key}"
+          operator_key="$(openssl rand -hex 32)" || exit 1
+          gha_mask_env CAP_MCP_OPERATOR_API_KEY "${operator_key}"
+          redis_password="$(openssl rand -hex 32)" || exit 1
+          gha_mask_env REDIS_PASSWORD "${redis_password}"
+          gha_mask_env_from_command CORDUM_LICENSE_TOKEN CORDUM_LICENSE_PUBLIC_KEY -- go run ./tools/cilicense
+      - name: Generate TLS certificates
+        run: |
+          ./bin/cordumctl generate-certs --dir ./certs
+          chmod -R a+rX ./certs
+      - name: Build and start the demo stack
+        env:
+          CORDUM_API_KEYS: ${{ format('[{{"key":"{0}","role":"admin","tenant":"default","principal_id":"cap-mcp-governed"}},{{"key":"{1}","role":"admin","tenant":"default","principal_id":"cap-mcp-governed-operator"}}]', env.CAP_MCP_WORKER_API_KEY, env.CAP_MCP_OPERATOR_API_KEY) }}
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml --profile demo up -d --build
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml --profile demo ps
+      - name: Run governed CAP MCP demo
+        env:
+          CORDUM_INTEGRATION: "1"
+          CORDUM_API_BASE: https://localhost:8081
+          CORDUM_TLS_CA: ${{ github.workspace }}/certs/ca/ca.crt
+          CORDUM_CERTS_DIR: ${{ github.workspace }}/certs
+          CORDUMCTL_BIN: ${{ github.workspace }}/bin/cordumctl
+          CAP_MCP_WORKER_BIN: ${{ github.workspace }}/bin/cap-mcp-governed-worker
+          CAP_MCP_ARTIFACT_DIR: /tmp/cap-mcp-governed-logs
+        run: |
+          set -o pipefail
+          mkdir -p /tmp/cap-mcp-governed-logs
+          bash demo/cap-mcp-governed/integration_test.sh 2>&1 | tee /tmp/cap-mcp-governed-logs/integration.log
+      - name: Assert exact success markers
+        run: |
+          if [[ "$(grep -c -x 'CAP-MCP GOVERNED DEMO OK' /tmp/cap-mcp-governed-logs/integration.log)" != 1 ]] ||
+             [[ "$(grep -c '^PASS ' /tmp/cap-mcp-governed-logs/integration.log)" != 4 ]]; then
+            echo '::error::governed demo marker/PASS count mismatch'
+            exit 1
+          fi
+      - name: Capture failure logs
+        if: failure()
+        run: |
+          : "${CORDUM_API_KEY:=teardown-placeholder-api-key}"
+          : "${REDIS_PASSWORD:=teardown-placeholder-redis-password}"
+          export CORDUM_API_KEY REDIS_PASSWORD
+          mkdir -p /tmp/cap-mcp-governed-logs
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml --profile demo logs --no-color api-gateway scheduler safety-kernel workflow-engine nats > /tmp/cap-mcp-governed-logs/compose.log 2>&1 || true
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml --profile demo ps > /tmp/cap-mcp-governed-logs/compose-ps.txt || true
+      - name: Redact failure artifacts
+        id: redact_failure_artifacts
+        if: failure()
+        env:
+          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY || 'credential-unavailable-for-redaction' }}
+          CAP_MCP_WORKER_API_KEY: ${{ env.CAP_MCP_WORKER_API_KEY || 'credential-unavailable-for-redaction' }}
+          CAP_MCP_OPERATOR_API_KEY: ${{ env.CAP_MCP_OPERATOR_API_KEY || 'credential-unavailable-for-redaction' }}
+          REDIS_PASSWORD: ${{ env.REDIS_PASSWORD || 'credential-unavailable-for-redaction' }}
+          CORDUM_LICENSE_TOKEN: ${{ env.CORDUM_LICENSE_TOKEN || 'credential-unavailable-for-redaction' }}
+          CORDUM_LICENSE_PUBLIC_KEY: ${{ env.CORDUM_LICENSE_PUBLIC_KEY || 'credential-unavailable-for-redaction' }}
+        run: |
+          source tools/scripts/github_actions_mask_env.sh
+          gha_redact_paths CORDUM_API_KEY CAP_MCP_WORKER_API_KEY CAP_MCP_OPERATOR_API_KEY REDIS_PASSWORD CORDUM_LICENSE_TOKEN CORDUM_LICENSE_PUBLIC_KEY -- /tmp/cap-mcp-governed-logs
+      - name: Upload failure artifacts
+        if: failure() && steps.redact_failure_artifacts.outcome == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: demo-cap-mcp-governed-e2e-failure
+          path: /tmp/cap-mcp-governed-logs/
+          retention-days: 7
+      - name: Tear down demo stack
+        if: always()
+        run: |
+          : "${CORDUM_API_KEY:=teardown-placeholder-api-key}"
+          : "${REDIS_PASSWORD:=teardown-placeholder-redis-password}"
+          export CORDUM_API_KEY REDIS_PASSWORD
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml --profile demo down -v

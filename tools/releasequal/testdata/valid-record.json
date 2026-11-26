@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "release": {"ref": "refs/tags/v1.2.3", "dry_run": false, "run_url": "https://github.com/cordum-io/cordum/actions/runs/1"},
+  "source": {"repository": "cordum-io/cordum", "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+  "artifacts": [
+    {"kind": "image", "name": "api-gateway", "ref": "ghcr.io/cordum-io/cordum/api-gateway", "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    {"kind": "binary", "name": "cordum-hook-linux-amd64", "ref": "cordum-hook-linux-amd64", "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+  ],
+  "gates": [
+    {"id": "image-smoke", "artifact": "api-gateway", "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "result": "pass", "log": "logs/image-smoke.log"},
+    {"id": "trivy-os-linux-amd64", "artifact": "api-gateway", "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "result": "pass", "log": "logs/trivy-os-linux-amd64.log"}
+  ],
+  "exceptions": [
+    {"id": "binary-no-release-gate", "artifacts": ["cordum-hook-linux-amd64"], "reason": "No release-time binary gate is measured."},
+    {"id": "production-gate-not-digest-bound", "artifacts": ["api-gateway", "cordum-hook-linux-amd64"], "reason": "The production gate is not bound to these digests."}
+  ]
+}

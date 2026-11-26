@@ -4,7 +4,10 @@ Command-line helper for local dev, workflows, and pack operations.
 
 ## Global flags
 
-- `--gateway` (or `CORDUM_GATEWAY`) default: `http://localhost:8081`
+- `--gateway` (or `CORDUM_GATEWAY`) default: `https://localhost:8081`, the
+  compose stack's HTTPS gateway; use `http://...` for a gateway without TLS
+- `--cacert` (or `CORDUM_TLS_CA`) default: empty; for an `https://localhost`
+  gateway, `./certs/ca/ca.crt` (from `cordumctl generate-certs`) is used when present
 - `--api-key` (or `CORDUM_API_KEY`) default: empty
 - `--tenant` (or `CORDUM_TENANT_ID`) default: `default`
 

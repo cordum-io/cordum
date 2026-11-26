@@ -30,6 +30,20 @@ const envDoc = "# Env\n" + // 1
 	"after\n" // 10
 
 func TestParseMarkers(t *testing.T) {
+	t.Run("command exit and quoted fragments", func(t *testing.T) {
+		doc := "<!-- docscheck: command exit=\"255\" expect='\"ok\": true' expect=\" done \" -->\n```sh\nexit 255\n```\n"
+		blocks, err := Parse(writeDoc(t, "command.md", doc))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(blocks) != 1 || blocks[0].Attrs["exit"] != "255" {
+			t.Fatalf("blocks = %#v", blocks)
+		}
+		if !reflect.DeepEqual(blocks[0].Expect, []string{`"ok": true`, " done "}) {
+			t.Fatalf("fragments = %#v", blocks[0].Expect)
+		}
+	})
+
 	t.Run("env table rows and cells", func(t *testing.T) {
 		path := writeDoc(t, "env.md", envDoc)
 		blocks, err := Parse(path)
@@ -59,7 +73,7 @@ func TestParseMarkers(t *testing.T) {
 	})
 
 	t.Run("fenced block with info string and multi-kind", func(t *testing.T) {
-		doc := "<!-- docscheck: endpoints command -->\n```bash\ncurl http://h/api/v1/status\necho hi\n```\n"
+		doc := "<!-- docscheck: endpoints command exit=\"0\" -->\n```bash\ncurl http://h/api/v1/status\necho hi\n```\n"
 		blocks, err := Parse(writeDoc(t, "f.md", doc))
 		if err != nil {
 			t.Fatal(err)
@@ -106,6 +120,11 @@ func TestParseMarkers(t *testing.T) {
 	})
 
 	errCases := []struct{ name, doc, want string }{
+		{"command missing exit", "<!-- docscheck: command -->\n```sh\ntrue\n```\n", `:1: command needs exit="0" through exit="255"`},
+		{"negative exit", "<!-- docscheck: command exit=\"-1\" -->\n```sh\ntrue\n```\n", `:1: command needs exit="0" through exit="255"`},
+		{"large exit", "<!-- docscheck: command exit=\"256\" -->\n```sh\ntrue\n```\n", `:1: command needs exit="0" through exit="255"`},
+		{"exit without command", "<!-- docscheck: endpoints exit=\"0\" -->\n```sh\ntrue\n```\n", `:1: exit and expect need command`},
+		{"expect without command", "<!-- docscheck: endpoints expect='ok' -->\n```sh\ntrue\n```\n", `:1: exit and expect need command`},
 		{"unknown kind", "x\n\n<!-- docscheck: bogus -->\n| a |\n", `:3: unknown docscheck kind "bogus"`},
 		{"unknown key", "<!-- docscheck: env owner=\"me\" -->\n| a |\n", `:1: unknown docscheck key "owner"`},
 		{"skip without reason", "\n<!-- docscheck: skip -->\n```\nx\n```\n", `:2: skip needs reason="..." of at least 10 characters`},
@@ -113,7 +132,7 @@ func TestParseMarkers(t *testing.T) {
 		{"no kind", "<!-- docscheck: -->\n```\nx\n```\n", `:1: docscheck marker names no kind`},
 		{"not followed by block", "<!-- docscheck: env -->\n\nplain prose\n", `:1: docscheck marker is not followed by a fenced block or a table`},
 		{"marker at end of file", "a\n<!-- docscheck: env -->\n", `:2: docscheck marker is not followed by a fenced block or a table`},
-		{"unclosed fence", "<!-- docscheck: command -->\n```bash\nls\n", `:2: fenced block is not closed`},
+		{"unclosed fence", "<!-- docscheck: command exit=\"0\" -->\n```bash\nls\n", `:2: fenced block is not closed`},
 	}
 	for _, tc := range errCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -121,6 +140,34 @@ func TestParseMarkers(t *testing.T) {
 			_, err := Parse(path)
 			if err == nil || err.Error() != path+tc.want {
 				t.Fatalf("err = %v, want %q", err, path+tc.want)
+			}
+		})
+	}
+}
+
+func TestUnmarkedCommandBlocks(t *testing.T) {
+	cases := []struct {
+		name, doc string
+		want      []int
+	}{
+		{"shell languages", "```bash\na\n```\n~~~ sh\nb\n~~~\n```shell\nc\n```\n", []int{1, 4, 7}},
+		{"other kind", "<!-- docscheck: endpoints -->\n\n```bash\ntrue\n```\n", []int{3}},
+		{"command", "<!-- docscheck: command exit='0' -->\n\n```sh\ntrue\n```\n", nil},
+		{"skip", "<!-- docscheck: skip reason='requires a live stack' -->\n```shell\ntrue\n```\n", nil},
+		{"nested example", "````md\n<!-- docscheck: command -->\n```bash\ntrue\n```\n````\n", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := UnmarkedCommandBlocks(writeDoc(t, "fences.md", tc.doc))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var numbers []int
+			for _, line := range got {
+				numbers = append(numbers, line.No)
+			}
+			if !reflect.DeepEqual(numbers, tc.want) {
+				t.Fatalf("lines = %v, want %v", numbers, tc.want)
 			}
 		})
 	}
@@ -198,26 +245,38 @@ func TestCheckFixture(t *testing.T) {
 	}
 	want := []Issue{
 		{File: fixtureDoc, Line: 6, Kind: "env-default", Key: "FIX_VAR", Detail: "FIX_VAR: documented default `b`, code default \"a\""},
-		{File: fixtureDoc, Line: 15, Kind: "endpoint", Key: "GET /api/v1/missing", Detail: "GET /api/v1/missing not in the OpenAPI description"},
+		{File: fixtureDoc, Line: 18, Kind: "endpoint", Key: "GET /api/v1/missing", Detail: "GET /api/v1/missing not in the OpenAPI description"},
 	}
 	if !reflect.DeepEqual(r.Failures, want) {
 		t.Fatalf("failures =\n%#v\nwant\n%#v", r.Failures, want)
 	}
-	// Exact counts pin the passes: FIX_OK and FIX_NONE are the two passing
+	// Exact counts pin the passes: FIX_OK, FIX_NONE and FIX_HELPER are passing
 	// defaults (FIX_OK stays single-valued although firstEnv names it), and
 	// GET /api/v1/things/{id} is the passing endpoint.
-	checked := map[string]int{"env-name": 6, "env-default": 3, "endpoint": 2}
+	checked := map[string]int{"env-name": 9, "env-default": 4, "endpoint": 2}
 	unchecked := map[string]int{
 		"default cell is prose":                       1,
-		"code default not in a recognized form":       1,
+		"code default not in a recognized form":       3,
 		"ambiguous code default":                      1,
 		reasonCommand:                                 1,
 		"skip: needs a live cluster to run":           1,
 		"endpoints block holds no recognized example": 1,
 	}
-	if r.Blocks != 4 || r.Passed != 9 || len(r.Known) != 0 ||
+	if r.Blocks != 4 || r.Passed != 13 || len(r.Known) != 0 ||
 		!reflect.DeepEqual(r.Checked, checked) || !reflect.DeepEqual(r.Unchecked, unchecked) {
 		t.Fatalf("report = %s", r.Summary())
+	}
+	idx, err := indexProduct(fixtureConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"FIX_ENV", "FIX_ENV_VAR"} {
+		if len(idx.defaults[name]) != 0 {
+			t.Errorf("%s defaults = %v, want none", name, idx.defaults[name])
+		}
+	}
+	if want := map[string]bool{"h": true}; !reflect.DeepEqual(idx.defaults["FIX_HELPER"], want) {
+		t.Errorf("FIX_HELPER defaults = %v, want %v", idx.defaults["FIX_HELPER"], want)
 	}
 
 	t.Run("names come from code roots or text sources", func(t *testing.T) {
@@ -233,7 +292,7 @@ func TestCheckFixture(t *testing.T) {
 			t.Fatalf("failures = %#v, want first %#v", r.Failures, miss)
 		}
 		cfg.TextSources = []string{"co*"}
-		if r, err = Check(cfg); err != nil || r.Checked["env-name"] != 6 || hasKind(r.Failures, "env-name") {
+		if r, err = Check(cfg); err != nil || r.Checked["env-name"] != 9 || hasKind(r.Failures, "env-name") {
 			t.Fatalf("with text sources: err = %v, %s", err, r.Summary())
 		}
 	})

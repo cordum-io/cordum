@@ -17,8 +17,8 @@ The risks per-tool approval addresses:
 
 | Risk | How the gate mitigates it |
 |------|---------------------------|
-| **Compromised agent makes a destructive call** (e.g. an LLM jailbreak invokes `db.drop`) | The kernel intercepts the call before the worker handler runs. The agent only ever sees an "approval pending" response; the destructive code path is unreachable until a human approves. |
-| **Misconfigured agent calls the wrong tool** (e.g. a code-review agent issues `files.delete` because of a prompt typo) | Same gate — the call never executes without an approver acknowledging the args. |
+| **Compromised agent makes a destructive call** (e.g. an LLM jailbreak invokes `db.drop`) | The gateway's MCP approval gate answers a call to a flagged tool with `-32099` and the approval ID before the tool handler runs. The handler runs only after a human approves that exact call, unless the caller's identity preapproves the tool ([scope-preapproval.md](scope-preapproval.md)). |
+| **Misconfigured agent calls the wrong tool** (e.g. a code-review agent issues `files.delete` because of a prompt typo) | Same gate: a call to a flagged tool waits for a human to approve that exact call, arguments included. CLM-018 in the [claims register](../contract/claims.yaml) records this approval flow as supported. |
 | **Insider attempts to escalate through their own agent** | The self-approval guard refuses any approval whose approver principal matches the requesting agent's identity. |
 | **Replay attack on a previously approved call** | Approvals are consume-once; any second call with identical args re-enqueues a fresh approval. |
 | **Approval rubber-stamped without seeing the args** | The approval record carries a SHA-256 hash of the canonical args JSON; the dashboard's "Review args" modal fetches and renders the full args before the approver clicks Approve. |
@@ -137,10 +137,13 @@ Response on a gated MCP tools/call:
 ## Args hash semantics
 
 Each approval is keyed on the canonical SHA-256 of the args JSON. Two
-calls with semantically identical args (different key order, varying
-whitespace) hash to the same value — the canonicaliser does an
-`Unmarshal → Marshal` round-trip, and Go's `encoding/json` sorts map
-keys at every depth.
+calls whose args differ only in object key order, or in the whitespace
+between JSON tokens, hash to the same value: the canonicaliser decodes
+the args and re-encodes them with keys sorted at every depth. Values are
+hashed as sent, so whitespace inside a string, an empty string, `[]`, `{}`
+and `null` all change the hash. `tools/call` refuses arguments that
+repeat an object key, at any depth, with JSON-RPC `-32602` before the
+policy check and any approval.
 
 Two calls with **different** args produce different hashes and require
 **separate approvals**. This is intentional: an approval to delete

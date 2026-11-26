@@ -1,0 +1,180 @@
+name: demo-a2a-governed-e2e
+
+# End-to-end test of A2A traffic governed by Cordum. It runs the CAP A2A
+# bridge and its example worker against the default compose stack, with TLS
+# on HTTP, NATS and Redis, and drives demo/a2a-governed/integration_test.sh:
+#   - an allowed turn ends INPUT_REQUIRED, and Cordum records an ALLOW
+#     decision for its job;
+#   - the resumed turn ends COMPLETED, with a second ALLOW decision;
+#   - a turn on the denied topic ends REJECTED, and its job is DENIED by
+#     policy without reaching the worker.
+#
+# Compat limitation: the bridge publishes raw, unsigned sys.job.submit
+# packets. Cordum admits them only on its compat profile (handshake off or
+# warn), so the bridge and worker run with CAP_A2A_DEV_UNSIGNED=1. See
+# demo/a2a-governed/README.md.
+#
+# CAP pin: the bridge and worker are built from the cordum-io/cap commit in
+# the second step. To bump it, replace that 40-hex ref with a commit on CAP
+# main and update the comment above it.
+#
+# Nightly tier: this suite boots the whole stack, so it runs on the schedule
+# below, on demand (`gh workflow run demo-a2a-governed-e2e --ref <branch>`),
+# and on pushes and PRs that change its own paths. See the tier note in
+# ci.yml.
+
+on:
+  schedule:
+    # 03:11 UTC daily. The odd minute avoids top-of-hour runner contention.
+    - cron: '11 3 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/demo-a2a-governed-e2e.yml
+      - demo/a2a-governed/**
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/demo-a2a-governed-e2e.yml
+      - demo/a2a-governed/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: demo-a2a-governed-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  demo-a2a-governed-e2e:
+    name: demo-a2a-governed-e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Check out the pinned CAP
+        uses: actions/checkout@v7
+        with:
+          repository: cordum-io/cap
+          # 3216b280: task-0aa76e77 bridge + worker (AMENDMENTS 2-3)
+          ref: 3216b28090a869c37f595d36755385adf80cb500
+          path: cap
+          persist-credentials: false
+
+      - name: Set up Go for CAP
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: cap/go.mod
+          cache-dependency-path: cap/go.sum
+
+      - name: Build the A2A bridge and worker
+        run: |
+          mkdir -p ./bin
+          go build -C cap -trimpath -o "${GITHUB_WORKSPACE}/bin/cap-a2a-bridge" ./cmd/cap-a2a-bridge
+          go build -C cap -trimpath -o "${GITHUB_WORKSPACE}/bin/cap-a2a-worker" ./examples/a2a-bridge/worker
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build cordumctl
+        run: go build -o ./bin/cordumctl ./cmd/cordumctl
+
+      - name: Configure masked CI credentials
+        run: |
+          source tools/scripts/github_actions_mask_env.sh
+          api_key="$(openssl rand -hex 32)" || exit 1
+          gha_mask_env CORDUM_API_KEY "${api_key}"
+          client_key="$(openssl rand -hex 32)" || exit 1
+          gha_mask_env CAP_A2A_CLIENT_API_KEY "${client_key}"
+          redis_password="$(openssl rand -hex 32)" || exit 1
+          gha_mask_env REDIS_PASSWORD "${redis_password}"
+
+      - name: Generate TLS certificates
+        run: |
+          ./bin/cordumctl generate-certs --dir ./certs
+          # Redis container runs as UID 999 — make certs world-readable.
+          chmod -R a+rX ./certs
+
+      - name: Bring up the compose stack
+        env:
+          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+          REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
+        run: |
+          docker compose up -d --build
+          docker compose ps
+
+      - name: Run the governed A2A demo end-to-end test
+        # The script waits for the gateway, installs the pack, starts the
+        # worker and both bridges on the host, and asserts the A2A states and
+        # Cordum's decisions. Its artifacts land in A2A_ARTIFACT_DIR.
+        env:
+          CORDUM_INTEGRATION: "1"
+          CORDUM_API_BASE: https://localhost:8081
+          CORDUM_TLS_CA: ${{ github.workspace }}/certs/ca/ca.crt
+          CORDUM_CERTS_DIR: ${{ github.workspace }}/certs
+          CORDUMCTL_BIN: ${{ github.workspace }}/bin/cordumctl
+          CAP_A2A_BRIDGE_BIN: ${{ github.workspace }}/bin/cap-a2a-bridge
+          CAP_A2A_WORKER_BIN: ${{ github.workspace }}/bin/cap-a2a-worker
+          A2A_ARTIFACT_DIR: /tmp/a2a-governed-logs
+          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+          CAP_A2A_CLIENT_API_KEY: ${{ env.CAP_A2A_CLIENT_API_KEY }}
+          REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
+        run: |
+          mkdir -p /tmp/a2a-governed-logs
+          bash demo/a2a-governed/integration_test.sh 2>&1 | tee /tmp/a2a-governed-logs/integration.log
+
+      - name: Assert the marker and the PASS lines
+        run: |
+          markers="$(grep -c -x 'A2A GOVERNED DEMO OK' /tmp/a2a-governed-logs/integration.log || true)"
+          passes="$(grep -c '^PASS ' /tmp/a2a-governed-logs/integration.log || true)"
+          if [ "${markers}" != 1 ] || [ "${passes}" != 4 ]; then
+            echo "::error::want the marker once and 4 PASS lines, got ${markers} and ${passes}"
+            exit 1
+          fi
+
+      - name: Capture logs on failure
+        if: failure()
+        run: |
+          : "${CORDUM_API_KEY:=teardown-placeholder-api-key}"
+          : "${REDIS_PASSWORD:=teardown-placeholder-redis-password}"
+          export CORDUM_API_KEY REDIS_PASSWORD
+          mkdir -p /tmp/a2a-governed-logs
+          for service in api-gateway scheduler safety-kernel workflow-engine nats; do
+            docker compose logs --no-color "${service}" > "/tmp/a2a-governed-logs/${service}.log" 2>&1 || true
+          done
+          docker compose ps > /tmp/a2a-governed-logs/compose-ps.txt 2>&1 || true
+          ps -eo pid,ppid,etime,comm > /tmp/a2a-governed-logs/ps.txt 2>&1 || true
+
+      - name: Redact failure artifacts
+        id: redact_failure_artifacts
+        if: failure()
+        env:
+          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY || 'credential-unavailable-for-redaction' }}
+          CAP_A2A_CLIENT_API_KEY: ${{ env.CAP_A2A_CLIENT_API_KEY || 'credential-unavailable-for-redaction' }}
+          REDIS_PASSWORD: ${{ env.REDIS_PASSWORD || 'credential-unavailable-for-redaction' }}
+        run: |
+          source tools/scripts/github_actions_mask_env.sh
+          gha_redact_paths CORDUM_API_KEY CAP_A2A_CLIENT_API_KEY REDIS_PASSWORD -- /tmp/a2a-governed-logs
+
+      - name: Upload failure artifacts
+        if: failure() && steps.redact_failure_artifacts.outcome == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: demo-a2a-governed-e2e-failure
+          path: /tmp/a2a-governed-logs/
+          retention-days: 7
+
+      - name: Tear down compose stack
+        if: always()
+        run: |
+          : "${CORDUM_API_KEY:=teardown-placeholder-api-key}"
+          : "${REDIS_PASSWORD:=teardown-placeholder-redis-password}"
+          export CORDUM_API_KEY REDIS_PASSWORD
+          docker compose down -v

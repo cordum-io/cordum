@@ -196,7 +196,9 @@ func (s *server) requireLLMIngestProxy(w http.ResponseWriter, r *http.Request) (
 		writeEdgeForbidden(w, r, errors.New("llm proxy authentication required"))
 		return "", false
 	}
-	proxyID := strings.TrimSpace(authCtx.PrincipalID)
+	// The proxy id binds the batch source and parent execution, so only an authenticated
+	// principal can name it; an asserted X-Principal-Id is refused below like a missing one.
+	proxyID := authCtx.AuthenticatedPrincipal()
 	if proxyID == "" {
 		writeEdgeForbidden(w, r, errors.New("llm proxy principal required"))
 		return "", false

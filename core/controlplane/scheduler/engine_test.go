@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -110,6 +111,7 @@ type fakeJobStore struct {
 	tenants        map[string]string
 	teams          map[string]string
 	safety         map[string]SafetyDecisionRecord
+	approvals      map[string]ApprovalRecord
 	lineage        map[string]model.DelegationLineage
 	dispatchTokens map[string]model.DelegationDispatchToken
 	output         map[string]OutputSafetyRecord
@@ -184,6 +186,7 @@ func newFakeJobStore() *fakeJobStore {
 		tenants:        make(map[string]string),
 		teams:          make(map[string]string),
 		safety:         make(map[string]SafetyDecisionRecord),
+		approvals:      make(map[string]ApprovalRecord),
 		lineage:        make(map[string]model.DelegationLineage),
 		dispatchTokens: make(map[string]model.DelegationDispatchToken),
 		output:         make(map[string]OutputSafetyRecord),
@@ -385,6 +388,20 @@ func (s *fakeJobStore) GetSafetyDecision(_ context.Context, jobID string) (Safet
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.safety[jobID], nil
+}
+
+func (s *fakeJobStore) GetApprovalRecord(_ context.Context, jobID string) (ApprovalRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.approvals[jobID], nil
+}
+
+// approve records a human approve decision for jobID, as the gateway's
+// approve handler does via ResolveApproval.
+func (s *fakeJobStore) approve(jobID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.approvals[jobID] = ApprovalRecord{Decision: ApprovalDecisionApprove, ApprovedBy: "alice"}
 }
 
 func (s *fakeJobStore) SetDelegationLineage(_ context.Context, jobID string, lineage model.DelegationLineage) error {
@@ -1481,6 +1498,7 @@ func TestProcessJobApprovalGateApprovedAutoCompletes(t *testing.T) {
 		PolicySnapshot:   workflowGateSnapshot,
 		JobHash:          jobHash,
 	}
+	jobStore.approve(req.JobId)
 
 	if err := engine.processJob(testCtx(t), req, "trace-gate-2"); err != nil {
 		t.Fatalf("process job: %v", err)
@@ -1557,6 +1575,7 @@ func TestProcessJobApprovalGatePublishFailureReturnsRetryableError(t *testing.T)
 		PolicySnapshot:   workflowGateSnapshot,
 		JobHash:          jobHash,
 	}
+	jobStore.approve(req.JobId)
 
 	err = engine.processJob(testCtx(t), req, "trace-gate-4")
 	retryErr, ok := err.(*retryableError)
@@ -1659,6 +1678,7 @@ func TestApprovalGateTopicStillAutoCompletes(t *testing.T) {
 			PolicySnapshot:   workflowGateSnapshot,
 			JobHash:          jobHash,
 		}
+		jobStore.approve(jobID)
 		bus.published = nil
 		jobStore.states = map[string]JobState{}
 
@@ -2829,7 +2849,26 @@ func TestCheckSafetyDecisionAppendsDecisionLog(t *testing.T) {
 	tests := []struct {
 		name   string
 		record SafetyDecisionRecord
+		chain  []string
 	}{
+		{
+			name: "delegated governance",
+			record: SafetyDecisionRecord{
+				Decision:       SafetyAllow,
+				Reason:         "delegation allowed",
+				RuleID:         "rule-governance",
+				PolicySnapshot: "snap-governance|sha256:5",
+				CheckedAt:      checkedAt + 4_000,
+				Governance: &model.GovernanceDecisionEvidence{
+					Operation:    "dispatch",
+					RuleID:       "gov-rule",
+					Decision:     "allow",
+					IssuerRoot:   "agent-0",
+					ParentIssuer: "agent-2",
+				},
+			},
+			chain: []string{"agent-0", "agent-1", "agent-2"},
+		},
 		{
 			name: "allow",
 			record: SafetyDecisionRecord{
@@ -2891,7 +2930,7 @@ func TestCheckSafetyDecisionAppendsDecisionLog(t *testing.T) {
 				Labels:   map[string]string{"agent_id": "agent-123"},
 			}
 
-			record, err := engine.checkSafetyDecision(context.Background(), req)
+			record, err := engine.checkSafetyDecision(context.Background(), req, tt.chain...)
 			if err != nil {
 				t.Fatalf("checkSafetyDecision() error = %v", err)
 			}
@@ -2937,7 +2976,37 @@ func TestCheckSafetyDecisionAppendsDecisionLog(t *testing.T) {
 			if entry.ApprovalStatus != tt.record.ApprovalStatus {
 				t.Fatalf("ApprovalStatus=%q want %q", entry.ApprovalStatus, tt.record.ApprovalStatus)
 			}
+			stored, err := store.GetSafetyDecision(context.Background(), req.GetJobId())
+			if err != nil {
+				t.Fatalf("GetSafetyDecision() error = %v", err)
+			}
+			if stored.Governance != tt.record.Governance {
+				t.Fatalf("stored Governance=%+v want the checker's %+v", stored.Governance, tt.record.Governance)
+			}
+			assertDecisionIssuerChain(t, entry, stored, tt.chain)
 		})
+	}
+}
+
+// assertDecisionIssuerChain checks that the logged entry and the stored record
+// both carry want as their issuer chain. With no chain, neither JSON form may
+// name the field, so records of jobs without delegation stay as they were.
+func assertDecisionIssuerChain(t *testing.T, logged model.DecisionLogRecord, stored SafetyDecisionRecord, want []string) {
+	t.Helper()
+	if len(want) > 0 {
+		if !slices.Equal(logged.DelegationIssuerChain, want) || !slices.Equal(stored.DelegationIssuerChain, want) {
+			t.Fatalf("issuer chain logged=%v stored=%v, want %v", logged.DelegationIssuerChain, stored.DelegationIssuerChain, want)
+		}
+		return
+	}
+	for _, value := range []any{logged, stored} {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			t.Fatalf("encode record: %v", err)
+		}
+		if strings.Contains(string(encoded), "delegation_issuer_chain") {
+			t.Fatalf("record of a job without delegation names delegation_issuer_chain: %s", encoded)
+		}
 	}
 }
 
@@ -2969,8 +3038,10 @@ func TestCheckSafetyDecisionApprovalGrantedAppendsDecisionLog(t *testing.T) {
 		JobHash:          jobHash,
 		CheckedAt:        time.Date(2026, time.April, 20, 10, 0, 0, 0, time.UTC).UnixNano() / int64(time.Microsecond),
 	}
+	store.approve(req.JobId)
 
-	record, err := engine.checkSafetyDecision(context.Background(), req)
+	chain := []string{"agent-0", "agent-1"}
+	record, err := engine.checkSafetyDecision(context.Background(), req, chain...)
 	if err != nil {
 		t.Fatalf("checkSafetyDecision() error = %v", err)
 	}
@@ -2988,6 +3059,11 @@ func TestCheckSafetyDecisionApprovalGrantedAppendsDecisionLog(t *testing.T) {
 	if logged[0].PolicyVersion != "snap-approved" {
 		t.Fatalf("PolicyVersion=%q want snap-approved", logged[0].PolicyVersion)
 	}
+	stored, err := store.GetSafetyDecision(context.Background(), req.JobId)
+	if err != nil {
+		t.Fatalf("GetSafetyDecision() error = %v", err)
+	}
+	assertDecisionIssuerChain(t, logged[0], stored, chain)
 }
 
 func TestCheckSafetyDecision_PreservesExistingJobHashOnRequireApproval(t *testing.T) {

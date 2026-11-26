@@ -30,6 +30,7 @@ import {
   useEdgeSessionEvents,
   useEdgeExecutions,
 } from "@/hooks/useEdgeSessions";
+import { AssuranceStateBadge } from "@/components/edge/AssuranceStateBadge";
 import { EdgeArtifactsPanel } from "@/components/edge/EdgeArtifactsPanel";
 import { EdgeEventInspector } from "@/components/edge/EdgeEventInspector";
 import { MCPLane } from "@/components/timeline/lanes/MCPLane";
@@ -164,7 +165,8 @@ export default function EdgeSessionDetailPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <StatusBadge variant={statusVariant(session.status)}>{session.status}</StatusBadge>
-          <StatusBadge variant="info">{session.policyMode}</StatusBadge>
+          <AssuranceStateBadge state={session.assuranceState} />
+          <StatusBadge variant="info">policy {session.policyMode}</StatusBadge>
           <Link
             to="/approvals?lane=edge"
             className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-1 px-3 py-1.5 text-sm font-medium text-foreground hover:bg-surface-2 transition-colors"
@@ -265,7 +267,13 @@ function SessionFacts({ session }: { session: ReturnType<typeof useEdgeSession>[
       className="grid gap-3 rounded-3xl border border-border bg-surface-1/70 p-4 sm:grid-cols-2 lg:grid-cols-4"
       data-testid="edge-session-facts"
     >
-      <Fact icon={Shield} label="Principal" value={session.principalId ?? "—"} mono />
+      <Fact
+        icon={Shield}
+        label="Principal"
+        value={session.principalId ?? session.principalDisplayName ?? "—"}
+        sub={session.principalId ? undefined : session.principalDisplayName && "display name"}
+        mono
+      />
       <Fact icon={ShieldCheck} label="Agent" value={session.agentProduct ?? "—"} sub={session.agentVersion} />
       <Fact icon={Layers} label="Mode" value={session.mode} />
       <Fact icon={ShieldAlert} label="Policy snapshot" value={session.policySnapshot ?? "—"} mono />

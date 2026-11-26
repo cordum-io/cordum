@@ -318,8 +318,14 @@ type Exporter interface {
 
 // NewExporterFromEnv reads CORDUM_AUDIT_EXPORT_* environment variables and
 // returns a BufferedExporter wrapping the configured backend.
-// Empty/"none" env values install a discard backend so the audit chain still
-// runs even when no streaming SIEM destination is configured.
+//
+// An unset, empty or "none" CORDUM_AUDIT_EXPORT_TYPE (case-insensitive) means
+// no SIEM export: it returns (nil, nil) and installs no backend, so callers
+// must handle a nil exporter. The gateway's audit chain does not depend on an
+// exporter and still runs. Only the explicit "null", "discard" and
+// "chain-only" types install a discard backend: a BufferedExporter around a
+// DiscardExporter, which accepts and drops every batch. An unknown type, or a
+// backend that cannot be built from its settings, returns an error.
 func NewExporterFromEnv() (*BufferedExporter, error) {
 	exp, err := exporterFromEnv()
 	if err != nil || exp == nil {

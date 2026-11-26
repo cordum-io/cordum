@@ -74,6 +74,7 @@ locally:
 | Placeholder                              | Source                                            |
 |------------------------------------------|---------------------------------------------------|
 | `<gateway-url>`                          | Cordum Gateway base URL for the tenant.           |
+| `<mcp-gateway-url>`                      | Independent trusted MCP endpoint, including its configured path, from deployment configuration. Do not infer it from the control-plane URL or inspected settings. |
 | `<tenant-id>`                            | Cordum tenant id (matches `X-Tenant-ID`).         |
 | `<principal-id>`                         | Operator principal initiating remediation.        |
 | `<output-dir>`                           | Path for `managed-settings.json` + `managed-mcp.json`. |
@@ -363,7 +364,7 @@ When `audience=enterprise` or `audience=both`, a third step is
 emitted recommending the env block be rolled into the platform team's
 central CI templates so new repos inherit it.
 
-### Q5 enforce-scope-out — structural guarantee
+### Q5 enforce-scope-out — by builder signature
 
 Every new template builder function takes only `findingFeatures` (the
 shape-agnostic projection of the finding) plus an optional audience

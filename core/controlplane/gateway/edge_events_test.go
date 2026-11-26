@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	edgecore "github.com/cordum/cordum/core/edge"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 func TestGatewayEdgeEventRoutesRegisteredAndTenantScoped(t *testing.T) {
@@ -122,6 +123,64 @@ func TestGatewayEdgeEventRoutesDenyCrossTenantWithoutLeakingIDs(t *testing.T) {
 		}
 		assertBodyOmits(t, rr.Body.String(), session.SessionID, session.ExecutionID, edgeRouteTenant)
 	}
+}
+
+// TestGatewayEdgeStoreExportsMetrics: the gateway built its Edge store and
+// handlers on a no-op recorder, so no Edge metric reached its metrics
+// listener. newGatewayEdgeStore, which RunWithAuth uses, now gives both a
+// Prometheus recorder: an event written through the Edge API moves the
+// store's persisted counter and the handler's redaction counter.
+func TestGatewayEdgeStoreExportsMetrics(t *testing.T) {
+	s, handler := newEdgeRouteTestServer(t)
+	reg := prometheus.NewRegistry()
+	s.edgeStore, s.edgeRecorder = newGatewayEdgeStore(s.jobStore.Client(), reg, 0)
+	session := createEdgeRouteSession(t, handler)
+	metrics := []string{"cordum_edge_event_persisted_total", "cordum_edge_event_redacted_total"}
+	before := map[string]float64{}
+	for _, name := range metrics {
+		before[name] = edgeMetricSum(t, reg, name)
+	}
+	rr := edgeRoutePOST(t, handler, "/api/v1/edge/events", `{
+		"event_id":"evt-edge-metrics-1",
+		"session_id":"`+session.SessionID+`",
+		"execution_id":"`+session.ExecutionID+`",
+		"tenant_id":"`+edgeRouteTenant+`",
+		"ts":"2026-05-01T12:01:00Z",
+		"layer":"hook",
+		"kind":"hook.pre_tool_use",
+		"tool_name":"Bash",
+		"action_name":"bash.exec",
+		"input_redacted":{"command":"Authorization: Bearer edge-metrics-secret"},
+		"decision":"ALLOW",
+		"status":"ok"
+	}`)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("event create status = %d, want 201 body=%s", rr.Code, rr.Body.String())
+	}
+	for _, name := range metrics {
+		if got := edgeMetricSum(t, reg, name) - before[name]; got != 1 {
+			t.Errorf("%s moved by %v, want 1", name, got)
+		}
+	}
+}
+
+// edgeMetricSum sums every series of the named counter family in reg.
+func edgeMetricSum(t *testing.T, reg *prometheus.Registry, name string) float64 {
+	t.Helper()
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	var sum float64
+	for _, family := range families {
+		if family.GetName() != name {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			sum += metric.GetCounter().GetValue()
+		}
+	}
+	return sum
 }
 
 func TestGatewayEdgeEventSingleWriteRedactsHashesAndPreservesSeq(t *testing.T) {

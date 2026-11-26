@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/configsvc"
 	edgecore "github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/mcp"
@@ -324,6 +325,139 @@ func TestMCPProdBoot_ApprovalHoldWiredWhenFlagOn(t *testing.T) {
 	}
 	if !runtime.server.HasApprovalHold() {
 		t.Fatal("MCPServer.HasApprovalHold() = false after boot with policy_gate_enabled=true; want true (resume path must reach the Edge claim store, not nil approvalHoldDeps)")
+	}
+}
+
+func TestMCPProdBoot_EnvFallbackWiresApprovalHoldWhenUnseeded(t *testing.T) {
+	t.Setenv("CORDUM_MCP_ENABLED", "true")
+	t.Setenv("CORDUM_MCP_POLICY_GATE_ENABLED", "true")
+
+	s, _, _ := newTestGateway(t)
+	s.auth = mcpTestAuth{apiKey: "test-key", tenant: "default"}
+	s.shutdownCh = make(chan struct{})
+	t.Cleanup(func() { close(s.shutdownCh) })
+	configurePolicyGateBootDeps(t, s)
+
+	mux := http.NewServeMux()
+	if err := s.registerMCPRoutes(mux); err != nil {
+		t.Fatalf("register mcp routes: %v", err)
+	}
+	runtime := s.getMCPRuntime()
+	if runtime == nil || runtime.server == nil {
+		t.Fatal("expected booted MCP runtime from CORDUM_MCP_* env fallback, got nil")
+	}
+	if !runtime.server.HasApprovalHold() {
+		t.Fatal("MCPServer.HasApprovalHold() = false with CORDUM_MCP_POLICY_GATE_ENABLED=true; want true")
+	}
+}
+
+func TestLoadMCPConfig_ExplicitRedisOverridesEnvFallback(t *testing.T) {
+	t.Setenv("CORDUM_MCP_ENABLED", "true")
+	t.Setenv("CORDUM_MCP_POLICY_GATE_ENABLED", "true")
+
+	s, _, _ := newTestGateway(t)
+	setMCPConfigForBoot(t, s, true, false)
+
+	cfg := s.loadMCPConfig(context.Background())
+	if !cfg.Enabled {
+		t.Fatal("expected Enabled=true from explicit config")
+	}
+	if cfg.PolicyGateEnabled {
+		t.Fatal("expected explicit config policy_gate_enabled=false to override CORDUM_MCP_POLICY_GATE_ENABLED=true")
+	}
+}
+
+func TestLoadMCPConfig_ReadErrorKeepsMCPDisabled(t *testing.T) {
+	t.Setenv("CORDUM_MCP_ENABLED", "true")
+	t.Setenv("CORDUM_MCP_POLICY_GATE_ENABLED", "true")
+
+	// A closed config service fails every Effective() call, as a Redis outage or a
+	// startup timeout would. A failed read is not missing config: MCP stays disabled.
+	svc, err := configsvc.New("redis://" + miniredis.RunT(t).Addr())
+	if err != nil {
+		t.Fatalf("config svc: %v", err)
+	}
+	_ = svc.Close()
+	s := &server{configSvc: svc}
+
+	cfg := s.loadMCPConfig(context.Background())
+	if cfg.Enabled || cfg.PolicyGateEnabled {
+		t.Fatalf("loadMCPConfig after a failed config read = %+v; want MCP disabled despite CORDUM_MCP_* env", cfg)
+	}
+}
+
+// storeSystemConfig stores data as the system config document unvalidated, as
+// handlers_config.go and configsvc.Set accept it.
+func storeSystemConfig(t *testing.T, s *server, data map[string]any) {
+	t.Helper()
+	if err := s.configSvc.Set(context.Background(), &configsvc.Document{
+		Scope: configsvc.ScopeSystem, ScopeID: "default", Data: data,
+	}); err != nil {
+		t.Fatalf("set system config: %v", err)
+	}
+}
+
+// TestLoadMCPConfig_UnreadableStoredFlagsFailClosed: a stored mcp.enabled or
+// mcp.policy_gate_enabled the gateway cannot read still counts as set, so
+// CORDUM_MCP_* never overrides it: MCP stays disabled and the policy gate on.
+func TestLoadMCPConfig_UnreadableStoredFlagsFailClosed(t *testing.T) {
+	t.Setenv("CORDUM_MCP_ENABLED", "true")
+	t.Setenv("CORDUM_MCP_POLICY_GATE_ENABLED", "false")
+	for name, stored := range map[string]any{
+		"null values":       map[string]any{"enabled": nil, "policy_gate_enabled": nil},
+		"numbers":           map[string]any{"enabled": 1, "policy_gate_enabled": 0},
+		"unknown strings":   map[string]any{"enabled": "invalid", "policy_gate_enabled": "maybe"},
+		"objects":           map[string]any{"enabled": map[string]any{}, "policy_gate_enabled": []any{}},
+		"mcp not an object": "on",
+		"mcp null":          nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _, _ := newTestGateway(t)
+			storeSystemConfig(t, s, map[string]any{"mcp": stored})
+			if cfg := s.loadMCPConfig(context.Background()); cfg.Enabled || !cfg.PolicyGateEnabled {
+				t.Fatalf("unreadable stored flags gave enabled=%t policy_gate=%t; want MCP disabled and the gate on despite CORDUM_MCP_*",
+					cfg.Enabled, cfg.PolicyGateEnabled)
+			}
+		})
+	}
+}
+
+// TestLoadMCPConfig_StoredTransportBlocksEnvFallback: a stored mcp.transport,
+// even an empty one, wins over CORDUM_MCP_TRANSPORT.
+func TestLoadMCPConfig_StoredTransportBlocksEnvFallback(t *testing.T) {
+	t.Setenv("CORDUM_MCP_TRANSPORT", "stdio")
+	s, _, _ := newTestGateway(t)
+	storeSystemConfig(t, s, map[string]any{"mcp": map[string]any{"enabled": false, "transport": ""}})
+	if cfg := s.loadMCPConfig(context.Background()); cfg.Transport != "http" {
+		t.Fatalf("stored empty transport gave %q; want the default http, not CORDUM_MCP_TRANSPORT", cfg.Transport)
+	}
+}
+
+// TestLoadMCPConfig_EnvFallbackOnlyForMissingKeys: readable stored values win
+// over CORDUM_MCP_*, and the env applies only to a key the stored config does
+// not set.
+func TestLoadMCPConfig_EnvFallbackOnlyForMissingKeys(t *testing.T) {
+	t.Setenv("CORDUM_MCP_ENABLED", "true")
+	t.Setenv("CORDUM_MCP_POLICY_GATE_ENABLED", "true")
+	t.Setenv("CORDUM_MCP_TRANSPORT", "stdio")
+	for name, tc := range map[string]struct {
+		data          map[string]any
+		enabled, gate bool
+		transport     string
+	}{
+		"readable stored values win": {map[string]any{"mcp": map[string]any{"enabled": "no", "policy_gate_enabled": false, "transport": "http"}}, false, false, "http"},
+		"missing keys fall back":     {map[string]any{"mcp": map[string]any{"port": 8090}}, true, true, "stdio"},
+		"no mcp block falls back":    {map[string]any{"other": true}, true, true, "stdio"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _, _ := newTestGateway(t)
+			storeSystemConfig(t, s, tc.data)
+			cfg := s.loadMCPConfig(context.Background())
+			if cfg.Enabled != tc.enabled || cfg.PolicyGateEnabled != tc.gate || cfg.Transport != tc.transport {
+				t.Fatalf("loadMCPConfig = enabled=%t policy_gate=%t transport=%q; want %t %t %q",
+					cfg.Enabled, cfg.PolicyGateEnabled, cfg.Transport, tc.enabled, tc.gate, tc.transport)
+			}
+		})
 	}
 }
 

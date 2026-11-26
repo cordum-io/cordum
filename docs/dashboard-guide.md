@@ -512,12 +512,10 @@ See [docs/output-policy.md](output-policy.md) for the operator guide.
 
 ### How to Configure MCP Server
 
-1. Navigate to **Settings** > **Output Safety** (`/settings/output-safety`)
-2. Enable the MCP server toggle
-3. Configure transport (HTTP+SSE recommended for remote clients, stdio for local CLI)
-4. Set the HTTP port and allowed CORS origins
-5. Enable API key authentication and generate an MCP API key
-6. Copy the Claude Desktop or Claude Code configuration snippet from the Quick Start section
+1. Navigate to **Settings** > **MCP Server** (`/settings/mcp`)
+2. Click **Enable runtime** (sets `mcp.enabled`)
+3. Check the status, transport, connected clients and the read-only tool and resource lists
+4. Create an API key under **Settings** > **API Keys** and configure Claude Desktop or Claude Code as in [MCP Server: Integration Examples](mcp-server.md#integration-examples)
 
 See [docs/mcp-server.md](mcp-server.md) for detailed MCP server configuration.
 

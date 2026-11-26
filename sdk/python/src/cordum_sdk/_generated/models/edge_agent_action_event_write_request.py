@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 from typing import List
 
@@ -27,11 +27,11 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
+    from ..models.edge_labels import EdgeLabels
+    from ..models.edge_artifact_pointer import EdgeArtifactPointer
     from ..models.edge_agent_action_event_write_request_input_redacted_type_0 import (
         EdgeAgentActionEventWriteRequestInputRedactedType0,
     )
-    from ..models.edge_labels import EdgeLabels
-    from ..models.edge_artifact_pointer import EdgeArtifactPointer
 
 
 T = TypeVar("T", bound="EdgeAgentActionEventWriteRequest")
@@ -113,8 +113,6 @@ class EdgeAgentActionEventWriteRequest:
         from ..models.edge_agent_action_event_write_request_input_redacted_type_0 import (
             EdgeAgentActionEventWriteRequestInputRedactedType0,
         )
-        from ..models.edge_labels import EdgeLabels
-        from ..models.edge_artifact_pointer import EdgeArtifactPointer
 
         event_id = self.event_id
 
@@ -246,11 +244,11 @@ class EdgeAgentActionEventWriteRequest:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
+        from ..models.edge_labels import EdgeLabels
+        from ..models.edge_artifact_pointer import EdgeArtifactPointer
         from ..models.edge_agent_action_event_write_request_input_redacted_type_0 import (
             EdgeAgentActionEventWriteRequestInputRedactedType0,
         )
-        from ..models.edge_labels import EdgeLabels
-        from ..models.edge_artifact_pointer import EdgeArtifactPointer
 
         d = src_dict.copy()
         event_id = d.pop("event_id")

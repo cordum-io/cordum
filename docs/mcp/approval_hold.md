@@ -15,7 +15,8 @@ Production action gates are blockers/approval gates only: they allow,
 deny, throttle, or require human approval. They do not emit enforceable
 generic runtime constraints. Typed `ALLOW_WITH_CONSTRAINTS` limits are
 owned by policy bundles and SafetyKernel `PolicyConstraints`, while
-approval single-use is enforced by the Edge approval store claim path.
+approval single-use is handled by the Edge approval store claim path
+(CLM-013 in the [claims register](../contract/claims.yaml), status supported).
 
 This document is the contract for the EDGE-103 lifecycle. For the
 broader threat model and human approval flow see
@@ -51,6 +52,12 @@ scopes see [`scope-preapproval.md`](scope-preapproval.md).
                               invokeTool with `_approval_ref`-stripped args
 ```
 
+Before minting, both mint paths look for the caller's pending approval
+for the same call (same requester identity, agent, `(ActionHash,
+InputHash)` and policy snapshot) and return it, so a client that re-asks
+without `_approval_ref` does not pile up approvals. Another requester
+gets their own.
+
 The mint and consume paths each compute a `(ActionHash, InputHash)`
 pair through `BuildMCPApprovalBinding`. Any drift between the two
 sides surfaces as `ApprovalConflictKindArgsMismatch` on the consume —
@@ -62,8 +69,9 @@ future drift is impossible.
 The resolved audit event must match the same `ActionHash` and tenant/ref used
 by the approval store. Wrong tenant/ref/hash, malformed event JSON,
 rejected/expired outcomes, missing Redis/audit verifier dependencies, or
-compromised hash/HMAC/linkage are treated as fail-closed evidence gaps rather
-than as recoverable client retries.
+audit chain checks that report the chain as compromised make the configured
+ProvenanceGate deny the retry instead of treating it as recoverable (CLM-009 in the
+[claims register](../contract/claims.yaml), status supported).
 
 ## `_approval_ref` retry argument
 
@@ -95,8 +103,9 @@ is the **single** source of truth for both hashes. It:
 1. Strips `_approval_ref` from `params.Arguments` so a retry that
    echoes the ref hashes identically to the original gated call.
 2. Canonicalises the stripped JSON (key order normalised, whitespace
-   stripped) so `{"a":1,"b":2}` and `{"b":2,"a":1}` produce the same
-   `InputHash`.
+   between tokens removed) so `{"a":1,"b":2}` and `{"b":2,"a":1}` produce
+   the same `InputHash`. String values, empty values and nulls are part of
+   the hash, so a retry must send the same values.
 3. Extracts the first matching path-like arg
    (`path`/`file_path`/`target_path`/`filepath`) into the action key.
 4. Returns `(ActionTupleHash(tenant, server, tool, target_path), InputHash)`.
@@ -124,8 +133,13 @@ the active policy bundle digest.
 
 ## Blank-linkage fail-closed behaviour
 
-Both `EvaluateToolCall` and `ProcessApprovalClaim` refuse the call
-when ANY of the four identity fields on `CallMetadata` is blank:
+The direct helper `EvaluateToolCall` always refuses the call with
+`errMissingMCPMetadata` when ANY of the four identity fields on `CallMetadata`
+is blank. `ProcessApprovalClaim` runs the same check only on the claim path,
+with a wired `Store` and a non-blank `_approval_ref` string. Without a store,
+arguments, a JSON object or an `_approval_ref` key it returns no outcome and no
+error. A non-string or blank `_approval_ref` returns an `invalid _approval_ref`
+error before the metadata check. The four fields are:
 
 | Field | Source | Used for |
 |-------|--------|----------|
@@ -134,11 +148,18 @@ when ANY of the four identity fields on `CallMetadata` is blank:
 | `ExecutionID` | edge execution middleware | audit join, approval-store key |
 | `AgentID` | edge identity middleware | caller identity, audit attribution |
 
-Each function emits zero events on the fail-closed path and returns
-`errMissingMCPMetadata`. The JSON-RPC layer maps this to `-32097`
-(`gateway misconfigured`) with `error.data="missing_mcp_metadata"`.
-Operators page on the dedicated code instead of chasing a generic
-`-32603 internal error`.
+Each helper emits no events and consumes no approval on its own rejection path.
+Both helpers trim whitespace first (`callMetadataComplete`), so a whitespace-only
+field counts as blank.
+
+A policy-gated `tools/call` adds an earlier check. When Tenant, SessionID and
+ExecutionID are present and the AgentID is empty or whitespace-only, the server
+answers `-32098` with `error.data.sub_reason="no_identity"` before it touches
+any approval, so a call carrying an `_approval_ref` neither claims nor consumes
+it. See [Agent identity binding](../mcp-server.md#agent-identity-binding-x-agent-id).
+When Tenant, SessionID or ExecutionID is missing, the JSON-RPC layer maps
+`errMissingMCPMetadata` to `-32097` (`approval gate misconfigured`) with
+`error.data="missing_mcp_metadata"`, for plain and ref-bearing calls alike.
 
 ## Identity-keying rule
 
@@ -205,23 +226,28 @@ runs. That event carries `input_hash` (the canonical argument hash, with
      the same tool and arguments, through once. A replay gets `-32096`
      `not_found` ("approval not claimable").
 
-  The MCP approval record the registry gate dual-writes (`approval_id` in
-  the `-32099` data) is correlation-only. Approving it authorizes nothing:
-  it never lets a retry without `_approval_ref` run the tool. Within the
+  The registry gate dual-writes the Edge approval with a record on the MCP
+  approvals page (`approval_id` in the `-32099` data). Approving or
+  rejecting either one resolves both, and the other page then answers
+  `409`. The Edge approval is the pair's single consume token, so approving
+  the record never lets a retry without `_approval_ref` run the tool. Within the
   semantic dedupe TTL (10 minutes), a byte-identical retry by the same
   principal in the same session replays the resumed call's cached result
   without running the tool again.
 - **Outages.** An Edge store error on the mint, the approval lookup or the
   claim returns `-32096` with `kind=approval_store_unavailable`, and the
-  tool does not run.
+  tool does not run. A failed mint leaves no record on the MCP approvals
+  page, so approvers see no orphan PENDING record.
 - **Policy change during the call.** Both mint sites compare the snapshot
   stamped on the call's `mcp.tool.pre` event with the current snapshot.
   If a policy publish changed it between those reads, nothing is minted:
   the call returns `-32096` `kind=policy_snapshot_changed` with a fixed
-  reason. Retry the call without `_approval_ref`: it is evaluated under
-  the current policy, and the error is never cached. A blank snapshot on
-  either side is not a confirmed change; a blank current snapshot still
-  fails with `approval_store_unavailable` (see **Snapshot**). A publish
+  reason. The registry gate writes no record on the MCP approvals page, so
+  approvers see no orphan PENDING record. Retry the call without
+  `_approval_ref`: it is evaluated under the current policy, and the error
+  is never cached. A blank snapshot on either side is not a confirmed
+  change; a blank current snapshot still fails with
+  `approval_store_unavailable` (see **Snapshot**). A publish
   after the comparison, including after minting, remains possible: an
   approval with an older snapshot is refused at resume with
   `policy_mismatch`, as before.
@@ -238,9 +264,11 @@ runs. That event carries `input_hash` (the canonical argument hash, with
   store refuses an approval without one, so a deployment with no policy
   snapshot fails every gate-on mint with `-32096`.
 - **Audit join.** The held call's `mcp.tool_invocation` records
-  `approval_status=required` with the MCP record id as `approval_id`. The
-  resumed call's records `approval_status=consumed` with the Edge
-  `approval_ref` as `approval_id`. The `-32099` data carries both ids, and
+  `approval_status=required` with the MCP record id as `approval_id`, only
+  when the Edge mint succeeded: a failed mint leaves no record, and the
+  event reports none. The resumed call's records
+  `approval_status=consumed` with the Edge `approval_ref` as `approval_id`.
+  The `-32099` data carries both ids, and
   the Edge approval's `event_id` names the held call's `mcp.tool.pre`
   event.
 - **Action-gate holds.** A call the action-gate pipeline holds resumes the
@@ -256,13 +284,18 @@ not run.
 - **Where the hold comes from.** The production pipeline is a fixed gate
   list, and only the MCPGate answers `REQUIRE_HUMAN` for an `mcp_call`:
   its fail-closed taint hold (sub-reason
-  `taint_lookup_unavailable_failclosed`). It holds a call when all three
+  `taint_lookup_unavailable_failclosed`). It holds a call when all four
   apply:
-  1. `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` is set to a true value. The
-     gateway reads it once at boot; unset means off.
+  1. `CORDUM_MCP_TAINT_FAILCLOSED_DESTRUCTIVE` is on: by default in
+     production profiles (`CORDUM_ENV=production` or `prod`, or
+     `CORDUM_PRODUCTION=true`), or explicitly `true`. An explicit `false`
+     turns it off in every profile. The gateway reads it once at boot.
   2. The tool is destructive (default globs `*delete*`, `*remove*`,
      `*archive*`).
   3. The session-taint lookup failed.
+  4. `CORDUM_MCP_TAINT_FAILCLOSED_APPROVER` is `true`: a reviewer acts on
+     approval holds. Without it, a call that meets 1-3 is denied
+     (`service_unavailable`) instead of held.
 
   MutationGate never fires for `mcp_call`: it acts only on mutation
   actions, and TenantGate only on tenant-query and mutation actions. MCP
@@ -284,6 +317,10 @@ not run.
     denies the tool refuses the resume, and nothing runs.
   - DENY still wins: if the new evaluation denies the call, the deny
     result is returned and nothing runs.
+  - If the new evaluation allows the call instead, for example because the
+    taint lookup has recovered, the tool runs once as an allowed call. Its
+    `mcp.tool.post` or `mcp.tool.failed` event still carries `approval_ref`
+    (task-74f4c01e).
   - The claim has used the approval up before evaluation, so a DENY, a
     refusal or an upstream error burns it. Another attempt needs a new
     hold and approval.
@@ -384,7 +421,7 @@ auto-retry. A `policy_snapshot_changed` is safe to retry at once.
 | Gate-on mint binds the policy pre-event | `TestApprovalHold_MintBindsRealPreEvent` |
 | Gate-on mint without a pre-event fails closed | `TestApprovalHold_DualWriteFailsClosedWithoutPreEvent`, `TestGate_EdgeMintOutageFailsClosed` |
 | Claim binds the stored `event_id` | `TestApprovalHold_ClaimUsesStoredEventID` |
-| Gate-on HTTP resume executes exactly once | `TestPolicyGateEdgeResume_HTTPExecutesExactlyOnce` |
+| Gate-on HTTP resume makes one handler call per approved ref, and a replay of the ref is refused | `TestPolicyGateEdgeResume_HTTPExecutesExactlyOnce` |
 | Legacy MCP approval cannot resume under the gate | `TestPolicyGateEdgeResume_HTTPLegacyApprovalCannotResume` |
 | Gate-on mint and claim outages return `-32096` | `TestPolicyGateEdgeResume_HTTPMintOutageFailsClosed`, `TestPolicyGateEdgeResume_HTTPClaimOutageFailsClosed` |
 | Mid-call policy change mints nothing; retry binds the current snapshot | `TestEdgeMintPolicySnapshotDrift_IsRetryable`, `TestJSONRPC_PolicySnapshotChangedWiresTo32096` |
@@ -395,6 +432,7 @@ auto-retry. A `policy_snapshot_changed` is safe to retry at once.
 | A policy change between the claim and the resumed call's pre-event refuses the resume | `TestResume_PolicyChangedSinceClaimFailsClosed`, `TestJSONRPC_ResumePolicyChangedAfterClaim` |
 | A ref-less call racing the resume never caches a pending hold over the executed call | `TestResume_ReflessRacingReservationNeverCachesPending`, `TestResume_InFlightReflessCannotReplaceExecuted`, `TestDedupe_StaleWinnerCannotTouchResumedSlot` |
 | The invariant floor applies on resume | `TestResume_InvariantFloorDenies` |
+| An allowed resume's post or failed event carries `approval_ref` | `TestResume_AllowCarriesConsumedApprovalRef` |
 | An unconsumed `_approval_ref` or a non-authorizing handoff fails closed | `TestResume_UnconsumedApprovalRefArgFailsClosed`, `TestResume_HandoffWithoutAuthorizerFailsClosed` |
 | Scope preapproval is not consulted on an action-gate hold | `TestActionGateHold_PreapprovalNotConsulted` |
 | A preapproved identity's action-gate hold resumes once over HTTP | `TestActionGatePreapproval` |

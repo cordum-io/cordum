@@ -39,6 +39,10 @@ type DecisionLogRecord struct {
 	ApprovalStatus   ApprovalStatus        `json:"approval_status,omitempty"`
 	ApprovalDecision ApprovalDecision      `json:"approval_decision,omitempty"`
 	Timestamp        int64                 `json:"timestamp,omitempty"`
+	// DelegationIssuerChain holds the issuer agent ids of the job's
+	// dispatch-time delegation lineage, root issuer first. Empty when the
+	// job was dispatched without a delegation token.
+	DelegationIssuerChain []string `json:"delegation_issuer_chain,omitempty"`
 }
 
 // DecisionQuery scopes Policy Decision Log lookups for a single tenant.

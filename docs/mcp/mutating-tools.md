@@ -1,9 +1,14 @@
 # MCP mutating tools
 
-Cordum's MCP surface exposes seven mutating tools that let an operator fully provision
-and administer the platform over natural language. Every one of them is gated by a
-per-call human approval by default — the LLM client cannot execute the call until a
-human in the loop signs off in the dashboard or via `cordumctl mcp approve`.
+Cordum's MCP surface defines seven mutating tools for provisioning and administering
+the platform over natural language. Each requires a per-call human approval by default.
+On the API gateway the first call returns `-32099`, and the tool handler does not run until
+a human approves that exact call in the dashboard or with `cordumctl mcp approve`; with
+`mcp.policy_gate_enabled=true` the Edge approval flow in
+[Approval-Required Tools](../mcp-tools-reference.md#approval-required-tools) applies instead.
+Only `cordum_create_workflow` is wired on the gateway's HTTP MCP endpoint today, and
+scope-based preapproval (below) can exempt an identity's listed tools. CLM-018 in the
+[claims register](../contract/claims.yaml) records this approval flow as supported.
 
 This document is the canonical reference for each tool: purpose, input schema,
 approval flow, failure modes, idempotency semantics, and the audit trail fields an
@@ -36,9 +41,14 @@ surface to the operator.
 LLM → MCP server: tools/call { name: "cordum_install_pack", args: {...} }
 MCP server → LLM: JSON-RPC error -32099
                   { code: -32099,
-                    message: "tool requires human approval",
-                    data: { approval_id: "apr-7f3e…" } }
+                    message: "approval required",
+                    data: { approval_id: "apr-7f3e…",
+                            approval_ref: "apr-7f3e…",
+                            retry_hint: "retry_with_same_args", … } }
 ```
+
+This is the default flow. With the policy gate on, the resume differs: see
+[When `retry_hint` is `retry_with_approval_ref`](#when-retry_hint-is-retry_with_approval_ref).
 
 The LLM's job is to show the operator the `approval_id` and the dashboard's
 Approvals page, `/approvals` on the configured dashboard base URL (via chat, a
@@ -50,11 +60,12 @@ approval modal, and clicks **Approve** (or rejects).
 The LLM then retries the same tool call with **identical arguments** (when the
 error's `retry_hint` is `retry_with_approval_ref`, it also sends `approval_ref`
 back as `_approval_ref`; see
-[below](#when-retry_hint-is-retry_with_approval_ref)). The gateway
-canonical args hash from task-94b27344 is computed with whitespace / key-order /
-empty-field normalisation (task-2d989055 step 4), so the retry matches even if the
-LLM reformats the JSON. On the retry, the gate consumes the approval record
-atomically (CAS) and the handler runs.
+[below](#when-retry_hint-is-retry_with_approval_ref)). In the gateway's
+canonical args hash from task-94b27344 only the JSON formatting (whitespace
+between tokens) and the object key order are canonical, so the retry matches
+even if the LLM reformats the JSON. String values, empty values and nulls are
+part of the hash, so the retry must send the same values. On the retry, the
+gate consumes the approval record atomically (CAS) and the handler runs.
 
 If the operator rejects, the retry hits the rejection and returns
 `approval_rejected`. The LLM should stop rather than loop.
@@ -64,17 +75,19 @@ If the operator rejects, the retry hits the rejection and returns
 The flow above is the default one, where the `-32099` data carries
 `retry_hint: "retry_with_same_args"`. On a gateway that runs with
 `mcp.policy_gate_enabled=true`, the data carries
-`retry_hint: "retry_with_approval_ref"` and an Edge `approval_ref`, and
-identical arguments alone never resume the call:
+`retry_hint: "retry_with_approval_ref"` and an Edge `approval_ref`
+(`edge_appr_…`), which differs from `approval_id`. Clients branch on
+`retry_hint`. Identical arguments alone never resume the call:
 
-1. The `approval_id` is correlation-only. Approving that request in the default
-   view of the Approvals page does not resume the call.
+1. The `approval_id` names the record the registry gate dual-writes with the
+   Edge approval. Approving or rejecting either one resolves both, and the other
+   page then answers `409`. The Edge approval is the pair's single consume token.
 2. The operator approves the Edge approval named by `approval_ref`: on the Edge
    lane of the Approvals page (`/approvals?lane=edge`), or with
    `POST /api/v1/edge/approvals/{approval_ref}/approve`.
 3. The LLM retries with the same arguments and sends the `approval_ref` back as
    the extra argument `_approval_ref`. The server strips it before the handler
-   runs.
+   runs. A retry without `_approval_ref` does not resume the approval.
 
 See [approval_hold.md](./approval_hold.md) for the full contract and the
 `-32096` errors a refused resume returns.
@@ -87,8 +100,11 @@ enqueues a **new** approval. That second retry is what `idempotency_key` is for:
 set it once per logical call and the downstream gateway dedupes, returning the
 prior result without re-creating the resource.
 
-Approval records expire after 30 minutes (configurable via
-`CORDUM_MCP_APPROVAL_TTL`). After expiry, the next retry enqueues a fresh approval
+A pending approval expires 5 minutes after the gate requests it: the gate sets no
+TTL of its own, so the store default applies. Expiry ends the approval, not its
+stored records. The MCP approval record and its index expire 1 minute later, and
+an Edge approval record written alongside it has no TTL (DI-C46 and DI-C02 in
+`docs/contract/data-inventory.yaml`). After expiry, the next retry enqueues a fresh approval
 — the LLM should surface the new link to the operator.
 
 ## Catalogue
@@ -292,7 +308,8 @@ resource/entitlement allowlists and mutating-tool preapproval.
 | `idempotency_key` | string | no | Retry-safe key |
 
 **MCPGate fail-closed semantics.** `AllowedServers`, `AllowedResources`, and
-`Entitlements` are enforced by the action-gate layer after identity resolution.
+`Entitlements` are checked by the action-gate layer after identity resolution (CLM-051 in
+the [claims register](../contract/claims.yaml), status supported).
 Leaving a list absent or empty does **not** mean wildcard; server-guarded,
 resource-guarded, and required-entitlement MCP actions deny with
 `server_not_allowlisted`, `resource_not_allowlisted`, or `unlicensed`.
@@ -310,7 +327,7 @@ appropriate and how to audit it.
 
 ## Audit trail fields
 
-Every mutating call produces two SIEMEvents that land on the Merkle audit chain:
+Every mutating call produces two SIEMEvents that land on the audit hash chain:
 
 1. `mcp.tool_approval(outcome=enqueued)` — emitted by the gate when it enqueues.
    Extra carries `tool_name`, `args_hash`, `approval_id`, `requester`,
@@ -358,13 +375,17 @@ exits cleanly."*
 ```json
 {
   "code": -32099,
-  "message": "tool \"cordum_create_workflow\" matches approval scope \"mcp_write\"",
-  "data": { "approval_id": "apr-1a2b3c", "tool": "cordum_create_workflow" }
+  "message": "approval required",
+  "data": { "approval_id": "apr-1a2b3c", "retry_hint": "retry_with_same_args", "tool": "cordum_create_workflow" }
 }
 ```
 
+This example uses the default flow. With the policy gate on, step 4 approves the
+Edge approval named by `approval_ref`, and step 5 adds `_approval_ref`; see
+[When `retry_hint` is `retry_with_approval_ref`](#when-retry_hint-is-retry_with_approval_ref).
+
 Claude Code surfaces: *"This tool needs approval. Open
-http://localhost:8081/approvals and approve request apr-1a2b3c"*
+http://localhost:8082/approvals and approve request apr-1a2b3c"*
 
 **Step 4.** The operator opens the dashboard's Approvals page, finds the request
 with approval ID `apr-1a2b3c`, reviews the canonical args in the modal, and clicks

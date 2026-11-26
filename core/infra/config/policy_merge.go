@@ -459,31 +459,49 @@ func CloneTenantPolicy(policy TenantPolicy) TenantPolicy {
 }
 
 // MergeMCPPolicy merges two MCP policies (base elements precede extra elements
-// in each list; inputs are not aliased).
+// in each list; inputs are not aliased). The reserved gateway fields are kept
+// too, so the Safety Kernel can warn about them: gateway_enabled is set when
+// either side sets it.
 func MergeMCPPolicy(base, extra MCPPolicy) MCPPolicy {
 	return MCPPolicy{
-		AllowServers:   append(append([]string{}, base.AllowServers...), extra.AllowServers...),
-		DenyServers:    append(append([]string{}, base.DenyServers...), extra.DenyServers...),
-		AllowTools:     append(append([]string{}, base.AllowTools...), extra.AllowTools...),
-		DenyTools:      append(append([]string{}, base.DenyTools...), extra.DenyTools...),
-		AllowResources: append(append([]string{}, base.AllowResources...), extra.AllowResources...),
-		DenyResources:  append(append([]string{}, base.DenyResources...), extra.DenyResources...),
-		AllowActions:   append(append([]string{}, base.AllowActions...), extra.AllowActions...),
-		DenyActions:    append(append([]string{}, base.DenyActions...), extra.DenyActions...),
+		AllowServers:     append(append([]string{}, base.AllowServers...), extra.AllowServers...),
+		DenyServers:      append(append([]string{}, base.DenyServers...), extra.DenyServers...),
+		AllowTools:       append(append([]string{}, base.AllowTools...), extra.AllowTools...),
+		DenyTools:        append(append([]string{}, base.DenyTools...), extra.DenyTools...),
+		AllowResources:   append(append([]string{}, base.AllowResources...), extra.AllowResources...),
+		DenyResources:    append(append([]string{}, base.DenyResources...), extra.DenyResources...),
+		AllowActions:     append(append([]string{}, base.AllowActions...), extra.AllowActions...),
+		DenyActions:      append(append([]string{}, base.DenyActions...), extra.DenyActions...),
+		GatewayEnabled:   base.GatewayEnabled || extra.GatewayEnabled,
+		UpstreamServers:  append(cloneUpstreamServers(base.UpstreamServers), cloneUpstreamServers(extra.UpstreamServers)...),
+		AllowedUpstreams: append(append([]string(nil), base.AllowedUpstreams...), extra.AllowedUpstreams...),
 	}
 }
 
 func cloneMCPPolicy(policy MCPPolicy) MCPPolicy {
 	return MCPPolicy{
-		AllowServers:   append([]string{}, policy.AllowServers...),
-		DenyServers:    append([]string{}, policy.DenyServers...),
-		AllowTools:     append([]string{}, policy.AllowTools...),
-		DenyTools:      append([]string{}, policy.DenyTools...),
-		AllowResources: append([]string{}, policy.AllowResources...),
-		DenyResources:  append([]string{}, policy.DenyResources...),
-		AllowActions:   append([]string{}, policy.AllowActions...),
-		DenyActions:    append([]string{}, policy.DenyActions...),
+		AllowServers:     append([]string{}, policy.AllowServers...),
+		DenyServers:      append([]string{}, policy.DenyServers...),
+		AllowTools:       append([]string{}, policy.AllowTools...),
+		DenyTools:        append([]string{}, policy.DenyTools...),
+		AllowResources:   append([]string{}, policy.AllowResources...),
+		DenyResources:    append([]string{}, policy.DenyResources...),
+		AllowActions:     append([]string{}, policy.AllowActions...),
+		DenyActions:      append([]string{}, policy.DenyActions...),
+		GatewayEnabled:   policy.GatewayEnabled,
+		UpstreamServers:  cloneUpstreamServers(policy.UpstreamServers),
+		AllowedUpstreams: append([]string(nil), policy.AllowedUpstreams...),
 	}
+}
+
+func cloneUpstreamServers(servers []UpstreamServerConfig) []UpstreamServerConfig {
+	var out []UpstreamServerConfig
+	for _, server := range servers {
+		server.Command = append([]string(nil), server.Command...)
+		server.Labels = cloneStringMap(server.Labels)
+		out = append(out, server)
+	}
+	return out
 }
 
 func cloneStringMap(values map[string]string) map[string]string {

@@ -71,9 +71,10 @@ type claudeHookSet struct {
 }
 
 type claudeCommandHook struct {
-	Type    string `json:"type"`
-	Command string `json:"command"`
-	Timeout int    `json:"timeout,omitempty"`
+	Type      string `json:"type"`
+	Command   string `json:"command"`
+	Timeout   int    `json:"timeout,omitempty"`
+	OnFailure string `json:"onFailure,omitempty"`
 }
 
 // GenerateDevSettingsJSON returns a deterministic Claude Code settings.json
@@ -106,7 +107,7 @@ func GenerateDevSettingsJSON(opts DevSettingsOptions) ([]byte, error) {
 	doc := claudeSettingsDocument{
 		Schema: claudeSettingsSchema,
 		Env:    env,
-		Hooks:  commandHookSettings(hookCommand, opts.HookTimeout, opts.FileChangedWatchList),
+		Hooks:  commandHookSettings(hookCommand, opts.HookTimeout, opts.FileChangedWatchList, opts.FailClosed),
 	}
 	data, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
@@ -205,8 +206,19 @@ func stripAgentdURLNonce(raw string) (string, bool) {
 	return u.String(), true
 }
 
-func commandHookSettings(hookCommand string, timeout time.Duration, watchList []string) map[string][]claudeHookSet {
-	return map[string][]claudeHookSet{
+// blockingHookEvents are the generated events that can block on exit 2. In
+// fail-closed sessions their hooks get onFailure:"block" (Claude Code
+// v2.1.295+), so a hook that cannot start, exits other than 0/2, times out or
+// prints invalid JSON blocks the action instead of letting it through. The
+// other events cannot block, and observe sessions stay fail-open by design.
+var blockingHookEvents = map[string]bool{
+	"PreToolUse":       true,
+	"UserPromptSubmit": true,
+	"ConfigChange":     true,
+}
+
+func commandHookSettings(hookCommand string, timeout time.Duration, watchList []string, failClosed bool) map[string][]claudeHookSet {
+	sets := map[string][]claudeHookSet{
 		"UserPromptSubmit": {
 			{Hooks: []claudeCommandHook{commandHook(hookCommand, "user-prompt-submit", timeout)}},
 		},
@@ -226,6 +238,12 @@ func commandHookSettings(hookCommand string, timeout time.Duration, watchList []
 			{Matcher: fileChangedMatcher(watchList), Hooks: []claudeCommandHook{commandHook(hookCommand, "file-changed", timeout)}},
 		},
 	}
+	if failClosed {
+		for event := range blockingHookEvents {
+			sets[event][0].Hooks[0].OnFailure = "block"
+		}
+	}
+	return sets
 }
 
 func commandHook(hookCommand, subcommand string, timeout time.Duration) claudeCommandHook {

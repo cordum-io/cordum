@@ -183,6 +183,10 @@ func startRealSafetyKernel(t *testing.T) *grpc.ClientConn {
 	}
 	addr := reserveLocalAddr(t)
 	t.Setenv("SAFETY_KERNEL_ADMIN_ADDR", reserveLocalAddr(t))
+	// RunWithEntitlements returns only on SIGINT/SIGTERM, so this kernel
+	// outlives the test. A day-long poll keeps it from reloading, publishing
+	// or logging into a later test's captured slog.
+	t.Setenv("SAFETY_POLICY_RELOAD_INTERVAL", "24h")
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- safetykernel.RunWithEntitlements(&runtimeconfig.Config{

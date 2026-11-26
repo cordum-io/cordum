@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 from typing import List
 
@@ -21,10 +21,10 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
+    from ..models.edge_labels import EdgeLabels
     from ..models.edge_agent_action_event_input_redacted_type_0 import (
         EdgeAgentActionEventInputRedactedType0,
     )
-    from ..models.edge_labels import EdgeLabels
     from ..models.edge_artifact_pointer import EdgeArtifactPointer
 
 
@@ -101,8 +101,6 @@ class EdgeAgentActionEvent:
         from ..models.edge_agent_action_event_input_redacted_type_0 import (
             EdgeAgentActionEventInputRedactedType0,
         )
-        from ..models.edge_labels import EdgeLabels
-        from ..models.edge_artifact_pointer import EdgeArtifactPointer
 
         event_id = self.event_id
 
@@ -232,10 +230,10 @@ class EdgeAgentActionEvent:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
+        from ..models.edge_labels import EdgeLabels
         from ..models.edge_agent_action_event_input_redacted_type_0 import (
             EdgeAgentActionEventInputRedactedType0,
         )
-        from ..models.edge_labels import EdgeLabels
         from ..models.edge_artifact_pointer import EdgeArtifactPointer
 
         d = src_dict.copy()

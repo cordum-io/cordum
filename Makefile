@@ -1,7 +1,7 @@
 PROTO_SRC = core/protocol/proto/v1
 PB_OUT_CORE = core/protocol/pb/v1
 PROTO_OUT_CORE = $(abspath $(PB_OUT_CORE))
-PROTO_FILES = api.proto context.proto output_policy.proto
+PROTO_FILES = api.proto context.proto output_policy.proto execution_grant.proto
 OPENAPI_OUT = docs/api/openapi
 
 BIN_DIR ?= bin
@@ -133,7 +133,7 @@ help:
 	@echo "  make build SERVICE=X    Build a single service (e.g. SERVICE=cordum-scheduler, cordum-hook, or cordum-agentd)"
 	@echo "  make proto              Regenerate protobuf Go code"
 	@echo "  make test               Run all Go tests"
-	@echo "  make test-integration   Run integration tests (requires Docker)"
+	@echo "  make test-integration   Run integration-tagged tests (in-process, no Docker)"
 	@echo "  make coverage           Full coverage report"
 	@echo "  make coverage-core      Core coverage check (80% minimum)"
 	@echo "  make openapi            Validate cordum-api.yaml (Redocly lint)"

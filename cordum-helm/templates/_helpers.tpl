@@ -91,6 +91,22 @@ redisPassword
 {{- end -}}
 {{- end -}}
 
+{{/*
+NATS_TOKEN for every service that connects to NATS; core/infra/bus reads it
+from the environment. The bundled NATS server enforces only an inline
+nats.auth.token: nats.auth.existingTokenSecret is for an external NATS that
+already requires that token.
+*/}}
+{{- define "cordum.natsTokenEnv" -}}
+{{- if or .Values.nats.auth.token .Values.nats.auth.existingTokenSecret -}}
+- name: NATS_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "cordum.natsTokenSecretName" . }}
+      key: {{ default "NATS_TOKEN" .Values.nats.auth.existingTokenSecretKey | quote }}
+{{- end }}
+{{- end -}}
+
 {{- define "cordum.jwtSecretName" -}}
 {{- printf "%s-jwt" (include "cordum.fullname" .) -}}
 {{- end -}}

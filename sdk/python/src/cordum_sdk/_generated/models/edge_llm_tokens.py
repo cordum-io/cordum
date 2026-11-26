@@ -1,8 +1,7 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar
 
 
 from attrs import define as _attrs_define
-from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
@@ -10,27 +9,22 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="EdgeLLMTokens")
 
 
 @_attrs_define
 class EdgeLLMTokens:
-    """ Optional token accounting for usage/cost evidence.
+    """Optional token accounting for usage/cost evidence.
 
-        Attributes:
-            input_tokens (Union[Unset, int]):
-            output_tokens (Union[Unset, int]):
-            total_tokens (Union[Unset, int]):
-     """
+    Attributes:
+        input_tokens (Union[Unset, int]):
+        output_tokens (Union[Unset, int]):
+        total_tokens (Union[Unset, int]):
+    """
 
     input_tokens: Union[Unset, int] = UNSET
     output_tokens: Union[Unset, int] = UNSET
     total_tokens: Union[Unset, int] = UNSET
-
 
     def to_dict(self) -> Dict[str, Any]:
         input_tokens = self.input_tokens
@@ -39,10 +33,8 @@ class EdgeLLMTokens:
 
         total_tokens = self.total_tokens
 
-
         field_dict: Dict[str, Any] = {}
-        field_dict.update({
-        })
+        field_dict.update({})
         if input_tokens is not UNSET:
             field_dict["input_tokens"] = input_tokens
         if output_tokens is not UNSET:
@@ -51,8 +43,6 @@ class EdgeLLMTokens:
             field_dict["total_tokens"] = total_tokens
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -70,4 +60,3 @@ class EdgeLLMTokens:
         )
 
         return edge_llm_tokens
-

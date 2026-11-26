@@ -1,29 +1,42 @@
 name: Release binaries
 
-# EDGE-151 — release-time binary integrity. On every `v*` tag this workflow:
+# EDGE-151 — release-time binary integrity. docker.yml calls this workflow:
+# binaries on v* tags inherits secrets; binaries-dry-run on release-dry-run/**
+# passes no secrets. The called workflow:
 #   1. Cross-compiles cordum-hook, cordum-agentd, and cordum-claude for 5
 #      desktop targets (Linux amd64/arm64, macOS amd64/arm64, Windows amd64)
 #      with the production release fingerprint pinned at link time.
-#   2. Tier 1 (always-on, when GPG_RELEASE_KEY_PRIVATE is provisioned):
-#      writes a deterministic SHA256SUMS manifest and produces a detached
-#      ASCII-armored signature SHA256SUMS.asc.
+#   2. Tier 1 (always-on): writes a deterministic SHA256SUMS manifest, signs
+#      it keylessly with cosign (GitHub OIDC, Sigstore) into
+#      SHA256SUMS.sigstore.json, then runs tools/scripts/install.sh on the
+#      release directory and on a copy with one changed byte, which it must
+#      refuse. Both callers grant id-token: write for the signature. When
+#      GPG_RELEASE_KEY_PRIVATE is provisioned it also writes SHA256SUMS.asc.
 #   3. Tier 2 (conditional on OS-native secrets + canonical-repo only):
 #      Apple Developer ID codesign + notarization for the darwin binaries,
 #      Authenticode signtool for the windows binary. Forks degrade
 #      gracefully to Tier 1 via `continue-on-error: true`.
-#   4. Publishes the signed manifest + binaries via `gh release create`.
+#   4. Writes the binary qualification entry; docker.yml's publish-binaries
+#      job publishes the manifest and binaries against the run's record.
 #
 # Fork behaviour: missing secrets cause the matching job to log a banner
 # and exit success-skipped; the workflow still succeeds with Tier 1 only.
 # See docs/security/binary-signing.md for the trust boundary.
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_call:
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  EXPECTED_BINARIES: >-
+    cordum-agentd-darwin-amd64 cordum-agentd-darwin-arm64 cordum-agentd-linux-amd64
+    cordum-agentd-linux-arm64 cordum-agentd-windows-amd64.exe cordum-claude-darwin-amd64
+    cordum-claude-darwin-arm64 cordum-claude-linux-amd64 cordum-claude-linux-arm64
+    cordum-claude-windows-amd64.exe cordum-hook-darwin-amd64 cordum-hook-darwin-arm64
+    cordum-hook-linux-amd64 cordum-hook-linux-arm64 cordum-hook-windows-amd64.exe
+  BINARY_NO_RELEASE_GATE_REASON: "No release-time test or scan runs against the Edge binaries; the record pins their sha256 digests."
 
 jobs:
   version-monotonicity:
@@ -46,6 +59,7 @@ jobs:
         run: git fetch --tags --force
       - name: Resolve pushed and prior tags
         id: tags
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           set -euo pipefail
           pushed="${GITHUB_REF#refs/tags/}"
@@ -60,6 +74,7 @@ jobs:
           echo "prior=$prior"   >>"$GITHUB_OUTPUT"
           echo "Pushed: $pushed, Prior: $prior"
       - name: Enforce monotonicity
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           set -euo pipefail
           go run ./tools/sign/cmd/version-cli monotonic-or-fail \
@@ -229,7 +244,7 @@ jobs:
           retention-days: 1
 
   sign-manifest:
-    # Tier 1 — always-on GPG-signed SHA256SUMS manifest. Always runs on
+    # Tier 1 — always-on keyless-signed SHA256SUMS manifest. Always runs on
     # ubuntu so forks without OS-native secrets still get the integrity
     # gate that install.sh + tools/sign/Verifier consume.
     name: tier1 sign manifest
@@ -237,6 +252,9 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write # cosign keyless signing of SHA256SUMS
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -263,6 +281,45 @@ jobs:
             done
           done
           ls -la release/
+      - name: Build release-qual
+        run: |
+          go build -trimpath -o "$RUNNER_TEMP/release-qual" ./tools/releasequal/cmd/release-qual
+          echo "RELEASE_QUAL=$RUNNER_TEMP/release-qual" >> "$GITHUB_ENV"
+      - name: Qualify staged binaries
+        id: qualify-binaries
+        env:
+          DRY_RUN: ${{ startsWith(github.ref, 'refs/heads/release-dry-run/') }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          staged=(release/cordum-*)
+          names=()
+          files=()
+          for f in "${staged[@]}"; do
+            [[ -f "$f" && ! -L "$f" ]] || { echo "::error::not a regular binary: $f"; exit 1; }
+            names+=("${f##*/}")
+            files+=(--file "$f")
+          done
+          diff <(printf '%s\n' $EXPECTED_BINARIES | sort) <(printf '%s\n' "${names[@]}" | sort)
+          mkdir -p "$RUNNER_TEMP/qual"
+          "$RELEASE_QUAL" entry --kind binary "${files[@]}" \
+            --exception "binary-no-release-gate=$BINARY_NO_RELEASE_GATE_REASON" \
+            --out "$RUNNER_TEMP/qual/entry-binaries.json"
+          dry_run=()
+          if [[ "$DRY_RUN" == true ]]; then dry_run=(--dry-run); fi
+          "$RELEASE_QUAL" assemble --out "$RUNNER_TEMP/qual/binary-record.json" \
+            --ref "$GITHUB_REF" --run-url "$RUN_URL" --repository "$GITHUB_REPOSITORY" \
+            --sha "$GITHUB_SHA" "${dry_run[@]}" "$RUNNER_TEMP/qual/entry-binaries.json"
+          "$RELEASE_QUAL" validate "$RUNNER_TEMP/qual/binary-record.json"
+          "$RELEASE_QUAL" check --record "$RUNNER_TEMP/qual/binary-record.json" "${files[@]}"
+      - name: Upload binary qualification entry
+        uses: actions/upload-artifact@v7
+        with:
+          name: qual-entry-binaries
+          path: ${{ runner.temp }}/qual/entry-binaries.json
+          overwrite: true
+          if-no-files-found: error
       - name: Build manifest-cli
         run: go build -trimpath -o release/.manifest-cli ./tools/sign/cmd/manifest-cli
       - name: Generate SHA256SUMS
@@ -277,8 +334,13 @@ jobs:
           ./.manifest-cli $paths > SHA256SUMS
           rm -f .manifest-cli
           # EDGE-151-DOWNGRADE: prepend `# version: <tag>` so install.{sh,ps1}
-          # can enforce monotonic floor on the operator endpoint.
-          tag="${GITHUB_REF#refs/tags/}"
+          # can enforce monotonic floor on the operator endpoint. A dry run
+          # gets a pre-release of v0.0.0, below every real tag.
+          case "$GITHUB_REF" in
+            refs/tags/v*) tag="${GITHUB_REF#refs/tags/}" ;;
+            refs/heads/release-dry-run/*) tag="v0.0.0-dryrun.${GITHUB_RUN_NUMBER}" ;;
+            *) echo "::error::SHA256SUMS is written only for v* tags and release-dry-run/** branches, not ${GITHUB_REF}"; exit 1 ;;
+          esac
           {
             printf '# version: %s\n' "$tag"
             cat SHA256SUMS
@@ -324,52 +386,67 @@ jobs:
       - name: Banner — Tier 1 skipped
         if: steps.tier1_secrets.outputs.has_gpg == 'false'
         run: |
-          echo "::warning::GPG_RELEASE_KEY_PRIVATE not set on this fork — SHA256SUMS.asc was NOT produced. install.sh will refuse these artefacts in production mode (--dev-allow-unsigned only)."
+          echo "::notice::GPG_RELEASE_KEY_PRIVATE not set — SHA256SUMS.asc was NOT produced. The keyless SHA256SUMS.sigstore.json bundle from the next steps is this release's signature."
+      - name: Install cosign
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      # SHA256SUMS and the binaries are final from here on: nothing below
+      # changes them in release/.
+      - name: Sign SHA256SUMS keylessly
+        id: sign-blob
+        run: cosign sign-blob --yes --bundle release/SHA256SUMS.sigstore.json release/SHA256SUMS
+      # install.sh's built-in identity accepts only release.yml at a v* tag of
+      # cordum-io/cordum. Dry runs and forks pin this run's exact identity.
+      - name: Pin the signer identity of this run
+        id: pin-signer-identity
+        if: github.repository != 'cordum-io/cordum' || !startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          identity="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/release.yml@${GITHUB_REF}"
+          escaped="$(printf '%s' "$identity" | sed 's|[^[:alnum:]/:@_-]|\\&|g')"
+          echo "CORDUM_COSIGN_IDENTITY_REGEXP=^${escaped}\$" >> "$GITHUB_ENV"
+          echo "signer identity pinned to ${identity}"
+      - name: Verify the signed release with install.sh
+        id: verify-release
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/verify-release.log"
+          CORDUM_BINARY_FLOOR_FILE="$RUNNER_TEMP/verify-release-floor.json" \
+            bash tools/scripts/install.sh --release-dir release 2>&1 | tee "$log"
+          want="$(wc -w <<<"$EXPECTED_BINARIES")"
+          got="$(grep -c '"event":"binary-verify-ok".*"sig_scheme":"cosign-keyless"' "$log" || true)"
+          [ "$got" -eq "$want" ] || { echo "::error::install.sh verified ${got} binaries with the keyless signature, want ${want}"; exit 1; }
+          grep -qxF "[install] release-dir verified: release (${want} binaries match manifest)" "$log" \
+            || { echo "::error::install.sh did not report the verify-only result"; exit 1; }
+          echo "VERIFY_RELEASE_OK ${got} binaries"
+      - name: Refuse a tampered copy with install.sh
+        id: refuse-tampered
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/refuse-tampered"
+          bin=cordum-hook-linux-amd64
+          mkdir -p "$work/install"
+          cp -a release "$work/release"
+          # One changed byte in one binary; SHA256SUMS and its bundle stay as signed.
+          printf 'X' | dd of="$work/release/$bin" bs=1 count=1 conv=notrunc status=none
+          changed="$(cmp -l "release/$bin" "$work/release/$bin" | wc -l || true)"
+          [ "$changed" -eq 1 ] || { echo "::error::want one changed byte in $bin, got ${changed}"; exit 1; }
+          rc=0
+          CORDUM_BINARY_FLOOR_FILE="$work/floor.json" \
+            bash tools/scripts/install.sh --release-dir "$work/release" --install-dir "$work/install" >"$work/out.log" 2>&1 || rc=$?
+          cat "$work/out.log"
+          [ "$rc" -ne 0 ] || { echo "::error::install.sh accepted a copy with a changed $bin"; exit 1; }
+          grep -qxF "BINARY-VERIFY-FAIL: hash mismatch $bin" "$work/out.log" \
+            || { echo "::error::install.sh refused the copy for another reason"; exit 1; }
+          [ -z "$(ls -A "$work/install")" ] || { echo "::error::install dir is not empty"; exit 1; }
+          [ ! -e "$work/floor.json" ] || { echo "::error::install.sh wrote a version floor"; exit 1; }
+          echo "REFUSE_TAMPERED_OK $bin rc=${rc}"
       - uses: actions/upload-artifact@v7
         with:
           name: release-bundle
           path: |
             release/cordum-*
             release/SHA256SUMS
+            release/SHA256SUMS.sigstore.json
             release/SHA256SUMS.asc
           if-no-files-found: error
           retention-days: 7
-
-  publish:
-    name: gh release create
-    needs: [sign-manifest]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    if: ${{ !contains(github.ref, '-rc') }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
-        with:
-          name: release-bundle
-          path: release/
-      - name: Require signed manifest on canonical release
-        if: github.repository == 'cordum-io/cordum'
-        run: |
-          set -euo pipefail
-          if [ ! -f release/SHA256SUMS.asc ]; then
-            echo "::error::canonical release tag ${GITHUB_REF#refs/tags/} requires a signed SHA256SUMS.asc; sign-manifest job did not produce one (GPG_RELEASE_KEY_PRIVATE missing or signing failed). Refusing to publish an unsigned release."
-            exit 1
-          fi
-          if [ ! -f release/SHA256SUMS ]; then
-            echo "::error::release/SHA256SUMS missing"
-            exit 1
-          fi
-      - name: Create release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          tag="${GITHUB_REF#refs/tags/}"
-          assets=()
-          for f in release/cordum-* release/SHA256SUMS release/SHA256SUMS.asc; do
-            [ -f "$f" ] && assets+=("$f")
-          done
-          gh release create "$tag" \
-            --title "$tag" \
-            --notes "Cordum desktop binaries for $tag. Verify via SHA256SUMS + SHA256SUMS.asc — see docs/security/binary-signing.md." \
-            "${assets[@]}"

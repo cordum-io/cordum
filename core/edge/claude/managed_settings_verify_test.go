@@ -18,7 +18,7 @@ func TestVerifyManagedSettingsPassesGolden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read golden fixture: %v", err)
 	}
-	res, err := VerifyManagedSettings(data)
+	res, err := VerifyManagedSettingsWithOptions(data, ManagedSettingsVerifyOptions{MCPGatewayURL: trustedManagedMCPGatewayURL})
 	if err != nil {
 		t.Fatalf("VerifyManagedSettings returned error on golden: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestVerifyManagedSettingsDetectsAllInvariantViolations(t *testing.T) {
 			if err != nil {
 				t.Fatalf("marshal mutated doc: %v", err)
 			}
-			res, err := VerifyManagedSettings(mutated)
+			res, err := VerifyManagedSettingsWithOptions(mutated, ManagedSettingsVerifyOptions{MCPGatewayURL: trustedManagedMCPGatewayURL})
 			if err != nil {
 				t.Fatalf("VerifyManagedSettings returned parse error: %v", err)
 			}
@@ -223,7 +223,7 @@ func TestVerifyManagedSettingsCrossPlatformPathVariants(t *testing.T) {
 			if err != nil {
 				t.Fatalf("generate %s bundle: %v", tc.name, err)
 			}
-			res, err := VerifyManagedSettings(bundle.ManagedSettingsJSON)
+			res, err := VerifyManagedSettingsWithOptions(bundle.ManagedSettingsJSON, ManagedSettingsVerifyOptions{MCPGatewayURL: trustedManagedMCPGatewayURL})
 			if err != nil {
 				t.Fatalf("verify %s bundle: %v", tc.name, err)
 			}

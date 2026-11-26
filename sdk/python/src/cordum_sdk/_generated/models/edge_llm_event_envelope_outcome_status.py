@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class EdgeLLMEventEnvelopeOutcomeStatus(str, Enum):
     DEGRADED = "degraded"
     FAILED = "failed"

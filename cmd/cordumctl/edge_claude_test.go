@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/url"
 	"os"
@@ -70,6 +71,12 @@ func TestEdgeClaudeDryRunSettingsOutputRedactsSecrets(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
+	// Stands in for `claude --version` when a test points --claude-path at
+	// this binary (see newEdgeDoctorFixture).
+	if version := os.Getenv("CORDUM_TEST_CLAUDE_VERSION"); version != "" && len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Println(version)
+		os.Exit(0)
+	}
 	if os.Getenv("CORDUMCTL_EDGE_HELPER") == "1" && os.Getenv("CORDUM_AGENTD_NONCE") != "" {
 		os.Exit(runCordumctlAgentdHelper())
 	}

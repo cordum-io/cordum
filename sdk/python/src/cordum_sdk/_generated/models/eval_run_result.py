@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 from typing import List
 
@@ -6,18 +6,16 @@ from typing import List
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..types import UNSET, Unset
 
 from dateutil.parser import isoparse
-from typing import cast
-from typing import cast, List
+from typing import List
 from typing import Dict
 from uuid import UUID
 import datetime
 
 if TYPE_CHECKING:
-    from ..models.eval_run_summary import EvalRunSummary
     from ..models.eval_entry_result import EvalEntryResult
+    from ..models.eval_run_summary import EvalRunSummary
 
 
 T = TypeVar("T", bound="EvalRunResult")
@@ -52,9 +50,6 @@ class EvalRunResult:
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.eval_run_summary import EvalRunSummary
-        from ..models.eval_entry_result import EvalEntryResult
-
         run_id = str(self.run_id)
 
         dataset_id = self.dataset_id
@@ -99,8 +94,8 @@ class EvalRunResult:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.eval_run_summary import EvalRunSummary
         from ..models.eval_entry_result import EvalEntryResult
+        from ..models.eval_run_summary import EvalRunSummary
 
         d = src_dict.copy()
         run_id = UUID(d.pop("run_id"))

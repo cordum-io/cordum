@@ -1,15 +1,7 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar
 
 
 from attrs import define as _attrs_define
-from attrs import field as _attrs_field
-
-from ..types import UNSET, Unset
-
-
-
-
-
 
 
 T = TypeVar("T", bound="ResolveMemoryResourceResponse200")
@@ -17,17 +9,16 @@ T = TypeVar("T", bound="ResolveMemoryResourceResponse200")
 
 @_attrs_define
 class ResolveMemoryResourceResponse200:
-    """ 
-        Attributes:
-            media_type (str):
-            size_bytes (int):
-            base64 (str):
-     """
+    """
+    Attributes:
+        media_type (str):
+        size_bytes (int):
+        base64 (str):
+    """
 
     media_type: str
     size_bytes: int
     base64: str
-
 
     def to_dict(self) -> Dict[str, Any]:
         media_type = self.media_type
@@ -36,17 +27,16 @@ class ResolveMemoryResourceResponse200:
 
         base64 = self.base64
 
-
         field_dict: Dict[str, Any] = {}
-        field_dict.update({
-            "media_type": media_type,
-            "size_bytes": size_bytes,
-            "base64": base64,
-        })
+        field_dict.update(
+            {
+                "media_type": media_type,
+                "size_bytes": size_bytes,
+                "base64": base64,
+            }
+        )
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -64,4 +54,3 @@ class ResolveMemoryResourceResponse200:
         )
 
         return resolve_memory_resource_response_200
-

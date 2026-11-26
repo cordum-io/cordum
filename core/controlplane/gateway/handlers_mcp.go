@@ -3,12 +3,17 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,9 +32,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// mcpAgentIDHeader is the request header that identifies the calling
-// MCP agent. The gateway uses it (with a principal-ID fallback) to
-// populate MCPCallMetadata so the approval gate can log who is asking.
+// mcpAgentIDHeader is the optional request header naming the calling MCP
+// agent. It may only confirm the agent identity bound to the authenticated
+// principal, never select one (ruling Q4); see resolveMCPIdentity.
 const mcpAgentIDHeader = "X-Agent-Id"
 
 // mcpCopilotSessionIDHeader optionally groups a client's tool calls into a
@@ -120,7 +125,8 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 		return nil
 	}
 
-	transport := mcp.NewHTTPTransport(mcp.DefaultMaxMessageBytes, mcp.DefaultHTTPResponseTimeout)
+	transport := mcp.NewHTTPTransport(mcp.DefaultMaxMessageBytes, mcp.DefaultHTTPResponseTimeout).
+		WithSessionOwner(mcpSessionOwner)
 	toolRegistry := mcp.NewToolRegistry()
 	resourceRegistry := mcp.NewResourceRegistry()
 	toolRegistry.SetConfig(cfg.Raw)
@@ -141,6 +147,9 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 	if client := s.redisClient(); client != nil {
 		approvalStore = NewMCPApprovalStore(client).WithAuditHook(s.mcpApprovalAuditHook())
 		approvalHandler = newMCPApprovalHandler(approvalStore)
+		if s.edgeStore != nil {
+			approvalHandler.resolveEdgeTwin = s.resolveMCPApprovalEdgeTwin
+		}
 		// Scope-preapproval lookup — gate consults the agent identity
 		// store first so a CI bot with PreapprovedMutatingTools set
 		// can skip the human-approval step. Audit still fires; see
@@ -152,7 +161,8 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 		// passes a stub invariant lookup, the production path passes the
 		// bundle-reading closure below.
 		invariantLookup := MCPInvariantLookupFunc(func(ctx context.Context) []config.PolicyRule {
-			bundles, _, err := s.loadPolicyBundles(ctx)
+			// Workflow bundles cannot hold secops/invariants; one config GET suffices.
+			bundles, _, err := s.loadPolicyBundlesWithDoc(ctx)
 			if err != nil {
 				slog.Warn("mcp gate invariant lookup: load policy bundles failed", "err", err)
 				return nil
@@ -194,13 +204,14 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 	// MCP clients dereference Cordum records by stable URI. Must run on
 	// the production bootstrap (not just in tests) or resources/list
 	// omits the templates and dereference returns 404 — QA reopen fix
-	// for task-466b6a6a.
+	// for task-466b6a6a. Its cordum://jobs/{id} replaces the data bridge's
+	// template of the same name, so serviceBridge must serve GetJob.
 	if err := mcp.RegisterCordumURIResources(resourceRegistry, serviceBridge); err != nil {
 		return fmt.Errorf("register cordum:// resources: %w", err)
 	}
 	// mcp.tool_called audit hook. Every successful tools/call emits a
 	// SIEMEvent through the gateway's audit exporter so it lands in the
-	// Merkle chain. Without this wire-up the epic rail "Audit every
+	// audit hash chain. Without this wire-up the epic rail "Audit every
 	// tool call via SIEMEvent mcp_tool_called" is violated — another
 	// QA reopen fix.
 	if hook := s.mcpToolCallAuditHook(); hook != nil {
@@ -233,7 +244,7 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 		// Tap the invocation audit stream into Copilot session transcripts when
 		// the Redis store is wired. The decorator only acts on inbound
 		// invocation events that carry a copilot_session_id; it always forwards
-		// to the inner sender so the audit Merkle chain is unaffected.
+		// to the inner sender so the audit hash chain is unaffected.
 		auditSender := s.auditExporter
 		if s.copilotSessionStore != nil {
 			auditSender = newCopilotIngestSender(s.auditExporter, s.copilotSessionStore)
@@ -268,11 +279,14 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 	// configured or the secret/endpoint is unresolved. The fronted upstream is
 	// intentionally scoped to the tenant used for resolution below; mcpAuth refuses
 	// other tenants rather than proxying them with default-tenant upstream credentials.
+	// Every forwarded tools/call first passes the invariant floor, policy gate or not.
+	// The outer identity gate refuses a caller with no bound identity before the
+	// floor runs, as the built-in registry's scope filter does.
 	toolService := mcp.ToolService(toolRegistry)
 	upstreamServerName := ""
 	upstreamTenant := ""
 	if frontTS, frontName := s.buildFrontedUpstreamToolService(context.Background(), "default"); frontTS != nil {
-		toolService = frontTS
+		toolService = frontedIdentityGate{upstream: invariantFlooredTools{ToolService: frontTS, floor: approvalGate, server: frontName}}
 		upstreamServerName = frontName
 		upstreamTenant = "default"
 	}
@@ -403,22 +417,24 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 		// Stash MCP call metadata so the approval gate (wired into the
 		// ToolRegistry) can evaluate per-tool approval policy without
-		// knowing about gateway identity types. Tenant + principal come
-		// from the auth context; agent_id prefers the X-Agent-Id header
-		// and falls back to the principal so the self-approval guard
-		// has something to compare against.
-		agentID := strings.TrimSpace(r.Header.Get(mcpAgentIDHeader))
-		if agentID == "" {
-			agentID = strings.TrimSpace(authCtx.PrincipalID)
-		}
-		principalID := strings.TrimSpace(authCtx.PrincipalID)
-		if principalID == "" {
-			principalID = agentID
-		}
+		// knowing about gateway identity types. agentID and identity come
+		// from ONE resolveMCPIdentity lookup: agentID is the agent identity
+		// ID bound to the authenticated principal ("" when there is none or
+		// X-Agent-Id disagrees), never the raw header, and it is the only
+		// agent value any metadata sink below records.
+		agentID, identity := s.resolveMCPIdentity(r)
+		// The principal the approval and policy gates act on, and the owner
+		// of the Edge trace parents below, come only from a credential: one
+		// the caller merely asserted with X-Principal-Id is "" here, exactly
+		// as for identity. ensureMCPHTTPTraceParents keeps an asserted
+		// principal as an attribution label only, and RequesterIdentity
+		// stays the composite submitter identity, so the self-approval guard
+		// still counts an asserted principal and can only refuse more.
+		authenticatedPrincipal := authCtx.AuthenticatedPrincipal()
 		mcpCtx := WithMCPCallMetadata(r.Context(), MCPCallMetadata{
 			Tenant:            tenantID,
 			AgentID:           agentID,
-			Principal:         principalID,
+			Principal:         authenticatedPrincipal,
 			RequesterIdentity: submitterIdentity(r),
 		})
 		// Resolve the transport session id exactly as the HTTP transport
@@ -427,31 +443,57 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		if transportSessionID == "" {
 			transportSessionID = strings.TrimSpace(r.URL.Query().Get("session_id"))
 		}
+		// Trust a client-supplied session id only once the transport vouches
+		// that this caller opened it, so an unknown or foreign id never feeds
+		// the trace parents, approval tuple, or Copilot session below. A POST
+		// naming one is handed to the transport untouched, which answers its
+		// usual "session not found" 404; the SSE GET and status routes ignore
+		// client session ids anyway. mcpHTTPTransport is resolved per request
+		// and nil-safe (no transport: not vouched, and the handler answers 503).
+		if transportSessionID != "" && !s.mcpHTTPTransport().OwnsSession(r, transportSessionID) {
+			if r.Method == http.MethodPost {
+				next(w, r)
+				return
+			}
+			transportSessionID = ""
+		}
 		// VS Code's type:"http" config POSTs neither X-MCP-Session-ID nor
-		// X-Copilot-Session-Id. The HTTP transport would otherwise mint a
-		// "direct-<uuid>" session id only *after* this middleware builds
-		// mcpCtx, leaving copilot_session_id empty — so the transcript is
-		// dropped and cordum_submit_job misses its session_id label. Mint the
-		// id here in the transport's own format and write it back onto the
-		// request so the transport reuses the same id, keeping the audit
-		// session, trace parents, and spawned-job label consistent. Scoped to
-		// POST so the SSE GET keeps its server-assigned session id.
-		if transportSessionID == "" && r.Method == http.MethodPost {
-			transportSessionID = "direct-" + uuid.NewString()
-			r.Header.Set("X-MCP-Session-ID", transportSessionID)
+		// X-Copilot-Session-Id, which would leave copilot_session_id empty —
+		// so the transcript is dropped and cordum_submit_job misses its
+		// session_id label. Mint a one-shot Edge session id here in the
+		// transport's own format for the trace parents. It is deliberately NOT
+		// written back onto the request: the transport only accepts session
+		// ids it issued to this caller over SSE (anything else is "session not
+		// found") and routes a session-less POST under its own one-shot id.
+		// Scoped to POST so the SSE GET keeps its server-assigned session id.
+		// The Edge session stays one-shot because the Edge store caps events
+		// per execution and executions per session; mcpApprovalClaims lets
+		// the caller's `_approval_ref` retry claim an approval minted under an
+		// earlier one-shot session. An SSE session rotates its Edge session
+		// and execution before those caps bite (mcpEdgeTrace).
+		sessionless := transportSessionID == "" && r.Method == http.MethodPost
+		// mcpSessionID is the MCP session the call's Copilot session and
+		// prompt-injection taint are kept for. A session-less caller gets one
+		// per caller and agent, so not keeping a session neither splits its
+		// transcript nor sheds its taint.
+		mcpSessionID := transportSessionID
+		if sessionless {
+			transportSessionID = mcpDirectSessionPrefix + uuid.NewString()
+			mcpSessionID = mcpSessionlessCopilotSessionID(r, agentID, transportSessionID)
 		}
 		if transportSessionID != "" {
-			executionID := "mcp-" + transportSessionID
-			if err := s.ensureMCPHTTPTraceParents(r.Context(), tenantID, agentID, principalID, transportSessionID, executionID); err != nil {
+			sessionID, executionID, err := s.mcpEdgeTrace(r.Context(), tenantID, agentID, authenticatedPrincipal, transportSessionID)
+			if err != nil {
 				writeErrorJSON(w, http.StatusInternalServerError, "mcp trace unavailable")
 				return
 			}
 			mcpCtx = mcp.WithCallMetadata(mcpCtx, mcp.CallMetadata{
-				Tenant:      tenantID,
-				Principal:   principalID,
-				AgentID:     agentID,
-				SessionID:   transportSessionID,
-				ExecutionID: executionID,
+				Tenant:       tenantID,
+				Principal:    authenticatedPrincipal,
+				AgentID:      agentID,
+				SessionID:    sessionID,
+				ExecutionID:  executionID,
+				MCPSessionID: mcpSessionID,
 			})
 		}
 		// Also stash tenant for the mcp.tool_called audit hook, which
@@ -460,11 +502,12 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		// identity types).
 		mcpCtx = mcp.WithTenant(mcpCtx, tenantID)
 		// Thread the Copilot session id (explicit header → transport session
-		// id, now always populated for POSTs) so tool invocations can be
-		// grouped into an audit session and spawned jobs labelled with it.
+		// id, or for a session-less POST one id per caller and agent) so tool
+		// invocations can be grouped into an audit session and spawned jobs
+		// labelled with it.
 		copilotSessionID := strings.TrimSpace(r.Header.Get(mcpCopilotSessionIDHeader))
 		if copilotSessionID == "" {
-			copilotSessionID = transportSessionID
+			copilotSessionID = mcpSessionID
 		}
 		if copilotSessionID != "" {
 			mcpCtx = mcp.WithCopilotSessionID(mcpCtx, copilotSessionID)
@@ -472,17 +515,157 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 		r = r.WithContext(mcpCtx)
 		// Attach *mcp.AgentIdentity so ToolRegistry.ListTools and the
 		// scope filter can evaluate the caller's AllowedTools /
-		// RiskTier / DataClassifications. Without this the HTTP
-		// transport sees msg.identity=nil and every tool list comes
-		// back empty — which is the fail-closed outcome QA flagged.
-		if identity := s.resolveMCPIdentity(r); identity != nil {
+		// RiskTier / DataClassifications. A nil identity is the
+		// fail-closed outcome: zero tools listed, every call denied.
+		if identity != nil {
 			r = r.WithContext(mcp.ContextWithIdentity(r.Context(), identity))
 		}
 		next(w, r)
 	}
 }
 
-func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentID, principalID, sessionID, executionID string) error {
+// mcpDirectSessionPrefix marks the one-shot Edge session mcpAuth gives a POST
+// that names no MCP session; SSE session ids are bare UUIDs.
+const mcpDirectSessionPrefix = "direct-"
+
+// mcpSessionlessCopilotSessionID groups a session-less caller's tool calls
+// into one Copilot session and one session taint per caller and agent instead
+// of one per POST. It derives from the session owner key, so two callers never
+// share one; callers the auth layer cannot tell apart (no credential, no
+// principal) keep the per-POST fallback.
+func mcpSessionlessCopilotSessionID(r *http.Request, agentID, fallback string) string {
+	if submitterIdentity(r) == "" {
+		return fallback
+	}
+	sum := sha256.Sum256([]byte(mcpSessionOwner(r) + "\x00" + agentID))
+	return mcpDirectSessionPrefix + hex.EncodeToString(sum[:16])
+}
+
+// mcpApprovalClaims binds an `_approval_ref` claim to the Edge session and
+// execution of the approval it names, when that approval was minted for this
+// caller acting as the same agent (mcpApprovalIsCallers). The retry usually
+// arrives in another Edge session: a session-less POST runs in a one-shot
+// session. A claim for anyone else's approval keeps the caller's own tuple,
+// which the store refuses (tuple_mismatch); the store still checks args,
+// policy snapshot, status, expiry and self-approval. The embedded store keeps
+// GetApproval, which ProcessApprovalClaim reads the parent event through.
+type mcpApprovalClaims struct{ edge.Store }
+
+func (c mcpApprovalClaims) ClaimApproval(ctx context.Context, req edge.ApprovalClaimRequest) (*edge.EdgeApproval, bool, error) {
+	if approval, found, err := c.GetApproval(ctx, req.TenantID, req.ApprovalRef); err == nil && found && mcpApprovalIsCallers(ctx, approval) {
+		req.SessionID, req.ExecutionID, req.EventID = approval.SessionID, approval.ExecutionID, approval.EventID
+	}
+	return c.Store.ClaimApproval(ctx, req)
+}
+
+// mcpSessionOwner is the owner key MCP HTTP/SSE sessions are bound to: the
+// request's tenant, auth source, and submitterIdentity (credential hash +
+// principal, the caller identity the self-approval guard compares). The auth
+// source keeps a header-asserted principal on an anonymous request from
+// matching the same verified principal. Requests without an auth context (no
+// auth provider configured) all share the anonymous owner "".
+func mcpSessionOwner(r *http.Request) string {
+	ac := auth.FromRequest(r)
+	if ac == nil {
+		return ""
+	}
+	return fmt.Sprintf("%q %q %q", tenantFromRequest(r), ac.AuthSource, submitterIdentity(r))
+}
+
+// mcpEdgeTraceCaps is what mcpEdgeTrace needs from the Edge store to rotate
+// (edge.RedisStore). Without it an MCP session stays in one execution.
+type mcpEdgeTraceCaps interface {
+	ExecutionCaps() (maxExecutions, maxEvents int)
+	CountExecutionEvents(ctx context.Context, tenantID, executionID string) (int64, error)
+}
+
+// mcpSessionLabel links each Edge session an MCP session is recorded in to it.
+const mcpSessionLabel = "mcp_session_id"
+
+// mcpEdgeTrace returns the Edge session and execution the next call of MCP
+// session mcpSessionID records into, creating them when missing. The Edge
+// store caps executions per session and events per execution, and an
+// execution past the approval validation cap can neither mint nor claim an
+// approval, so a long-lived SSE session moves on before the caps bite: to a
+// new execution once the current one holds 80% of its event budget, and to
+// the next Edge session (<id>.s1, <id>.s2, ..., labelled mcp_session_id) once
+// the current one has no execution left. Earlier sessions and executions stay
+// running, so approvals minted in them stay claimable: mcpApprovalClaims binds
+// a claim to the approval's own session and execution.
+// ponytail: stateless, so each call re-reads the count and size of every full
+// Edge session before the current one (two O(1) reads each, one Edge session
+// per ~10k calls), and executions added to an MCP Edge session through the
+// Edge API make calls open new executions until that session fills. Track the
+// current session and execution per SSE session if either matters.
+func (s *server) mcpEdgeTrace(ctx context.Context, tenantID, agentID, principalID, mcpSessionID string) (sessionID, executionID string, err error) {
+	caps, rotates := s.edgeStore.(mcpEdgeTraceCaps)
+	for gen := 0; ; {
+		if err := ctx.Err(); err != nil {
+			return "", "", err
+		}
+		sessionID = mcpSessionID
+		if gen > 0 {
+			sessionID = fmt.Sprintf("%s.s%d", mcpSessionID, gen)
+		}
+		executionID = mcpEdgeExecutionID(sessionID, 0)
+		if rotates {
+			maxExecutions, maxEvents := caps.ExecutionCaps()
+			n, err := s.edgeStore.CountSessionExecutions(ctx, tenantID, sessionID)
+			if err != nil {
+				return "", "", err
+			}
+			if n > 0 {
+				executionID = mcpEdgeExecutionID(sessionID, n-1)
+				events, err := caps.CountExecutionEvents(ctx, tenantID, executionID)
+				if err != nil {
+					return "", "", err
+				}
+				if events >= max(int64(maxEvents)*4/5, 1) {
+					if n >= int64(maxExecutions) {
+						gen++
+						continue
+					}
+					executionID = mcpEdgeExecutionID(sessionID, n)
+				}
+			}
+		}
+		err = s.ensureMCPHTTPTraceParents(ctx, tenantID, agentID, principalID, mcpSessionID, sessionID, executionID)
+		if errors.Is(err, edge.ErrSessionExecutionFanoutExceeded) {
+			gen++
+			continue
+		}
+		if err != nil {
+			return "", "", err
+		}
+		if rotates {
+			// The count above may be stale: another caller can create and fill
+			// its successor while this call is selecting it. Recheck the actual
+			// selected execution, then reread this session on concurrent progress.
+			_, maxEvents := caps.ExecutionCaps()
+			events, err := caps.CountExecutionEvents(ctx, tenantID, executionID)
+			if err != nil {
+				return "", "", err
+			}
+			if events >= max(int64(maxEvents)*4/5, 1) {
+				continue
+			}
+		}
+		return sessionID, executionID, nil
+	}
+}
+
+// mcpEdgeExecutionID names execution n of an MCP Edge session.
+func mcpEdgeExecutionID(sessionID string, n int64) string {
+	if n == 0 {
+		return "mcp-" + sessionID
+	}
+	return fmt.Sprintf("mcp-%s.e%d", sessionID, n)
+}
+
+// ensureMCPHTTPTraceParents creates the Edge session and execution an MCP call
+// records into when missing. A concurrent call of the same MCP session may
+// create either first; that counts as created.
+func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentID, principalID, mcpSessionID, sessionID, executionID string) error {
 	if s == nil || s.edgeStore == nil || sessionID == "" || executionID == "" {
 		return nil
 	}
@@ -490,6 +673,8 @@ func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentI
 	if _, ok, err := s.edgeStore.GetSession(ctx, tenantID, sessionID); err != nil {
 		return err
 	} else if !ok {
+		sessionLabels := mcpTraceParentLabels(ctx, agentID)
+		sessionLabels[mcpSessionLabel] = mcpSessionID
 		if err := s.edgeStore.CreateSession(ctx, edge.EdgeSession{
 			SessionID: sessionID, TenantID: tenantID, PrincipalID: principalID,
 			PrincipalType: edge.PrincipalTypeService, AgentProduct: "mcp-gateway",
@@ -497,75 +682,92 @@ func (s *server) ensureMCPHTTPTraceParents(ctx context.Context, tenantID, agentI
 			PolicyMode: edge.PolicyModeEnforce, Status: edge.SessionStatusRunning,
 			StartedAt: now, EnforcementLayers: edge.EnforcementLayers{"mcp": true},
 			RiskSummary: edge.RiskSummary{MaxRisk: edge.RiskLevelLow},
-			Labels:      edge.Labels{"agent_id": agentID},
+			Labels:      sessionLabels,
 		}); err != nil {
-			return err
+			if _, ok, _ := s.edgeStore.GetSession(ctx, tenantID, sessionID); !ok {
+				return err
+			}
 		}
 	}
 	if _, ok, err := s.edgeStore.GetExecution(ctx, tenantID, executionID); err != nil {
 		return err
 	} else if !ok {
-		return s.edgeStore.CreateExecution(ctx, edge.AgentExecution{
+		if err := s.edgeStore.CreateExecution(ctx, edge.AgentExecution{
 			ExecutionID: executionID, SessionID: sessionID, TenantID: tenantID,
 			Adapter: edge.AdapterMCPGateway, Mode: edge.ExecutionModeLocalDev,
-			WorkerID: agentID, Status: edge.ExecutionStatusRunning,
-			StartedAt: now, Labels: edge.Labels{"agent_id": agentID},
-		})
+			WorkerID: principalID, Status: edge.ExecutionStatusRunning,
+			StartedAt: now, Labels: mcpTraceParentLabels(ctx, agentID),
+		}); err != nil {
+			if _, ok, _ := s.edgeStore.GetExecution(ctx, tenantID, executionID); !ok {
+				return err
+			}
+		}
 	}
 	return nil
 }
 
-// resolveMCPIdentity looks up the agent identity for this MCP request.
-// Resolution order:
-//  1. X-Agent-Id header (explicit — matches the documented contract).
-//  2. auth-principal fallback via its worker link in the request tenant, so
-//     credentialled workers inherit their linked identity without
-//     needing to send the header explicitly.
+// mcpTraceParentLabels returns the labels of a new MCP trace parent. A
+// principal the caller only asserted with X-Principal-Id is kept as
+// asserted_principal_id for attribution; it never owns the parent. A value
+// longer than an Edge label allows is left out rather than failing the request.
+func mcpTraceParentLabels(ctx context.Context, agentID string) edge.Labels {
+	labels := edge.Labels{"agent_id": agentID}
+	if ac := auth.FromContext(ctx); ac != nil && ac.PrincipalAsserted {
+		if asserted := strings.TrimSpace(ac.PrincipalID); asserted != "" && len(asserted) <= edge.MaxLabelValueBytes {
+			labels["asserted_principal_id"] = asserted
+		}
+	}
+	return labels
+}
+
+// resolveMCPIdentity resolves the agent identity bound to the request's
+// authenticated principal (its worker link in the request tenant). Only a
+// principal that a credential vouches for counts, per
+// AuthContext.AuthenticatedPrincipal: one the caller merely asserted with
+// X-Principal-Id resolves nothing. Per ruling Q4, X-Agent-Id may confirm that
+// identity but never select one: a header that names any other ID resolves
+// to nothing.
 //
-// Returns nil when no identity could be resolved; ToolRegistry treats
-// a nil identity as fail-closed (zero tools visible, all calls denied).
-// Revoked/suspended identities also resolve to nil.
-func (s *server) resolveMCPIdentity(r *http.Request) *mcp.AgentIdentity {
+// agentID is the bound identity ID, or "" when the principal is asserted,
+// unbound, bound to another tenant, or contradicted by the header. It is the only
+// agent value request metadata may record. identity is nil whenever agentID
+// is "", and also for a revoked/suspended binding; ToolRegistry treats a nil
+// identity as fail-closed (zero tools visible, all calls denied).
+func (s *server) resolveMCPIdentity(r *http.Request) (agentID string, identity *mcp.AgentIdentity) {
 	if s == nil || s.agentIdentityStore == nil {
-		return nil
+		return "", nil
 	}
 	ctx := r.Context()
-	// Both lookup paths must be scoped to the request's tenant (authenticated
-	// and validated by mcpAuth). The store's empty-tenant lookup is a
-	// system-level bypass that skips the tenant check, so resolving an
-	// identity from another tenant — by a guessed X-Agent-Id OR via a worker
-	// credential mapped to another tenant's agent — would apply the wrong
-	// AllowedTools / AllowedServers / RiskTier. Fail closed if tenant absent.
 	tenant := tenantFromRequest(r)
 	if tenant == "" {
-		return nil
-	}
-	if id := strings.TrimSpace(r.Header.Get(mcpAgentIDHeader)); id != "" {
-		identity, err := s.agentIdentityStore.Get(ctx, tenant, id)
-		if err != nil || identity == nil {
-			return nil
-		}
-		return mcpIdentityFromStore(identity)
+		return "", nil
 	}
 	authCtx := auth.FromContext(ctx)
 	if authCtx == nil {
-		return nil
+		return "", nil
 	}
-	principal := strings.TrimSpace(authCtx.PrincipalID)
+	principal := authCtx.AuthenticatedPrincipal()
 	if principal == "" {
-		return nil
+		return "", nil
 	}
-	identity, err := s.agentIdentityStore.GetByWorkerIDForTenant(ctx, tenant, principal)
-	if err != nil || identity == nil {
-		return nil
+	bound, err := s.agentIdentityStore.GetByWorkerIDForTenant(ctx, tenant, principal)
+	if err != nil {
+		slog.Warn("mcp identity lookup failed", "tenant", tenant, "err", err)
+		return "", nil
 	}
 	// The store resolves only within the request tenant. Keep this check as
 	// defense in depth so a store regression cannot apply another tenant's
 	// AllowedTools / AllowedServers / RiskTier to this request.
-	if strings.TrimSpace(identity.TenantID) != tenant {
-		return nil
+	if bound == nil || strings.TrimSpace(bound.TenantID) != tenant {
+		return "", nil
 	}
-	return mcpIdentityFromStore(identity)
+	// The header is client-controlled: compare it, never log or store it.
+	if header := strings.TrimSpace(r.Header.Get(mcpAgentIDHeader)); header != "" && header != bound.ID {
+		slog.Warn("mcp X-Agent-Id does not match the principal's bound agent identity",
+			"tenant", tenant, "principal", principal, "bound_agent_id", bound.ID)
+		return "", nil
+	}
+	return bound.ID, mcpIdentityFromStore(bound)
 }
 
 // runMCPApprovalSweeper expires PENDING MCP approvals whose TTL has
@@ -649,6 +851,7 @@ func (s *server) loadMCPConfig(ctx context.Context) mcpGatewayConfig {
 		Raw:       nil,
 	}
 	if s == nil || s.configSvc == nil {
+		applyMCPEnvFallbacks(&cfg, nil)
 		return cfg
 	}
 	if ctx == nil {
@@ -657,7 +860,13 @@ func (s *server) loadMCPConfig(ctx context.Context) mcpGatewayConfig {
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 	defer cancel()
 	effective, err := s.configSvc.Effective(cctx, "", "", "", "")
-	if err != nil || effective == nil {
+	if err != nil {
+		// A failed read is not missing config. Keep the disabled default: the
+		// CORDUM_MCP_* fallbacks must never enable what stored config may disable.
+		return cfg
+	}
+	if effective == nil {
+		applyMCPEnvFallbacks(&cfg, nil)
 		return cfg
 	}
 	cfg.Raw = effective
@@ -673,7 +882,54 @@ func (s *server) loadMCPConfig(ctx context.Context) mcpGatewayConfig {
 	if enabled, ok := lookupBoolPath(effective, "mcp", "policy_gate_enabled"); ok {
 		cfg.PolicyGateEnabled = enabled
 	}
+	applyMCPEnvFallbacks(&cfg, effective)
 	return cfg
+}
+
+// applyMCPEnvFallbacks reads CORDUM_MCP_ENABLED, CORDUM_MCP_TRANSPORT and
+// CORDUM_MCP_POLICY_GATE_ENABLED only for an mcp.* key the stored config does
+// not set. A stored key always wins, even one the gateway cannot read (null, a
+// number, an unknown string, or an "mcp" value that is not an object): an
+// unreadable mcp.enabled keeps MCP disabled, an unreadable
+// mcp.policy_gate_enabled turns the policy gate on, and a stored empty
+// mcp.transport keeps the default transport.
+func applyMCPEnvFallbacks(cfg *mcpGatewayConfig, effective map[string]any) {
+	if cfg == nil {
+		return
+	}
+	if mcpStoredKeyPresent(effective, "enabled") {
+		if _, ok := lookupBoolPath(effective, "mcp", "enabled"); !ok {
+			cfg.Enabled = false
+		}
+	} else if v, okEnv := parseBoolString(os.Getenv("CORDUM_MCP_ENABLED")); okEnv {
+		cfg.Enabled = v
+	}
+	if !mcpStoredKeyPresent(effective, "transport") {
+		if v := strings.TrimSpace(os.Getenv("CORDUM_MCP_TRANSPORT")); v != "" {
+			cfg.Transport = v
+		}
+	}
+	if mcpStoredKeyPresent(effective, "policy_gate_enabled") {
+		if _, ok := lookupBoolPath(effective, "mcp", "policy_gate_enabled"); !ok {
+			cfg.PolicyGateEnabled = true
+		}
+	} else if v, okEnv := parseBoolString(os.Getenv("CORDUM_MCP_POLICY_GATE_ENABLED")); okEnv {
+		cfg.PolicyGateEnabled = v
+	}
+}
+
+// mcpStoredKeyPresent reports whether the stored config sets mcp.<key>,
+// readable or not. A stored "mcp" that is not an object sets every key.
+func mcpStoredKeyPresent(effective map[string]any, key string) bool {
+	if _, ok := lookupAnyPath(effective, "mcp", key); ok {
+		return true
+	}
+	raw, ok := lookupAnyPath(effective, "mcp")
+	if !ok {
+		return false
+	}
+	_, isObject := raw.(map[string]any)
+	return !isObject
 }
 
 func (s *server) mcpHTTPTransport() *mcp.HTTPTransport {
@@ -1022,14 +1278,20 @@ func lookupBoolPath(data map[string]any, keys ...string) (bool, bool) {
 	case bool:
 		return v, true
 	case string:
-		switch strings.ToLower(strings.TrimSpace(v)) {
-		case "1", "true", "yes", "on":
-			return true, true
-		case "0", "false", "no", "off":
-			return false, true
-		}
+		return parseBoolString(v)
 	}
 	return false, false
+}
+
+func parseBoolString(raw string) (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true, true
+	case "0", "false", "no", "off":
+		return false, true
+	default:
+		return false, false
+	}
 }
 
 func lookupStringPath(data map[string]any, keys ...string) (string, bool) {
@@ -1160,7 +1422,7 @@ func (s *server) newMCPServiceBridge() mcp.ServiceBridge {
 			status, payload, raw, err := s.invokeMCPJSONHandler(
 				ctx,
 				http.MethodPost,
-				"/api/v1/jobs/"+jobID+"/cancel",
+				"/api/v1/jobs/"+url.PathEscape(jobID)+"/cancel",
 				nil,
 				map[string]string{"id": jobID},
 				body,
@@ -1178,7 +1440,7 @@ func (s *server) newMCPServiceBridge() mcp.ServiceBridge {
 			return nil
 		},
 		TriggerWorkflowFunc: func(ctx context.Context, req mcp.TriggerWorkflowInput) (*mcp.TriggerOutput, error) {
-			target := "/api/v1/workflows/" + req.WorkflowID + "/runs"
+			target := "/api/v1/workflows/" + url.PathEscape(req.WorkflowID) + "/runs"
 			if req.DryRun {
 				target += "?dry_run=true"
 			}
@@ -1226,7 +1488,7 @@ func (s *server) newMCPServiceBridge() mcp.ServiceBridge {
 			status, _, raw, err := s.invokeMCPJSONHandler(
 				ctx,
 				http.MethodPost,
-				"/api/v1/approvals/"+jobID+"/approve",
+				"/api/v1/approvals/"+url.PathEscape(jobID)+"/approve",
 				nil,
 				map[string]string{"job_id": jobID},
 				body,
@@ -1245,7 +1507,7 @@ func (s *server) newMCPServiceBridge() mcp.ServiceBridge {
 			status, _, raw, err := s.invokeMCPJSONHandler(
 				ctx,
 				http.MethodPost,
-				"/api/v1/approvals/"+jobID+"/reject",
+				"/api/v1/approvals/"+url.PathEscape(jobID)+"/reject",
 				nil,
 				map[string]string{"job_id": jobID},
 				body,
@@ -1305,16 +1567,74 @@ func (s *server) newMCPServiceBridge() mcp.ServiceBridge {
 			}
 			return out, nil
 		},
+		GetJobFunc: func(ctx context.Context, jobID string) (*mcp.ResourceItem, error) {
+			payload, err := s.mcpGetJobPayload(ctx, jobID)
+			if err != nil {
+				return nil, err
+			}
+			return &mcp.ResourceItem{ID: jobID, Kind: "job", Data: payload}, nil
+		},
+		GetStatusFunc: func(ctx context.Context) (*mcp.ResourceItem, error) {
+			payload, err := s.mcpGetStatusPayload(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return &mcp.ResourceItem{Kind: "status", Data: payload}, nil
+		},
 	})
+}
+
+// mcpGetJobPayload reads one job through handleGetJob for both MCP bridges.
+// The handler reads the raw ID from the path value; the request target
+// carries it path-escaped, as HTTPServiceBridge.GetJob does.
+func (s *server) mcpGetJobPayload(ctx context.Context, id string) (map[string]any, error) {
+	id = strings.TrimSpace(id)
+	status, payload, raw, err := s.invokeMCPJSONHandler(
+		ctx,
+		http.MethodGet,
+		"/api/v1/jobs/"+url.PathEscape(id),
+		nil,
+		map[string]string{"id": id},
+		nil,
+		s.handleGetJob,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if status < 200 || status >= 300 {
+		return nil, mcp.NewBridgeErrorFromHTTP(status, raw)
+	}
+	return payload, nil
+}
+
+// mcpGetStatusPayload reads the system status through handleStatus for
+// both MCP bridges.
+func (s *server) mcpGetStatusPayload(ctx context.Context) (map[string]any, error) {
+	status, payload, raw, err := s.invokeMCPJSONHandler(ctx, http.MethodGet, "/api/v1/status", nil, nil, nil, s.handleStatus)
+	if err != nil {
+		return nil, err
+	}
+	if status < 200 || status >= 300 {
+		return nil, mcp.NewBridgeErrorFromHTTP(status, raw)
+	}
+	return payload, nil
 }
 
 // mcpCreateWorkflow backs cordum_create_workflow. It runs the real
 // POST /api/v1/workflows handler under the caller's ctx, so permission
 // (workflows-write or admin), tenant resolution and validation are
 // identical to the REST endpoint. The registry's approval gate has
-// already admitted the call before this runs. Idempotency-Key is not
-// forwarded: handleCreateWorkflow does not honor it.
+// already admitted the call before this runs. A call with an
+// idempotency_key and no id gets the workflow id derived from the caller's
+// tenant, org_id, agent and that key. handleCreateWorkflow upserts by id,
+// so a repeated delivery of the call writes the same workflow, not a second.
 func (s *server) mcpCreateWorkflow(ctx context.Context, req mcp.CreateWorkflowInput) (*mcp.CreateWorkflowOutput, error) {
+	if key := strings.TrimSpace(req.IdempotencyKey); key != "" && strings.TrimSpace(req.ID) == "" {
+		meta, _ := MCPCallMetadataFromContext(ctx)
+		name := fmt.Sprintf("%q", []string{mcp.ToolCreateWorkflow, s.mcpTenantFromContext(ctx),
+			strings.TrimSpace(req.OrgID), meta.AgentID, key})
+		req.ID = uuid.NewSHA1(uuid.NameSpaceOID, []byte(name)).String()
+	}
 	body := map[string]any{"steps": req.Steps}
 	for key, value := range map[string]string{
 		"id": req.ID, "name": req.Name, "description": req.Description,
@@ -1375,8 +1695,10 @@ func (s *server) invokeMCPJSONHandler(
 		payload = encoded
 	}
 
-	req := httptest.NewRequest(method, target, bytes.NewReader(payload))
-	req = req.WithContext(ctx)
+	req, err := newMCPBridgeRequest(ctx, method, target, payload)
+	if err != nil {
+		return 0, nil, nil, err
+	}
 	if len(payload) > 0 {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -1431,8 +1753,10 @@ func (s *server) invokeMCPAnyHandler(
 		payload = encoded
 	}
 
-	req := httptest.NewRequest(method, target, bytes.NewReader(payload))
-	req = req.WithContext(ctx)
+	req, err := newMCPBridgeRequest(ctx, method, target, payload)
+	if err != nil {
+		return 0, nil, nil, err
+	}
 	if len(payload) > 0 {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -1460,6 +1784,30 @@ func (s *server) invokeMCPAnyHandler(
 		_ = json.Unmarshal(raw, &decoded)
 	}
 	return rr.Code, decoded, raw, nil
+}
+
+// newMCPBridgeRequest builds the in-process request for one bridge call.
+// The target must be an origin-form request URI with no space or control
+// byte; any other target is refused with a 400 invalid_request
+// BridgeError, so no handler runs for it.
+func newMCPBridgeRequest(ctx context.Context, method, target string, payload []byte) (*http.Request, error) {
+	if !validMCPBridgeTarget(target) {
+		return nil, mcp.NewBridgeError(http.StatusBadRequest, "invalid_request", "invalid bridge request target", nil)
+	}
+	return httptest.NewRequestWithContext(ctx, method, target, bytes.NewReader(payload)), nil
+}
+
+func validMCPBridgeTarget(target string) bool {
+	if !strings.HasPrefix(target, "/") {
+		return false
+	}
+	for i := 0; i < len(target); i++ {
+		if c := target[i]; c <= ' ' || c == 0x7f {
+			return false
+		}
+	}
+	_, err := url.ParseRequestURI(target)
+	return err == nil
 }
 
 func (s *server) stampMCPBridgeTenant(req *http.Request, ctx context.Context) (int, map[string]any, []byte, bool) {
@@ -1532,20 +1880,9 @@ func (s *server) newMCPDataBridge() mcp.DataBridge {
 	}
 	return mcp.NewDirectDataBridge(mcp.DirectDataBridgeConfig{
 		GetJobFunc: func(ctx context.Context, id string) (*mcp.JobDetail, error) {
-			status, payload, raw, err := s.invokeMCPJSONHandler(
-				ctx,
-				http.MethodGet,
-				"/api/v1/jobs/"+strings.TrimSpace(id),
-				nil,
-				map[string]string{"id": strings.TrimSpace(id)},
-				nil,
-				s.handleGetJob,
-			)
+			payload, err := s.mcpGetJobPayload(ctx, id)
 			if err != nil {
 				return nil, err
-			}
-			if status < 200 || status >= 300 {
-				return nil, mcp.NewBridgeErrorFromHTTP(status, raw)
 			}
 			out := mcp.JobDetail(payload)
 			return &out, nil
@@ -1556,7 +1893,7 @@ func (s *server) newMCPDataBridge() mcp.DataBridge {
 				values = append(values, "limit="+strconv.Itoa(opts.Limit))
 			}
 			if status := strings.TrimSpace(opts.Status); status != "" {
-				values = append(values, "state="+status)
+				values = append(values, "state="+url.QueryEscape(status))
 			}
 			if opts.Cursor > 0 {
 				values = append(values, "cursor="+strconv.FormatInt(opts.Cursor, 10))
@@ -1581,7 +1918,7 @@ func (s *server) newMCPDataBridge() mcp.DataBridge {
 			return out, nil
 		},
 		ListWorkflowRunsFunc: func(ctx context.Context, wfID string, limit int) (*mcp.RunList, error) {
-			target := "/api/v1/workflows/" + strings.TrimSpace(wfID) + "/runs"
+			target := "/api/v1/workflows/" + url.PathEscape(strings.TrimSpace(wfID)) + "/runs"
 			if limit > 0 {
 				target += "?limit=" + strconv.Itoa(limit)
 			}
@@ -1616,7 +1953,7 @@ func (s *server) newMCPDataBridge() mcp.DataBridge {
 			status, payload, raw, err := s.invokeMCPJSONHandler(
 				ctx,
 				http.MethodGet,
-				"/api/v1/workflow-runs/"+strings.TrimSpace(runID),
+				"/api/v1/workflow-runs/"+url.PathEscape(strings.TrimSpace(runID)),
 				nil,
 				map[string]string{"id": strings.TrimSpace(runID)},
 				nil,
@@ -1658,12 +1995,9 @@ func (s *server) newMCPDataBridge() mcp.DataBridge {
 			return out, nil
 		},
 		GetSystemHealthFunc: func(ctx context.Context) (*mcp.HealthStatus, error) {
-			status, payload, raw, err := s.invokeMCPJSONHandler(ctx, http.MethodGet, "/api/v1/status", nil, nil, nil, s.handleStatus)
+			payload, err := s.mcpGetStatusPayload(ctx)
 			if err != nil {
 				return nil, err
-			}
-			if status < 200 || status >= 300 {
-				return nil, mcp.NewBridgeErrorFromHTTP(status, raw)
 			}
 			out := mcp.HealthStatus(payload)
 			return &out, nil

@@ -13,3 +13,6 @@ select = [
     "I",
     "B",
 ]
+
+[format]
+line-ending = "lf"

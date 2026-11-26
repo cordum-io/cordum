@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -30,6 +31,11 @@ type AuthContext struct {
 	APIKey      string
 	Tenant      string
 	PrincipalID string
+	// PrincipalAsserted reports that PrincipalID came from the caller's
+	// X-Principal-Id header or x-principal-id gRPC metadata, not from a
+	// credential. Such a principal serves attribution only and never binds
+	// identity; see AuthenticatedPrincipal.
+	PrincipalAsserted bool
 	// KeyID is a stable, non-secret key identifier (managed key id, or
 	// "static:"+sha256(key)[:12]); never the raw key.
 	KeyID string
@@ -39,6 +45,16 @@ type AuthContext struct {
 	Role             string
 	AllowCrossTenant bool
 	AuthSource       AuthSource
+}
+
+// AuthenticatedPrincipal returns the principal a credential vouches for: the
+// trimmed PrincipalID, or "" when a is nil or the principal is only asserted by
+// the caller. Identity binding must use it instead of PrincipalID.
+func (a *AuthContext) AuthenticatedPrincipal() string {
+	if a == nil || a.PrincipalAsserted {
+		return ""
+	}
+	return strings.TrimSpace(a.PrincipalID)
 }
 
 // ContextKey is the context key for AuthContext values.

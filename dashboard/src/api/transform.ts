@@ -61,6 +61,7 @@ import type {
   EdgeApprovalStatus,
   EdgeArtifactPointer,
   EdgeArtifactType,
+  EdgeAssuranceState,
   EdgeDecision,
   EdgeError,
   EdgeEventStreamEnvelope,
@@ -2256,6 +2257,7 @@ export interface BackendEdgeSession {
   tenant_id?: unknown;
   principal_id?: unknown;
   principal_type?: unknown;
+  principal_display_name?: unknown;
   agent_product?: unknown;
   agent_version?: unknown;
   mode?: unknown;
@@ -2273,6 +2275,7 @@ export interface BackendEdgeSession {
   enforcement_layers?: BackendEdgeEnforcementLayers;
   policy_mode?: unknown;
   status?: unknown;
+  assurance_state?: unknown;
   risk_summary?: BackendEdgeRiskSummary;
   started_at?: unknown;
   ended_at?: unknown;
@@ -2480,6 +2483,14 @@ const EDGE_ARTIFACT_TYPES = new Set<EdgeArtifactType>([
   "edge.llm_response_redacted",
   "edge.evidence_bundle",
 ]);
+
+const EDGE_ASSURANCE_STATES = new Set<unknown>([
+  "compatibility",
+  "hook-mediated",
+  "executor-enforced",
+  "unsupported",
+  "stale",
+] satisfies EdgeAssuranceState[]);
 
 const EDGE_RETENTION_CLASSES = new Set<EdgeRetentionClass>([
   "short",
@@ -2796,6 +2807,7 @@ export function mapEdgeSession(raw: BackendEdgeSession): EdgeSession {
     tenantId: edgeString(raw.tenant_id),
     principalId: edgeOptionalString(raw.principal_id),
     principalType: normalizeEdgeLower(raw.principal_type, new Set(["human", "service", "unknown"]), "unknown"),
+    principalDisplayName: edgeOptionalString(raw.principal_display_name),
     agentProduct: edgeOptionalString(raw.agent_product),
     agentVersion: edgeOptionalString(raw.agent_version),
     mode: edgeSafeText(raw.mode, "local-dev"),
@@ -2813,6 +2825,10 @@ export function mapEdgeSession(raw: BackendEdgeSession): EdgeSession {
     enforcementLayers: mapEdgeEnforcementLayers(raw.enforcement_layers),
     policyMode: edgeSafeText(raw.policy_mode, "observe"),
     status: edgeSafeText(raw.status, "running"),
+    // Exact match only: anything else is "not reported", never a substitute state.
+    assuranceState: EDGE_ASSURANCE_STATES.has(raw.assurance_state)
+      ? (raw.assurance_state as EdgeAssuranceState)
+      : undefined,
     riskSummary: mapEdgeRiskSummary(raw.risk_summary),
     startedAt: edgeTimestamp(raw.started_at),
     endedAt: edgeOptionalTimestamp(raw.ended_at),

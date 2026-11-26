@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar
 
 from typing import List
 
@@ -12,7 +12,6 @@ from ..models.binary_verify_event_event import BinaryVerifyEventEvent
 from ..models.binary_verify_event_sig_scheme import BinaryVerifyEventSigScheme
 from ..types import UNSET, Unset
 from dateutil.parser import isoparse
-from typing import cast
 from typing import Union
 import datetime
 

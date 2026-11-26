@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cordum.io/schemas/release/qualification-record.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "release", "source", "artifacts", "gates", "exceptions"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "release": {
+      "type": "object", "additionalProperties": false, "required": ["ref", "dry_run", "run_url"],
+      "properties": {
+        "ref": {"type": "string", "pattern": "^refs/(tags|heads)/[^\\s]+$"},
+        "dry_run": {"type": "boolean"},
+        "run_url": {"type": "string", "pattern": "^https://[^\\s]+$"}
+      }
+    },
+    "source": {
+      "type": "object", "additionalProperties": false, "required": ["repository", "sha"],
+      "properties": {
+        "repository": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
+        "sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+      }
+    },
+    "artifacts": {"type": "array", "minItems": 1, "items": {"$ref": "#/definitions/artifact"}},
+    "gates": {"type": "array", "items": {"$ref": "#/definitions/gate"}},
+    "exceptions": {"type": "array", "items": {"$ref": "#/definitions/exception"}}
+  },
+  "definitions": {
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"},
+    "artifact": {
+      "type": "object", "additionalProperties": false, "required": ["kind", "name", "ref", "digest"],
+      "properties": {
+        "kind": {"enum": ["image", "binary"]}, "name": {"$ref": "#/definitions/name"},
+        "ref": {"type": "string", "minLength": 1}, "digest": {"$ref": "#/definitions/digest"}
+      }
+    },
+    "gate": {
+      "type": "object", "additionalProperties": false, "required": ["id", "artifact", "digest", "result", "log"],
+      "properties": {
+        "id": {"$ref": "#/definitions/name"}, "artifact": {"$ref": "#/definitions/name"},
+        "digest": {"$ref": "#/definitions/digest"}, "result": {"enum": ["pass", "fail"]},
+        "log": {"type": "string", "minLength": 1}
+      }
+    },
+    "exception": {
+      "type": "object", "additionalProperties": false, "required": ["id", "artifacts", "reason"],
+      "properties": {
+        "id": {"$ref": "#/definitions/name"},
+        "artifacts": {"type": "array", "minItems": 1, "items": {"$ref": "#/definitions/name"}},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

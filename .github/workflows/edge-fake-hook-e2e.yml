@@ -12,24 +12,15 @@ name: edge-fake-hook-e2e
 # default docker-compose.yml — production single-key adoption-friction is
 # unchanged per [[feedback_dont_change_deployment_defaults]].
 
+#
+# Nightly tier: this suite boots a 2-key stack, so it runs on the schedule
+# below and on demand (`gh workflow run edge-fake-hook-e2e --ref <branch>`),
+# not on every PR. See the tier note in ci.yml.
 on:
-  pull_request:
-    paths:
-      - "tools/scripts/edge_fake_hook_e2e.sh"
-      - "core/edge/**"
-      - "cmd/cordum-hook/**"
-      - "cmd/cordum-agentd/**"
-      - "cmd/cordumctl/edge_*"
-      - "core/controlplane/gateway/handlers_edge_*"
-      - "core/controlplane/gateway/helpers.go"
-      - "core/controlplane/gateway/auth/**"
-      - "docker-compose.yml"
-      - "docker-compose.ci.yml"
-      - ".github/workflows/edge-fake-hook-e2e.yml"
-  push:
-    branches:
-      - main
-      - wip/2026-05-15-orphan-rescue
+  schedule:
+    # 02:53 UTC daily. The odd minute avoids top-of-hour runner contention.
+    - cron: '53 2 * * *'
+  workflow_dispatch:
 
 jobs:
   edge-fake-hook-e2e:
