@@ -7,6 +7,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- MCP: the gateway's HTTP MCP endpoint now serves nine read tools instead of answering
+  501 `read_only_unsupported`: listing jobs, runs, workflows, topics, agents and pending
+  approvals, reading a run and its timeline, and verifying the audit chain. Each read runs through
+  the route's own handler with the caller's tenant, so another tenant's objects are not
+  returned. The stdio server's runs reads now use the `/api/v1/workflow-runs` routes, and
+  both transports accept a list answered as a bare JSON array. `cordum_list_packs`,
+  `cordum_list_workers` and `cordum_audit_query` are documented as unavailable over HTTP
+  MCP (task-7c148803).
+
 - cordumctl: the `CORDUM_ADMIN_PASSWORD` that `cordumctl up --dev` generates meets the gateway's password policy, so the admin user is seeded, and a `.env` definition that Compose reads as empty, such as `CORDUM_API_KEY="" # note` or `export CORDUM_API_KEY=`, is filled in place (task-d23dda77).
 
 - Gateway: a job submit, over HTTP or gRPC, now stores its policy audit entry

@@ -1581,7 +1581,51 @@ func (s *server) newMCPServiceBridge() mcp.ServiceBridge {
 			}
 			return &mcp.ResourceItem{Kind: "status", Data: payload}, nil
 		},
+		GetJSONFunc: s.mcpReadJSON(s.mcpReadMux()),
 	})
+}
+
+// mcpReadMux holds exactly the read routes DirectServiceBridge's GetJSONFunc
+// may reach, each bound to the handler gateway.go registers for it. Any
+// other path, packs, workers and audit query included, answers 404.
+func (s *server) mcpReadMux() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/jobs", s.handleListJobs)
+	mux.HandleFunc("GET /api/v1/workflow-runs", s.handleListAllRuns)
+	mux.HandleFunc("GET /api/v1/workflow-runs/{id}", s.handleGetRun)
+	mux.HandleFunc("GET /api/v1/workflow-runs/{id}/timeline", s.handleGetRunTimeline)
+	mux.HandleFunc("GET /api/v1/workflows", s.handleListWorkflows)
+	mux.HandleFunc("GET /api/v1/topics", s.handleListTopics)
+	mux.HandleFunc("GET /api/v1/agents", s.handleListAgents)
+	mux.HandleFunc("GET /api/v1/approvals", s.handleListApprovals)
+	mux.HandleFunc("GET /api/v1/audit/verify", s.handleAuditVerify)
+	return mux
+}
+
+// mcpReadJSON returns DirectServiceBridge's GetJSONFunc. It serves path and
+// query from reads under the caller's ctx: invokeMCPAnyHandler builds the
+// request through newMCPBridgeRequest and stamps the tenant from the MCP
+// context, so each handler runs its own permission and tenant checks. A
+// non-2xx answer, a redirect included, becomes a BridgeError, and so does a
+// 2xx body that is not JSON.
+func (s *server) mcpReadJSON(reads *http.ServeMux) func(context.Context, string, url.Values, any) error {
+	return func(ctx context.Context, path string, query url.Values, out any) error {
+		target := path
+		if len(query) > 0 {
+			target += "?" + query.Encode()
+		}
+		status, _, raw, err := s.invokeMCPAnyHandler(ctx, http.MethodGet, target, nil, nil, nil, reads.ServeHTTP)
+		if err != nil {
+			return err
+		}
+		if status < 200 || status >= 300 {
+			return mcp.NewBridgeErrorFromHTTP(status, raw)
+		}
+		if err := json.Unmarshal(raw, out); err != nil {
+			return mcp.NewBridgeError(http.StatusBadGateway, "invalid_response", "invalid JSON in "+path+" response", nil)
+		}
+		return nil
+	}
 }
 
 // mcpGetJobPayload reads one job through handleGetJob for both MCP bridges.
