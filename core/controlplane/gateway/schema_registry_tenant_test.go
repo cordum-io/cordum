@@ -14,8 +14,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const schemaTenantOwnersKey = "cordum:schema:owners"
-
 // schemaTenantSeed is one subtest's own ids: sB is registered by tenant B with
 // a private marker, and sP is written straight to the registry, as pack
 // install writes it, so no tenant owns it.
@@ -179,9 +177,18 @@ func schemaTenantSnapshot(t *testing.T, sw *crossTenantSweep, seed schemaTenantS
 	if err != nil {
 		t.Fatalf("list schemas: %v", err)
 	}
-	owners, err := sw.server.jobStore.Client().HGetAll(ctx, schemaTenantOwnersKey).Result()
+	client := sw.server.jobStore.Client()
+	keys, err := client.Keys(ctx, "cordum:schema:owner:*").Result()
 	if err != nil {
 		t.Fatalf("read schema owners: %v", err)
+	}
+	owners := make(map[string]string, len(keys))
+	for _, key := range keys {
+		owner, err := client.Get(ctx, key).Result()
+		if err != nil {
+			t.Fatalf("read schema owner %s: %v", key, err)
+		}
+		owners[key] = owner
 	}
 	return schemaTenantState{sB: string(sB), sP: string(sP), ids: ids, owners: owners}
 }
