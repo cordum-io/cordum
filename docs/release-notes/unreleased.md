@@ -11,6 +11,15 @@ these entries into a versioned release note and reset this file.
   with a `_` prefix before policy evaluation. See the
   [v1.3.2 notes](v1.3.2.md). The next release from `main` includes it.
 
+- **policy inputs: the fixes of #605 are already released in v1.3.3.** `main`
+  has the same fixes (#605): the Safety Kernel selects the rules of a job
+  from its topic alone, Edge evaluate keeps `agent_id`, `secrets_present`,
+  the `mcp` alias names and the workflow and job scope labels server-owned,
+  and job submit sets `_source=pack` only for a credential with a worker
+  link. v1.3.3 also has the label handling that `main` has had since #590.
+  See the [v1.3.3 notes](v1.3.3.md). The next release from `main` includes
+  all of them.
+
 - **Authenticated worker trust is now a bound proof/session contract, not a
   self-reported capability (task-a4b71af7).** Current stable CAP Go, Python,
   and Node workers use one protobuf P-256 challenge/proof flow. Cordum binds
