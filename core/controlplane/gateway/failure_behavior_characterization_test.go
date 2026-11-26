@@ -16,7 +16,7 @@ func TestFailureBehaviorEdgeEnforceKernelUnavailableDeniesKnownSafe(t *testing.T
 	body := `{"tenant_id":"` + edgeRouteTenant + `","principal_id":"principal-edge-a",
 		"session_id":"` + session.SessionID + `","execution_id":"` + session.ExecutionID + `",
 		"agent_product":"claude-code","layer":"hook","kind":"hook.pre_tool_use",
-		"tool_name":"Bash","input_redacted":{"command":"npm test"}}`
+		"tool_name":"Bash","input_redacted":{"command":"npm test"},"input_commitment":"` + edgeCommitmentGranted + `"}`
 
 	rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", body)
 	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())

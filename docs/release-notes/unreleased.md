@@ -332,7 +332,7 @@ these entries into a versioned release note and reset this file.
   freshly-scaled fleet into a single flush per pool, and
   `defaultFlushDispatchForPool` reuses the existing
   `handleJobRequest` dispatch path — no forked dispatch logic. New
-  metric `cordum_scheduler_dispatch_flush_on_worker_online_total{pool}`
+  metric `cordum_scheduler_scheduler_dispatch_flush_on_worker_online_total{pool}`
   counts flushes that moved at least one pending job. See
   [`docs/scheduler.md`](../scheduler.md) §Flush-on-worker-online for
   the full design. Closes task-7a2514ae.

@@ -87,6 +87,7 @@ when the job does not exist.
 **Purpose:** List installed integration packs.
 **Input:** `{cursor?, page_size?, filter?: {id, enabled}}`.
 **Output:** `items: [{id, version, enabled, installed_at}]`.
+Not available over the gateway's HTTP MCP endpoint: packs are a global registry with no tenant dimension, so the call answers `read_only_unsupported` there.
 
 ### `cordum_list_topics`
 **Purpose:** List registered job topics.
@@ -97,6 +98,7 @@ when the job does not exist.
 **Purpose:** List currently registered workers.
 **Input:** `{cursor?, page_size?, filter?: {pool, status}}`.
 **Output:** `items: [{id, pool, capabilities, last_seen, status}]`.
+Not available over the gateway's HTTP MCP endpoint: workers are a global pool with no tenant dimension, so the call answers `read_only_unsupported` there.
 
 ### `cordum_list_agents`
 **Purpose:** List configured MCP agent identities.
@@ -115,6 +117,7 @@ when the job does not exist.
 **Output:** `items: [{seq, timestamp, event_type, tenant_id, agent_id, extra, event_hash, prev_hash}]`.
 **Since/until** accept RFC3339 timestamps (`2026-04-17T00:00:00Z`).
 **Admin-only** for cross-tenant queries.
+Not available over the gateway's HTTP MCP endpoint: no gateway endpoint serves this query, so the call answers `read_only_unsupported` there.
 
 ### `cordum_audit_verify`
 **Purpose:** Walk the tenant's audit hash chain and report integrity.

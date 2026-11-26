@@ -1006,6 +1006,24 @@ describe("api/transform edge mappers", () => {
     expect(mapEdgeSession({ ...base, principal_display_name: "" }).principalDisplayName).toBeUndefined();
   });
 
+  it.each([
+    ["compatibility", "compatibility"],
+    ["hook-mediated", "hook-mediated"],
+    ["executor-enforced", "executor-enforced"],
+    ["unsupported", "unsupported"],
+    ["stale", "stale"],
+    ["missing", undefined],
+    ["", undefined],
+    ["enforced", undefined],
+    ["Hook-Mediated", undefined],
+    [" stale", undefined],
+    [7, undefined],
+  ])("maps assurance_state %j to %j, never to a substitute state", (raw, want) => {
+    const base = { session_id: "edge_sess_as", tenant_id: "tenant-a", trace_id: "trace-as" };
+    const input = raw === "missing" ? base : { ...base, assurance_state: raw };
+    expect(mapEdgeSession(input).assuranceState).toBe(want);
+  });
+
   it("maps Edge session pages with camelCase fields, future enum preservation, and cursor pagination", () => {
     const minimal = mapEdgeSession({
       session_id: "edge_sess_min",

@@ -27,9 +27,11 @@ func TestAppendSubmitSafetyDecisionAudit_AttachesKeyIdentity(t *testing.T) {
 	sink := &recordingAuditSender{}
 	s.auditExporter = sink
 
-	s.appendSubmitSafetyDecisionAudit(context.Background(), "submit", "job-1", "topic.demo",
+	if err := s.appendSubmitSafetyDecisionAudit(context.Background(), "submit", "job-1", "topic.demo",
 		"mk_x", "operator", "api_key:mk_x", "ci", "submit job job-1",
-		submitPolicyDecision{}, nil, "", "", "")
+		submitPolicyDecision{}, nil, "", "", ""); err != nil {
+		t.Fatalf("append submit audit: %v", err)
+	}
 
 	ev := lastSIEMEvent(t, sink)
 	if ev.Identity != "mk_x" {
@@ -50,8 +52,10 @@ func TestAppendApprovalDecisionAudit_AttachesKeyIdentity(t *testing.T) {
 	sink := &recordingAuditSender{}
 	s.auditExporter = sink
 
-	s.appendApprovalDecisionAudit(context.Background(), "approve", "job-1", "topic.demo",
-		"mk_x", "operator", "api_key:mk_x", "ci", "approved", "looks good", "", "", "")
+	if err := s.appendApprovalDecisionAudit(context.Background(), "approve", "job-1", "topic.demo",
+		"mk_x", "operator", "api_key:mk_x", "ci", "approved", "looks good", "", "", ""); err != nil {
+		t.Fatalf("append approval audit: %v", err)
+	}
 
 	ev := lastSIEMEvent(t, sink)
 	if ev.Identity != "mk_x" {

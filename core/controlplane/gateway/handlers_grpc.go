@@ -147,15 +147,12 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 	}
 	payloadReq.Labels = stripReservedLabels(payloadReq.Labels)
 
-	// Inject request source for policy rules.
+	// Inject request source for policy rules. Same rule as the HTTP path:
+	// "api" unless a credential with a worker link sends a pack_id (below).
 	if payloadReq.Labels == nil {
 		payloadReq.Labels = map[string]string{}
 	}
-	if payloadReq.PackId != "" {
-		payloadReq.Labels["_source"] = "pack"
-	} else {
-		payloadReq.Labels["_source"] = "api"
-	}
+	payloadReq.Labels["_source"] = "api"
 
 	secretsPresent := secrets.ContainsSecretRefs(payloadReq.Prompt)
 	if secretsPresent {
@@ -201,6 +198,10 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 			meta.Labels = map[string]string{}
 		}
 		meta.Labels["agent_id"] = agentID
+		if payloadReq.PackId != "" {
+			payloadReq.Labels["_source"] = "pack"
+			meta.Labels["_source"] = "pack"
+		}
 	}
 	if s.capProfile.IsProduction() {
 		probe := &pb.JobRequest{
@@ -245,7 +246,8 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		if policyResult.Reason != "" {
 			reason = policyResult.Reason
 		}
-		s.appendSubmitSafetyDecisionAudit(ctx, "submit_denied", jobID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit-time policy denied: "+reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
+		// Must complete: the refusal stands whatever happens to its entry, and appendPolicyAudit logs ERROR.
+		_ = s.appendSubmitSafetyDecisionAudit(ctx, "submit_denied", jobID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit-time policy denied: "+reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
 		return nil, status.Error(codes.PermissionDenied, reason)
 	}
 	if policyResult.Throttled {
@@ -253,7 +255,8 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		if policyResult.Reason != "" {
 			reason = policyResult.Reason
 		}
-		s.appendSubmitSafetyDecisionAudit(ctx, "submit_throttled", jobID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit-time policy throttled: "+reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
+		// Must complete: the refusal stands whatever happens to its entry, and appendPolicyAudit logs ERROR.
+		_ = s.appendSubmitSafetyDecisionAudit(ctx, "submit_throttled", jobID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit-time policy throttled: "+reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
 		return nil, status.Error(codes.ResourceExhausted, reason)
 	}
 	if policyResult.ApprovalRequired {
@@ -372,7 +375,8 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 			}
 			s.syncApprovalQueueDepth(ctx)
 		}
-		s.appendSubmitSafetyDecisionAudit(ctx, "submit_approval_required", jobID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit-time policy requires approval: "+policyResult.Reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
+		// Must complete: the hold stands whatever happens to its entry, and appendPolicyAudit logs ERROR.
+		_ = s.appendSubmitSafetyDecisionAudit(ctx, "submit_approval_required", jobID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit-time policy requires approval: "+policyResult.Reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
 		return &pb.SubmitJobResponse{
 			JobId:   jobID,
 			TraceId: traceID,
@@ -507,6 +511,12 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 	packet := jobRequestPacket(traceID, "api-gateway", jobReq)
 	s.attachServiceToken(packet)
 
+	// The "submit" entry is stored before the job is dispatched: a job whose
+	// entry was not stored is set FAILED and never published.
+	if err := s.appendSubmitSafetyDecisionAudit(ctx, "submit", jobID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit job "+jobID, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier); err != nil {
+		_ = s.jobStore.SetState(ctx, jobID, model.JobStateFailed)
+		return nil, status.Error(codes.Unavailable, submitAuditNotStored)
+	}
 	if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
 		_ = s.jobStore.SetState(ctx, jobID, model.JobStateFailed)
 		slog.Error("job publish failed", "job_id", jobID, "error", err)
@@ -518,7 +528,6 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		"traceId", traceID,
 		"topic", payloadReq.Topic,
 	)
-	s.appendSubmitSafetyDecisionAudit(ctx, "submit", jobID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit job "+jobID, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
 	return &pb.SubmitJobResponse{JobId: jobID, TraceId: traceID}, nil
 }
 

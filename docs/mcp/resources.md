@@ -48,6 +48,8 @@ endpoint so clients discover it without hard-coding paths.
 | `cordum://agents/{id}`                | Agent identity | tenant (admin for cross-tenant) |
 | `cordum://audit/{tenant}/{seq}`       | Audit event    | admin only |
 
+`cordum://packs/{id}` and `cordum://audit/{tenant}/{seq}`: Not available over the gateway's HTTP MCP endpoint, for the reasons in [tools.md](./tools.md) (`cordum_list_packs` and `cordum_audit_query`).
+
 ---
 
 ## Content shape
