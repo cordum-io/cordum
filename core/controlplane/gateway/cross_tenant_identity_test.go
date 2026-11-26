@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/google/uuid"
@@ -29,6 +30,7 @@ const crossTenantIdentityPassword = "Sweep-Passw0rd!"
 
 func init() {
 	registerCrossTenantFamily("PR1-02-IDENTITY",
+		crossTenantCase{"POST /api/v1/users", "users-create", crossTenantUserCreate},
 		crossTenantCase{"GET /api/v1/users", "users-list", crossTenantUserList},
 		crossTenantUserWrite("users-update", "PUT", "/api/v1/users/{id}", `{"display_name":"intruder"}`),
 		crossTenantUserWrite("users-delete", "DELETE", "/api/v1/users/{id}", ""),
@@ -39,6 +41,11 @@ func init() {
 		crossTenantCase{"GET /api/v1/auth/session", "session", crossTenantSessionRead},
 		crossTenantCase{"POST /api/v1/auth/password", "self-password", crossTenantSelfPassword},
 		crossTenantCase{"POST /api/v1/auth/logout", "logout", crossTenantLogout},
+		crossTenantRoleCase("roles-list", "GET", "/api/v1/auth/roles", ""),
+		crossTenantRoleCase("role-get", "GET", "/api/v1/auth/roles/{name}", ""),
+		crossTenantRoleCase("role-put", "PUT", "/api/v1/auth/roles/{name}", `{"description":"intruder","permissions":["jobs.read"]}`),
+		crossTenantRoleCase("role-delete", "DELETE", "/api/v1/auth/roles/{name}", ""),
+		crossTenantCase{"PUT /api/v1/auth/oidc/group-role-mapping", "oidc-group-role-mapping", crossTenantOIDCMapping},
 	)
 	registerCrossTenantFamily("PR1-02-IDENTITY", crossTenantSCIMCases()...)
 }
@@ -240,6 +247,21 @@ func assertCrossTenantPacketsClean(t *testing.T, sw *crossTenantSweep, mark int,
 	}
 }
 
+func crossTenantUserCreate(t *testing.T, sw *crossTenantSweep) {
+	id := newCrossTenantIdentity(t, sw)
+	owner := seedCrossTenantUser(t, sw, sw.tenantB)
+	before, mark := id.userState(t, sw.tenantB.tenantID), sw.publishMark()
+	name := "intruder-" + uuid.NewString()
+	body := fmt.Sprintf(`{"username":%q,"password":%q,"tenant":%q}`, name, crossTenantIdentityPassword, sw.tenantB.tenantID)
+	rr := sw.as(t, sw.tenantA, http.MethodPost, "/api/v1/users", body)
+	assertCrossTenantRefused(t, rr, "A create user in B", owner.ID, owner.Username)
+	assertCrossTenantQuiet(t, sw, mark, "A create user in B", reflect.DeepEqual(before, id.userState(t, sw.tenantB.tenantID)))
+	assertCrossTenantAbsent(t, sw.as(t, sw.tenantB, http.MethodPost, "/api/v1/users", body), "owner create")
+	if _, err := id.users.GetByUsername(context.Background(), name, sw.tenantB.tenantID); err != nil {
+		t.Fatalf("owner create did not persist a B user: %v", err)
+	}
+}
+
 func crossTenantUserList(t *testing.T, sw *crossTenantSweep) {
 	newCrossTenantIdentity(t, sw)
 	owner := seedCrossTenantUser(t, sw, sw.tenantB)
@@ -394,6 +416,67 @@ func crossTenantLogout(t *testing.T, sw *crossTenantSweep) {
 	}
 }
 
+func crossTenantRoleCase(name, method, route, body string) crossTenantCase {
+	return crossTenantCase{method + " " + route, name, func(t *testing.T, sw *crossTenantSweep) {
+		newCrossTenantIdentity(t, sw)
+		role, marker := "sweep-"+uuid.NewString()[:8], "private-role-"+uuid.NewString()
+		seed := fmt.Sprintf(`{"description":%q,"permissions":["jobs.read"]}`, marker)
+		assertCrossTenantAbsent(t, sw.as(t, sw.tenantB, http.MethodPut, "/api/v1/auth/roles/"+role, seed), "owner seed role")
+		path := strings.Replace(route, "{name}", role, 1)
+		state := func() *auth.RoleDefinition {
+			def, err := sw.server.rbacStore.GetRole(context.Background(), role)
+			if err != nil {
+				return nil
+			}
+			return def
+		}
+		before, mark := state(), sw.publishMark()
+		rr := sw.as(t, sw.tenantA, method, path, body)
+		if path == route {
+			assertCrossTenantAbsent(t, rr, "A "+name, marker)
+		} else {
+			assertCrossTenantRefused(t, rr, "A "+name, marker)
+		}
+		assertCrossTenantQuiet(t, sw, mark, "A "+name, before != nil && reflect.DeepEqual(before, state()))
+		rr = sw.as(t, sw.tenantB, method, path, body)
+		read := method == http.MethodGet
+		if rr.Code != http.StatusOK || read != strings.Contains(rr.Body.String(), marker) || read != reflect.DeepEqual(before, state()) {
+			t.Fatalf("owner %s: status=%d body=%s", name, rr.Code, rr.Body.String())
+		}
+	}}
+}
+
+func crossTenantOIDCMapping(t *testing.T, sw *crossTenantSweep) {
+	newCrossTenantIdentity(t, sw)
+	const path = "/api/v1/auth/oidc/group-role-mapping"
+	operator := func(body string) int {
+		req := httptest.NewRequest(http.MethodPut, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		sw.server.handleUpdateOIDCGroupRoleMapping(rr, withAuth(req, &auth.AuthContext{Tenant: sw.server.tenant, PrincipalID: "sweep-operator", Role: "admin", AllowCrossTenant: true}))
+		return rr.Code
+	}
+	state := func() []any {
+		doc, err := sw.server.configSvc.Get(context.Background(), configsvc.ScopeSystem, "default")
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg := sw.server.auth.(auth.AuthConfigProvider).AuthConfig()
+		return []any{doc, cfg.OIDCGroupsClaim, cfg.OIDCGroupRoleMapping}
+	}
+	marker := "private-group-" + uuid.NewString()
+	if code := operator(fmt.Sprintf(`{"oidc_groups_claim":"groups","oidc_group_role_mapping":{%q:"viewer"}}`, marker)); code != http.StatusOK {
+		t.Fatalf("operator seed mapping: status=%d", code)
+	}
+	before, mark := state(), sw.publishMark()
+	rr := sw.as(t, sw.tenantA, http.MethodPut, path, `{"oidc_groups_claim":"intruder","oidc_group_role_mapping":{"intruders":"admin"}}`)
+	assertCrossTenantRefused(t, rr, "A oidc mapping", marker)
+	assertCrossTenantQuiet(t, sw, mark, "A oidc mapping", reflect.DeepEqual(before, state()))
+	if code := operator(`{"oidc_groups_claim":"groups","oidc_group_role_mapping":{"operators":"viewer"}}`); code != http.StatusOK || reflect.DeepEqual(before, state()) {
+		t.Fatalf("operator update mapping: status=%d", code)
+	}
+}
+
 const crossTenantSAMLMetadata = `<EntityDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://idp.example.test/metadata">` +
 	`<IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">` +
 	`<SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://idp.example.test/sso"/>` +
@@ -479,6 +562,8 @@ func crossTenantSCIMCases() []crossTenantCase {
 		crossTenantSCIMCase("scim-group-replace", "PUT", groups+"/{id}", fmt.Sprintf(crossTenantSCIMGroup, "sweep-renamed")),
 		crossTenantSCIMCase("scim-group-patch", "PATCH", groups+"/{id}", crossTenantSCIMPatch),
 		crossTenantSCIMCase("scim-group-delete", "DELETE", groups+"/{id}", ""),
+		{"GET /api/v1/scim/settings", "scim-settings", crossTenantSCIMSettings},
+		{"POST /api/v1/scim/settings/token", "scim-token-rotate", crossTenantSCIMRotate},
 	}
 }
 
@@ -568,4 +653,31 @@ func crossTenantSCIMCase(name, method, route, body string) crossTenantCase {
 			t.Fatalf("owner %s: status=%d body=%s", name, rr.Code, rr.Body.String())
 		}
 	}}
+}
+
+func crossTenantSCIMSettings(t *testing.T, sw *crossTenantSweep) {
+	newCrossTenantIdentity(t, sw)
+	seed := seedCrossTenantSCIM(t, sw)
+	rr := sw.as(t, sw.tenantA, http.MethodGet, "/api/v1/scim/settings", "")
+	if rr.Code < 200 || rr.Code >= 300 {
+		assertCrossTenantRefused(t, rr, "A SCIM settings")
+	}
+	assertCrossTenantNoLeaks(t, rr, "A SCIM settings", seed.token, seed.userName)
+	rr = sw.as(t, sw.tenantB, http.MethodGet, "/api/v1/scim/settings", "")
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), seed.userName) {
+		t.Fatalf("owner SCIM settings: status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func crossTenantSCIMRotate(t *testing.T, sw *crossTenantSweep) {
+	newCrossTenantIdentity(t, sw)
+	seed := seedCrossTenantSCIM(t, sw)
+	before, mark := seed.state(t, sw), sw.publishMark()
+	rr := sw.as(t, sw.tenantA, http.MethodPost, "/api/v1/scim/settings/token", "")
+	assertCrossTenantRefused(t, rr, "A SCIM token rotate", seed.token, seed.userName)
+	assertCrossTenantQuiet(t, sw, mark, "A SCIM token rotate", before == seed.state(t, sw))
+	rotated := crossTenantSCIMToken(t, sw, sw.tenantB)
+	if rotated == seed.token || crossTenantSCIMDo(t, sw, seed.token, http.MethodGet, auth.SCIMUsersPath, "").Code != http.StatusUnauthorized {
+		t.Fatal("owner SCIM token rotate did not replace B's token")
+	}
 }

@@ -81,7 +81,6 @@ var crossTenantPending = map[string][]string{
 	// Slice separator: keep unchanged when removing a pending block.
 	// Slice separator: keep unchanged when removing a pending block.
 	// Slice separator: keep unchanged when removing a pending block.
-	"PR1-02-IDENTITY": {"/api/v1/auth", "/api/v1/users", "/api/v1/scim"},
 	// Slice separator: keep unchanged when removing a pending block.
 	"PR1-02-PLATFORM": {"/api/v1/packs", "/api/v1/marketplace", "/api/v1/config", "/api/v1/evals", "/api/v1/governance", "/api/v1/license", "/api/v1/telemetry", "/api/v1/status", "/api/v1/admin", "/api/v1/copilot", "/health", "/api/v1/health"},
 	// Slice separator: keep unchanged when removing a pending block.
