@@ -56,6 +56,7 @@ classifier-owned. `reservedPolicyLabelPrefixes` in
 | `unknown.*`    | classifier  | Hook default-case for `unknown.impact`. |
 | `action.*`     | classifier  | Reserved for future use; defensive — pre-EDGE-069 leak vector. |
 | `classifier.*` | classifier  | EDGE-069 step 5 — `classifier.complete`, `classifier.missing_fields` for partial-classification fail-closed. |
+| `_*`           | Cordum services | System labels, for example `_delegation.*`, `_action.descriptor_json`, `_content.*`. The Safety Kernel reads them as gateway-verified. Edge has no path that verifies them, so a request or session label with a `_` prefix is always dropped (metric `namespace="_"`). GHSA-j33m-mr27-pmw3. |
 
 Anything OUTSIDE these namespaces is request-controlled and passes
 through untouched (subject to length/UTF-8/secret-string sanitisation
