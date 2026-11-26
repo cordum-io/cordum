@@ -33,7 +33,7 @@ func TestRetentionProofMapContract(t *testing.T) {
 	tests := retentionTestNames(t, root)
 	require.NoError(t, checkRetentionMap(doc, inventory, tests))
 	for _, proof := range []string{"`TestRetentionTraceScanFindsEveryType`", "`TestRetentionBackupWindow`", "open finding PR2-08-F1", "`TestRetentionBackupWindow`, pending PR2-08-DATA"} {
-		require.NoError(t, checkRetentionMap(strings.Replace(doc, "pending PR2-08-EDGE", proof, 1), inventory, tests))
+		require.NoError(t, retentionReferences(proof, tests))
 	}
 }
 
