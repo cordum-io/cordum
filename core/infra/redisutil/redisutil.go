@@ -42,6 +42,11 @@ const (
 var redisPoolStatsLogInterval = 60 * time.Second
 
 // NewClient creates a Redis universal client with optional TLS and clustering support.
+//
+// A call's context deadline bounds its socket reads and writes. A call with no
+// earlier deadline stays bounded by REDIS_READ_TIMEOUT and REDIS_WRITE_TIMEOUT.
+// Run a blocking command or a pub/sub receive under a context with no deadline,
+// or with one later than its block time plus the read timeout.
 func NewClient(url string) (redis.UniversalClient, error) {
 	uopts, err := newUniversalOptions(url)
 	if err != nil {
@@ -118,6 +123,8 @@ func newUniversalOptions(url string) (*redis.UniversalOptions, error) {
 		WriteTimeout:    durationFromEnv(envRedisWriteTimeout, defaultWriteTimeout),
 		ConnMaxIdleTime: durationFromEnv(envRedisIdleTimeout, defaultIdleTimeout),
 		ConnMaxLifetime: durationFromEnv(envRedisConnMaxLife, defaultConnMaxLife),
+
+		ContextTimeoutEnabled: true,
 	}, nil
 }
 
@@ -125,11 +132,16 @@ func newUniversalOptions(url string) (*redis.UniversalOptions, error) {
 // TLS env vars (REDIS_TLS_CA, etc.) are only applied when the URL uses the
 // rediss:// scheme, so plain redis:// connections (e.g. miniredis in tests)
 // are not affected by ambient TLS environment variables.
+//
+// As with NewClient, a call's context deadline bounds its socket reads and
+// writes; a call with no earlier deadline stays bounded by the URL's read and
+// write timeouts.
 func ParseOptions(rawURL string) (*redis.Options, error) {
 	opts, err := redis.ParseURL(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse redis url: %w", err)
 	}
+	opts.ContextTimeoutEnabled = true
 	if strings.HasPrefix(rawURL, "rediss://") {
 		if err := applyTLSFromEnv(opts); err != nil {
 			return nil, fmt.Errorf("apply redis tls config: %w", err)
