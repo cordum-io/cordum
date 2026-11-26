@@ -16,6 +16,7 @@ import (
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
+	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/policyshadow"
 )
@@ -30,6 +31,23 @@ func init() {
 	}
 	registerCrossTenantFamily("PR1-02-POLICY", crossTenantCase{"GET /api/v1/policy/bundles/{id}", "bundle-detail", crossTenantBundleDetail})
 	registerCrossTenantFamily("PR1-02-POLICY", crossTenantCase{"GET /api/v1/policy/output/stats", "output-stats", crossTenantOutputStats})
+	for _, route := range []struct{ method, path, name string }{
+		{http.MethodPut, "/bundles/{id}", "bundle-put"},
+		{http.MethodDelete, "/bundles/{id}", "bundle-delete"},
+		{http.MethodPost, "/publish", "publish"},
+		{http.MethodPost, "/rollback", "rollback"},
+		{http.MethodPost, "/bundles/snapshots", "snapshot"},
+		{http.MethodPut, "/global", "global"},
+		{http.MethodPut, "/output/rules/{id}", "output-rule"},
+		{http.MethodPost, "/velocity-rules", "velocity-create"},
+		{http.MethodPut, "/velocity-rules/{id}", "velocity-put"},
+		{http.MethodDelete, "/velocity-rules/{id}", "velocity-delete"},
+	} {
+		registerCrossTenantFamily("PR1-02-POLICY", crossTenantCase{
+			route.method + " /api/v1/policy" + route.path, "system-" + route.name,
+			crossTenantSystemPolicyWrite(route.method, route.name),
+		})
+	}
 }
 
 func TestCrossTenantSweepPolicy(t *testing.T) {
@@ -223,4 +241,108 @@ func crossTenantOutputStats(t *testing.T, sw *crossTenantSweep) {
 			t.Errorf("owner stats missing B's output: %+v", stats)
 		}
 	}
+}
+
+func crossTenantSystemPolicyWrite(method, name string) func(*testing.T, *crossTenantSweep) {
+	return func(t *testing.T, sw *crossTenantSweep) {
+		id, marker := seedCrossTenantPolicy(t, sw)
+		path, body := prepareCrossTenantSystemWrite(t, sw, id, name)
+		before, mark := crossTenantPolicyState(t, sw, id), sw.publishMark()
+		rr := sw.as(t, sw.tenantA, method, path, body)
+		after := crossTenantPolicyState(t, sw, id)
+		if !reflect.DeepEqual(before.system, after.system) {
+			t.Error("tenant-bound admin changed the system policy document")
+		}
+		if !reflect.DeepEqual(before.snapshots, after.snapshots) {
+			t.Error("tenant-bound admin changed policy snapshots")
+		}
+		if !reflect.DeepEqual(before.shadow, after.shadow) {
+			t.Error("tenant-bound admin changed B's shadow")
+		}
+		if len(sw.publishedSince(mark)) != 0 {
+			t.Error("tenant-bound admin published a packet")
+		}
+		if rr.Code != http.StatusForbidden && rr.Code != http.StatusNotFound {
+			t.Errorf("tenant-bound admin status=%d, want 403 or 404", rr.Code)
+		}
+		assertCrossTenantNoLeaks(t, rr, "system write", marker)
+		// A separate fixture keeps a destructive violation from masking the control.
+		owner := newCrossTenantSweep(t)
+		ownerID, _ := seedCrossTenantPolicy(t, owner)
+		ownerPath, ownerBody := prepareCrossTenantSystemWrite(t, owner, ownerID, name)
+		ownerBefore := crossTenantPolicyState(t, owner, ownerID)
+		rr = crossTenantPolicyAdmin(t, owner, method, ownerPath, ownerBody)
+		assertCrossTenantAbsent(t, rr, "cross-tenant admin control")
+		if reflect.DeepEqual(ownerBefore, crossTenantPolicyState(t, owner, ownerID)) {
+			t.Error("cross-tenant admin control did not change policy state")
+		}
+		t.Logf("cross-tenant admin control status=%d", rr.Code)
+	}
+}
+
+func crossTenantPolicyAdmin(t *testing.T, sw *crossTenantSweep, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	req := httptest.NewRequest(method, path, strings.NewReader(body)).WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Tenant-ID", sw.tenantB.tenantID)
+	req = withAuth(req, &auth.AuthContext{Role: "admin", Tenant: sw.tenantB.tenantID, AllowCrossTenant: true})
+	rr := httptest.NewRecorder()
+	sw.mux.ServeHTTP(rr, req)
+	return rr
+}
+
+func prepareCrossTenantSystemWrite(t *testing.T, sw *crossTenantSweep, id, name string) (string, string) {
+	t.Helper()
+	base := "/api/v1/policy"
+	bundle := base + "/bundles/" + url.PathEscape(id)
+	replacement := fmt.Sprintf(`{"content":%q,"enabled":false}`, shadowTestReplacementYAML)
+	switch name {
+	case "bundle-put":
+		return bundle, replacement
+	case "bundle-delete":
+		return bundle, ""
+	case "publish":
+		assertCrossTenantAbsent(t, crossTenantPolicyAdmin(t, sw, http.MethodPut, bundle, replacement), "seed disabled bundle")
+		return base + "/publish", fmt.Sprintf(`{"bundle_ids":[%q],"message":"publish control"}`, id)
+	case "rollback":
+		snapshotID := crossTenantPolicyState(t, sw, id).snapshots[0].ID
+		assertCrossTenantAbsent(t, crossTenantPolicyAdmin(t, sw, http.MethodPut, bundle, replacement), "seed modified bundle")
+		return base + "/rollback", fmt.Sprintf(`{"snapshot_id":%q}`, snapshotID)
+	case "snapshot":
+		return base + "/bundles/snapshots", `{"note":"capture control"}`
+	case "global":
+		return base + "/global", fmt.Sprintf(`{"sections":{"input_rules":{"content":%q}}}`, globalInputContent)
+	case "output-rule":
+		body := fmt.Sprintf(`{"content":%q,"enabled":true}`, outputPolicyContent)
+		assertCrossTenantAbsent(t, crossTenantPolicyAdmin(t, sw, http.MethodPut, base+"/bundles/secops%2Foutput", body), "seed output rule")
+		return base + "/output/rules/out-secret", `{"enabled":true}`
+	default:
+		return prepareCrossTenantVelocityWrite(t, sw, name)
+	}
+}
+
+func prepareCrossTenantVelocityWrite(t *testing.T, sw *crossTenantSweep, name string) (string, string) {
+	t.Helper()
+	setTestEntitlements(t, sw.server, licensing.PlanTeam, func(e *licensing.Entitlements) { e.VelocityRules = true })
+	path := "/api/v1/policy/velocity-rules"
+	payload := velocityRulePayload("policy-sweep")
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name == "velocity-create" {
+		return path, string(body)
+	}
+	assertCrossTenantAbsent(t, crossTenantPolicyAdmin(t, sw, http.MethodPost, path, string(body)), "seed velocity rule")
+	if name == "velocity-delete" {
+		return path + "/policy-sweep", ""
+	}
+	payload["threshold"] = 7
+	body, err = json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path + "/policy-sweep", string(body)
 }
