@@ -7,6 +7,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Policy: policy bundle, output-rule, velocity-rule, publish, rollback and global
+  policy writes now store the change and its policy audit entry together. A request
+  whose audit entry cannot be stored fails and changes nothing, a write that races
+  another policy change answers 409, and snapshot capture fails when its audit entry
+  cannot be stored (task-be32bb1b).
+
 - Installer: `tools/scripts/install.ps1` runs under Windows PowerShell 5.1, as its
   `#Requires -Version 5.1` line says. Native stderr from a successful gpg call no
   longer stops it, the version-floor write no longer needs .NET Core, and CI runs the
