@@ -181,13 +181,20 @@ func WithStepHashSink(sink StepHashSink) ConsumerOption {
 // JetStream stored-message time, or the receive time when it is unavailable.
 func WithPublisherAuth(controlPlane *policysign.TrustStore, publishers map[string]ed25519.PublicKey) ConsumerOption {
 	return func(n *NATSAuditConsumer) {
-		n.authorized = func(token string, at time.Time) bool {
-			if claims, err := servicetoken.VerifyService(token, controlPlane, at); err == nil &&
-				(claims.Subject == servicetoken.IdentityGateway || claims.Subject == servicetoken.IdentityScheduler) {
-				return true
-			}
-			return VerifyPublisherToken(token, publishers, at)
+		n.authorized = PublisherAuthorizer(controlPlane, publishers)
+	}
+}
+
+// PublisherAuthorizer checks audit publisher service tokens at the supplied time.
+// Control-plane keys authorize only the gateway and scheduler; publisher keys
+// authorize only their own identities. Empty trust refuses every token.
+func PublisherAuthorizer(controlPlane *policysign.TrustStore, publishers map[string]ed25519.PublicKey) func(token string, at time.Time) bool {
+	return func(token string, at time.Time) bool {
+		if claims, err := servicetoken.VerifyService(token, controlPlane, at); err == nil &&
+			(claims.Subject == servicetoken.IdentityGateway || claims.Subject == servicetoken.IdentityScheduler) {
+			return true
 		}
+		return VerifyPublisherToken(token, publishers, at)
 	}
 }
 

@@ -976,6 +976,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- `cordumctl governance tail` records a decision only from a `sys.audit.export` packet whose service token verifies as the audit export consumer requires: an `api-gateway` or `cordum-scheduler` token under the control-plane keys (`CORDUM_POLICY_PUBLIC_KEY_*`), or a publisher's token under its own `CORDUM_AUDIT_PUBLIC_KEY_*` key. The tail reads these keys from its environment, like the gateway. Other packets are counted as `refused` and write nothing (task-876183dc).
+
 - In production mode, the scheduler applies the API gateway's cancel and
   approval-rejection job results, which carry no dispatch fence, and forwards
   them to the workflow engine. Any other result without a fence is dropped and
