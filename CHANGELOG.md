@@ -72,6 +72,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Documentation
 
+- Edge observe contract: clarify that reachable governance applies deny, approval and
+  throttle decisions, while a Gateway or kernel outage allows with degraded evidence.
+  Add observe decision tests and close the matrix's agentd throttle test gap; runtime
+  behavior is unchanged (task-c4d75415).
+
 - Data handling: `docs/configuration-reference.md` no longer says telemetry never collects PII or that the install ping's `install_id` holds none; it names the payload fields and says the data inventory (`docs/contract/data-inventory.yaml`, DI-C13 to DI-C15) classes stored telemetry and exported reports as possibly holding personal data. `docs/mcp/mutating-tools.md` drops the nonexistent `CORDUM_MCP_APPROVAL_TTL` and the 30-minute expiry: a pending MCP approval expires 5 minutes after the gate requests it, and its records outlive it (DI-C46, DI-C02) (task-56db1261).
 - Policy and pack signing: `docs/deployment/policy-signing.md`, `docs/packs/signing.md`, `docs/production.md`, `docs/safety-kernel.md`, `docs/edge-policy.md` and `docs/troubleshooting.md` now say that in the production profile an unset `CORDUM_POLICY_STRICT` means `enforce` for the safety kernel and for the gateway's policy-store writes, that the gateway refuses unsigned packs unless `CORDUM_GATEWAY_PACK_STRICT=false`, that a bundle save without a signing key is refused with `503` `POLICY_SIGNING_REQUIRED`, and that `signature_enforcement` in `GET /api/v1/status` reports both modes. `SAFETY_POLICY_PUBLIC_KEY` is the legacy Ed25519 key, not ECDSA (task-6824851c).
 - Delegation tokens: `docs/auth/delegation.md` states the parent-token tenant and expiry rules, the chain-link expiry check at verification, which permissions verification re-checks scope against, and the `delegation_issuer_chain` field of the Policy Decision Log record and the stored safety decision (task-ee196c6d).
@@ -298,6 +303,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   instead of TanStack, without changing table behavior (task-fc8b600a).
 
 ### Added
+
+- Retry-layer contract: `docs/contract/retry-layers.md` lists each retry layer on the job and
+  workflow-step paths (client, bus, scheduler, worker handler, workflow step, manual DLQ retry)
+  with its trigger, whether it runs the job handler again, its limit and default, the setting
+  that changes it and code references, and states each path's cap on handler runs per original
+  request as a product of the layer limits. `TestRetryLayersContract` in `tests/contract` checks
+  that the references resolve, the quoted defaults match the code and each cap equals its
+  product (task-f55862da).
+- `tools/perfharness/cmd/perfworker`: a perf-harness worker in pool `perf`. `job.perf`
+  succeeds after `--service-time`, `job.perf.fail` fails every handler attempt, and
+  `--handler-retries` sets the CAP runtime handler retries. It counts every handler run
+  per `perf_request_id` and serves the counts as JSON on a loopback-only `GET /counts`
+  (`--counts-addr`, default `127.0.0.1:9092`). No result is measured or published
+  (PR2-10-WORKER, task-f0acac46).
 
 - `POST /api/v1/edge/calibration-reports` summarizes the policy decisions recorded in
   observe-mode Edge sessions for a time window, repositories and labels: deny and
