@@ -14,6 +14,7 @@ import (
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
+	"github.com/cordum/cordum/core/licensing"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
@@ -50,6 +51,10 @@ func policyWriteJSON(t *testing.T, v any) string {
 func policyWriteCases(t *testing.T) []policyWriteCase {
 	t.Helper()
 	putBody := policyWriteJSON(t, map[string]any{"content": policyContent})
+	velocity := velocityRulePayload(storeWriterRuleID)
+	velocityBody := policyWriteJSON(t, velocity)
+	velocityBundles := map[string]any{velocityRuleBundleID(storeWriterRuleID): storeWriterVelocityBundle(t, velocity, map[string]any{})}
+	velocityPath := "/api/v1/policy/velocity-rules/" + storeWriterRuleID
 	return []policyWriteCase{
 		{
 			name:    "output rule toggle",
@@ -74,16 +79,40 @@ func policyWriteCases(t *testing.T) []policyWriteCase {
 			},
 			status: http.StatusNoContent, action: "delete", resourceType: "policy", resourceID: "secops/test",
 		},
+		{
+			name: "velocity rule create",
+			call: func(s *server) *httptest.ResponseRecorder {
+				return policyWriteCall(s.handleCreateVelocityRule, http.MethodPost, "/api/v1/policy/velocity-rules", "", velocityBody)
+			},
+			status: http.StatusCreated, action: "create", resourceType: "velocity_rule", resourceID: storeWriterRuleID,
+		},
+		{
+			name:    "velocity rule update",
+			bundles: velocityBundles,
+			call: func(s *server) *httptest.ResponseRecorder {
+				return policyWriteCall(s.handlePutVelocityRule, http.MethodPut, velocityPath, storeWriterRuleID, velocityBody)
+			},
+			status: http.StatusOK, action: "edit", resourceType: "velocity_rule", resourceID: storeWriterRuleID,
+		},
+		{
+			name:    "velocity rule delete",
+			bundles: velocityBundles,
+			call: func(s *server) *httptest.ResponseRecorder {
+				return policyWriteCall(s.handleDeleteVelocityRule, http.MethodDelete, velocityPath, storeWriterRuleID, "")
+			},
+			status: http.StatusNoContent, action: "delete", resourceType: "velocity_rule", resourceID: storeWriterRuleID,
+		},
 	}
 }
 
 // policyWriteServer returns auditPersistServer's gateway with c's bundles
-// stored and the development profile with policy signing off, as TestMain
-// sets it.
+// stored, velocity rules licensed and the development profile with policy
+// signing off, as TestMain sets it.
 func policyWriteServer(t *testing.T, c policyWriteCase) (*server, *miniredis.Miniredis, *redis.Client, *redis.Client) {
 	t.Helper()
 	storeWriterEnv(t, false, "off")
 	s, mr, hooked, plain := auditPersistServer(t)
+	setTestEntitlements(t, s, licensing.PlanTeam, func(e *licensing.Entitlements) { e.VelocityRules = true })
 	if c.bundles != nil {
 		require.NoError(t, configsvc.NewFromClient(plain).Set(context.Background(), &configsvc.Document{
 			Scope: configsvc.ScopeSystem, ScopeID: packs.PolicyConfigID, Data: map[string]any{packs.PolicyConfigKey: c.bundles},
