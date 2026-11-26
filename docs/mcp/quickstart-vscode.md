@@ -33,6 +33,9 @@ For HTTP transport, use an MCP-aware extension that supports it — the
 endpoint is `${CORDUM_GATEWAY}/mcp/sse`, same Authorization and
 X-Tenant-ID headers as the other clients.
 
+> **Not available over the gateway's HTTP MCP endpoint:** `cordum_list_packs`,
+> `cordum_list_workers` and `cordum_audit_query`. [tools.md](./tools.md) says why.
+
 Reload VS Code. The MCP panel should list `cordum` with the full
 catalogue.
 

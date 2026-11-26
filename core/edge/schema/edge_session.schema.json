@@ -66,6 +66,10 @@
       "type": "string",
       "enum": ["starting", "running", "waiting_for_approval", "degraded", "ended", "failed"]
     },
+    "assurance_state": {
+      "type": "string",
+      "enum": ["compatibility", "hook-mediated", "executor-enforced", "unsupported", "stale"]
+    },
     "risk_summary": {
       "type": "object",
       "additionalProperties": false,

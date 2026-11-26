@@ -52,6 +52,11 @@ type edgeEvaluateRequest struct {
 	ToolInputRedacted map[string]any `json:"tool_input_redacted"`
 	InputHash         string         `json:"input_hash"`
 	ToolInputHash     string         `json:"tool_input_hash"`
+	// InputCommitment is the Edge client's keyed commitment to the original,
+	// pre-redaction input. It is bound into the approval's action hash so an
+	// approval covers only the input it was granted for; the original input
+	// itself never reaches the Gateway.
+	InputCommitment string `json:"input_commitment"`
 
 	// Raw/transcript fields are accepted only so the handler can reject them
 	// with a sanitized error and force callers onto redacted input/artifacts.
@@ -152,6 +157,10 @@ func (s *server) handleEdgeEvaluate(w http.ResponseWriter, r *http.Request) {
 		writeEdgeEventRequestError(w, r, err, "invalid edge evaluate request")
 		return
 	}
+	if err := s.bindEdgeEvaluateAgentID(r, evalCtx.tenantID, policyInput.policyRequest); err != nil {
+		writeEdgeInternalError(w, r, "edge evaluate agent link lookup", err)
+		return
+	}
 	safetyResp, err := s.evaluateEdgeSafety(r.Context(), policyInput.policyRequest)
 	if err != nil {
 		outcome := edgeEvaluateOutcomeFromSafetyUnavailable(policyInput.event.EventID, evalCtx.session.PolicyMode, policyInput.classification)
@@ -164,9 +173,7 @@ func (s *server) handleEdgeEvaluate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, outcome.response)
 		return
 	}
-	outcome := edgeEvaluateOutcomeFromSafety(policyInput.event.EventID, safetyResp)
-	outcome = s.decorateEdgeEvaluateTierEvidence(r.Context(), policyInput.event.Labels, outcome)
-	actionHash, err := edgeEvaluateActionHash(policyInput.event, outcome.policySnapshot)
+	outcome, actionHash, err := s.edgeEvaluateDecide(r.Context(), evalCtx, policyInput, safetyResp)
 	if err != nil {
 		writeEdgeEventRequestError(w, r, err, "invalid edge evaluate request")
 		return
@@ -192,6 +199,11 @@ func (s *server) handleEdgeEvaluate(w http.ResponseWriter, r *http.Request) {
 					writeJSON(w, timeoutOutcome.response)
 					return
 				}
+			}
+			outcome, actionHash, err = s.edgeEvaluateAfterWait(r, evalCtx, policyInput, outcome)
+			if err != nil {
+				writeEdgeEventRequestError(w, r, err, "invalid edge evaluate request")
+				return
 			}
 		}
 
@@ -275,7 +287,12 @@ func (s *server) handleEdgeEvaluate(w http.ResponseWriter, r *http.Request) {
 					break
 				}
 			}
-			waitedOutcome, waitErr := s.consumeEdgeEvaluateApproval(r.Context(), evalCtx.store, appended, outcome, approval.ApprovalRef, actionHash)
+			current, currentHash, err := s.edgeEvaluateAfterWait(r, evalCtx, policyInput, outcome)
+			if err != nil {
+				writeEdgeEventRequestError(w, r, err, "invalid edge evaluate request")
+				return
+			}
+			waitedOutcome, waitErr := s.consumeEdgeEvaluateApproval(r.Context(), evalCtx.store, appended, current, approval.ApprovalRef, currentHash)
 			if waitErr != nil {
 				writeEdgeApprovalStoreError(w, r, waitErr, "consume edge evaluate approval after wait")
 				return
@@ -439,6 +456,77 @@ func (s *server) evaluateEdgeSafety(ctx context.Context, req *pb.PolicyCheckRequ
 	evalCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	return s.safetyClient.Evaluate(evalCtx, req)
+}
+
+// edgeEvaluateDecide turns a safety response into the evaluate outcome and the
+// action hash that an approval for that outcome is bound to.
+func (s *server) edgeEvaluateDecide(ctx context.Context, evalCtx edgeEvaluateContext, policyInput edgeEvaluatePolicyInput, safetyResp *pb.PolicyCheckResponse) (edgeEvaluateDecisionOutcome, string, error) {
+	outcome := edgeEvaluateOutcomeFromSafety(policyInput.event.EventID, safetyResp)
+	// Scope evidence follows the labels the Safety Kernel received, not the
+	// labels the caller sent.
+	outcome = s.decorateEdgeEvaluateTierEvidence(ctx, edgecore.Labels(policyInput.policyRequest.GetLabels()), outcome)
+	// An enforcing session binds every approval to the original input, so a
+	// hook evaluation must carry the Edge client's commitment to it.
+	inputCommitment := strings.TrimSpace(evalCtx.req.InputCommitment)
+	if inputCommitment == "" && policyInput.event.Layer == edgecore.LayerHook && evalCtx.session.PolicyMode != edgecore.PolicyModeObserve {
+		outcome = outcome.edgeEvaluateDeny("Edge input commitment required; upgrade cordum-agentd")
+	}
+	actionHash, err := edgeEvaluateActionHash(policyInput.event, outcome.policySnapshot, inputCommitment)
+	return outcome, actionHash, err
+}
+
+// bindEdgeEvaluateAgentID sets the agent_id label of the policy request from
+// the worker link of the caller's credential, as job submit does, and removes
+// the label when the credential has no link. The Safety Kernel reads agent_id
+// as the agent identity of the caller; the mapper already dropped any agent_id
+// a request or session label carried.
+func (s *server) bindEdgeEvaluateAgentID(r *http.Request, tenantID string, req *pb.PolicyCheckRequest) error {
+	agentID, err := s.linkedAgentID(r.Context(), tenantID, auth.FromRequest(r).AuthenticatedPrincipal())
+	if err != nil {
+		return err
+	}
+	for _, labels := range []map[string]string{req.Labels, req.Meta.Labels} {
+		if agentID == "" {
+			delete(labels, "agent_id")
+		} else {
+			labels["agent_id"] = agentID
+		}
+	}
+	return nil
+}
+
+// edgeEvaluateAfterWait re-checks authority once a server-side approval wait
+// returns. The caller's credential must still authenticate as the same
+// principal, its worker link is read again, and policy is evaluated again. The
+// consume that follows uses this outcome, so a deny that applies by now wins
+// and the approval stays unconsumed.
+func (s *server) edgeEvaluateAfterWait(r *http.Request, evalCtx edgeEvaluateContext, policyInput edgeEvaluatePolicyInput, waited edgeEvaluateDecisionOutcome) (edgeEvaluateDecisionOutcome, string, error) {
+	if !s.edgeEvaluateCallerAuthenticatesAs(r, evalCtx.principalID) {
+		return waited.edgeEvaluateDeny("caller credential no longer authenticates; this action was not run"), "", nil
+	}
+	if err := s.bindEdgeEvaluateAgentID(r, evalCtx.tenantID, policyInput.policyRequest); err != nil {
+		slog.Error("edge evaluate agent link lookup after approval wait failed", "error", err)
+		return waited.edgeEvaluateDeny("agent identity store unavailable; this action was not run"), "", nil
+	}
+	safetyResp, err := s.evaluateEdgeSafety(r.Context(), policyInput.policyRequest)
+	if err != nil {
+		return edgeEvaluateOutcomeFromSafetyUnavailable(policyInput.event.EventID, evalCtx.session.PolicyMode, policyInput.classification), "", nil
+	}
+	return s.edgeEvaluateDecide(r.Context(), evalCtx, policyInput, safetyResp)
+}
+
+// edgeEvaluateCallerAuthenticatesAs authenticates the request's credential
+// again and resolves its principal the way prepareEdgeEvaluateContext did.
+func (s *server) edgeEvaluateCallerAuthenticatesAs(r *http.Request, principalID string) bool {
+	if s.auth == nil {
+		return true
+	}
+	authCtx, err := s.auth.AuthenticateHTTP(r)
+	if err != nil || authCtx == nil {
+		return false
+	}
+	current, err := s.resolveEdgeAuthPrincipal(r.WithContext(context.WithValue(r.Context(), auth.ContextKey{}, authCtx)))
+	return err == nil && strings.TrimSpace(current) == principalID
 }
 
 func edgeEvaluateOutcomeFromSafety(eventID string, resp *pb.PolicyCheckResponse) edgeEvaluateDecisionOutcome {
@@ -716,7 +804,7 @@ func edgeEvaluateApprovalDashboardPath(approvalRef string) string {
 	return "/edge/approvals/" + approvalRef
 }
 
-func edgeEvaluateActionHash(event edgecore.AgentActionEvent, policySnapshot string) (string, error) {
+func edgeEvaluateActionHash(event edgecore.AgentActionEvent, policySnapshot, inputCommitment string) (string, error) {
 	riskTags := append([]string(nil), event.RiskTags...)
 	sort.Strings(riskTags)
 	payload := struct {
@@ -734,6 +822,9 @@ func edgeEvaluateActionHash(event edgecore.AgentActionEvent, policySnapshot stri
 		Labels         edgecore.Labels    `json:"labels,omitempty"`
 		InputHash      string             `json:"input_hash"`
 		PolicySnapshot string             `json:"policy_snapshot"`
+
+		// Omitted when absent, so a hash without a commitment is unchanged.
+		InputCommitment string `json:"input_commitment,omitempty"`
 	}{
 		TenantID:       strings.TrimSpace(event.TenantID),
 		SessionID:      strings.TrimSpace(event.SessionID),
@@ -749,6 +840,8 @@ func edgeEvaluateActionHash(event edgecore.AgentActionEvent, policySnapshot stri
 		Labels:         cloneEdgeEvaluateLabels(event.Labels),
 		InputHash:      strings.TrimSpace(event.InputHash),
 		PolicySnapshot: strings.TrimSpace(policySnapshot),
+
+		InputCommitment: inputCommitment,
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
