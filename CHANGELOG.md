@@ -7,6 +7,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Packs: `POST /api/v1/packs/install` no longer ends without a response when the
+  `system/default` config document does not exist. Pack topic registration now reads
+  a missing document as one with no pool mappings, so those topics get no pool
+  (task-71f10dbe).
+
 - Edge approvals: an approval of a Bash command now also covers the files the command
   names, the git HEAD of its working directory and, for kubectl, the target context and
   namespace. cordum-hook adds a keyed digest of them to the approval's action identity
