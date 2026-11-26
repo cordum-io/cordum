@@ -7,6 +7,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Installer: `tools/scripts/install.ps1` runs under Windows PowerShell 5.1, as its
+  `#Requires -Version 5.1` line says. Native stderr from a successful gpg call no
+  longer stops it, the version-floor write no longer needs .NET Core, and CI runs the
+  installer tests under Windows PowerShell 5.1 as well as pwsh (task-b60f0bf5).
+
 - Packs: `POST /api/v1/packs/install` no longer ends without a response when the
   `system/default` config document does not exist. Pack topic registration now reads
   a missing document as one with no pool mappings, so those topics get no pool
