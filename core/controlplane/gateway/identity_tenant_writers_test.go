@@ -201,14 +201,15 @@ func testIdentityWriterHeaders(t *testing.T) {
 			sw.server.tenant = "platform"
 			who := sw.tenantA
 			who.tenantID = target
-			for _, tc := range []struct{ name, path, body string }{
-				{"agent", "/api/v1/agents", fleetAgentBody("writer-agent", "")},
-				{"credential", "/api/v1/workers/credentials", fleetCredentialBody()},
-				{"delegation", "/api/v1/agents/" + seed.source.ID + "/delegate", fleetDelegateBody(seed)},
+			for _, tc := range []struct{ name, method, path, body string }{
+				{"agent", http.MethodPost, "/api/v1/agents", fleetAgentBody("writer-agent", "")},
+				{"agent-update", http.MethodPut, "/api/v1/agents/" + seed.source.ID, `{"name":"updated"}`},
+				{"credential", http.MethodPost, "/api/v1/workers/credentials", fleetCredentialBody()},
+				{"delegation", http.MethodPost, "/api/v1/agents/" + seed.source.ID + "/delegate", fleetDelegateBody(seed)},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					before := identityWriterState(t, sw)
-					rr := sw.as(t, who, http.MethodPost, tc.path, tc.body)
+					rr := sw.as(t, who, tc.method, tc.path, tc.body)
 					if rr.Code != http.StatusForbidden || !strings.Contains(rr.Body.String(), "tenant access denied") {
 						t.Errorf("tenant header status=%d, body=%s", rr.Code, rr.Body.String())
 					}
