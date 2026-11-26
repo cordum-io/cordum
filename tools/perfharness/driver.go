@@ -33,9 +33,11 @@ func Run(ctx context.Context, path, profile string) ([]byte, error) {
 		return nil, err
 	}
 	data, err := WriteResults(*r)
-	quoted, _ := json.Marshal(e.key) // A string is always JSON encodable.
-	if bytes.Contains(data, []byte(e.key)) || bytes.Contains(data, quoted[1:len(quoted)-1]) {
-		return nil, fmt.Errorf("credential appears in results; refusing output")
+	for _, key := range []string{e.key, e.approverKey} {
+		quoted, _ := json.Marshal(key) // A string is always JSON encodable.
+		if key != "" && (bytes.Contains(data, []byte(key)) || bytes.Contains(data, quoted[1:len(quoted)-1])) {
+			return nil, fmt.Errorf("credential appears in results; refusing output")
+		}
 	}
 	return data, err
 }
@@ -91,6 +93,9 @@ func prepareResults(ctx context.Context, path, profile string) (*Workload, *Resu
 		Workload:    WorkloadInfo{Name: w.Name, File: path, SHA256: fmt.Sprintf("%x", sha256.Sum256(data))},
 		Environment: CaptureEnvironment(ctx), QueueDepth: QueueDepth{Source: w.QueueDepth.Kind, IntervalMS: int(w.QueueDepth.IntervalMS)}}
 	names := []string{w.Target.BaseURLEnv, w.Target.APIKeyEnv, w.Target.TenantEnv, w.QueueDepth.URLEnv, "CORDUM_TLS_CA"}
+	if needsApprover(w.RequestMix) {
+		names = append(names, approverKeyEnv)
+	}
 	slices.Sort(names)
 	r.Environment.Configuration = Configuration{TargetBaseURL: os.Getenv(w.Target.BaseURLEnv), RequestMix: w.RequestMix,
 		ProfileSteps: p.Steps, Saturation: w.Saturation, QueueDepth: w.QueueDepth, EnvVarsRead: slices.Compact(names)}
@@ -169,11 +174,15 @@ func runStep(ctx context.Context, spec ProfileStep, index int, execute func(cont
 	record := func(latency time.Duration, requestErr error) {
 		mu.Lock()
 		defer mu.Unlock()
-		requests++
 		if requestErr != nil {
-			failures++
+			// A failure after the step ended was cut off at its boundary: no request, no error, no sample.
+			if stepCtx.Err() == nil {
+				requests++
+				failures++
+			}
 			return
 		}
+		requests++
 		// Exact nearest-rank samples, never a silently truncated percentile estimate.
 		if len(samples) == 1<<20 {
 			overflow = true

@@ -9,7 +9,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 - `perfharness run` and `perfharness validate` for local job-submit and approval
   workloads, recording per-step HTTP latency percentiles, achieved throughput,
-  saturation thresholds and queue-depth samples with explicit gaps (PR2-09-DRIVER).
+  saturation thresholds and queue-depth samples with explicit gaps. The approval
+  workload needs `CORDUM_APPROVER_API_KEY`, a second credential with its own
+  principal, because the gateway denies self-approval (PR2-09-DRIVER).
 
 ### Fixed
 

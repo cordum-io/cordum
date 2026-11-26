@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -19,12 +20,21 @@ import (
 	"github.com/google/uuid"
 )
 
+// approverKeyEnv names the jobs.approve credential; the gateway denies approval by the submitter's key.
+const approverKeyEnv = "CORDUM_APPROVER_API_KEY"
+
 type executor struct {
-	client            *http.Client
-	mix               []Sequence
-	weight            uint64
-	sequence          atomic.Uint64
-	base, key, tenant string
+	client                         *http.Client
+	mix                            []Sequence
+	weight                         uint64
+	sequence                       atomic.Uint64
+	base, key, approverKey, tenant string
+}
+
+func needsApprover(mix []Sequence) bool {
+	return slices.ContainsFunc(mix, func(s Sequence) bool {
+		return slices.ContainsFunc(s.Requests, func(r Request) bool { return r.Kind == "jobs.approve" })
+	})
 }
 
 func newExecutor(w *Workload) (*executor, error) {
@@ -44,6 +54,12 @@ func newExecutor(w *Workload) (*executor, error) {
 			}
 		}
 	}
+	if needsApprover(e.mix) {
+		e.approverKey = os.Getenv(approverKeyEnv)
+		if e.approverKey == "" || e.approverKey == e.key {
+			return nil, fmt.Errorf("jobs.approve needs CORDUM_APPROVER_API_KEY set to a credential distinct from the submit key (the gateway denies self-approval)")
+		}
+	}
 	transport, err := client.BuildTLSTransportErr(client.TLSOptions{CACertPath: os.Getenv("CORDUM_TLS_CA")})
 	if err != nil {
 		return nil, fmt.Errorf("invalid CORDUM_TLS_CA")
@@ -55,12 +71,12 @@ func newExecutor(w *Workload) (*executor, error) {
 	return e, nil
 }
 
-func (e *executor) do(ctx context.Context, method, path string, payload []byte) ([]byte, error) {
+func (e *executor) do(ctx context.Context, key, method, path string, payload []byte) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, method, e.base+path, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("invalid request")
 	}
-	req.Header.Set("X-API-Key", e.key)
+	req.Header.Set("X-API-Key", key)
 	req.Header.Set("X-Tenant-ID", e.tenant)
 	req.Header.Set("Content-Type", "application/json")
 	res, err := e.client.Do(req)
@@ -76,7 +92,7 @@ func (e *executor) do(ctx context.Context, method, path string, payload []byte) 
 }
 
 func (e *executor) version(ctx context.Context) TargetVersion {
-	data, err := e.do(ctx, http.MethodGet, "/api/v1/status", nil)
+	data, err := e.do(ctx, e.key, http.MethodGet, "/api/v1/status", nil)
 	var status struct {
 		Build struct {
 			Version string `json:"version"`
@@ -111,14 +127,14 @@ func (e *executor) execute(ctx context.Context, record func(time.Duration, error
 			record(0, err)
 			return
 		}
-		path := "/api/v1/jobs"
+		path, key := "/api/v1/jobs", e.key
 		if request.Kind == "jobs.approve" {
 			id := request.PathParams["job_id"]
 			if err := e.awaitApproval(ctx, id); err != nil {
 				record(0, err)
 				return
 			}
-			path = "/api/v1/approvals/" + url.PathEscape(id) + "/approve"
+			path, key = "/api/v1/approvals/"+url.PathEscape(id)+"/approve", e.approverKey
 		}
 		payload, err := json.Marshal(request.Payload)
 		if err != nil {
@@ -126,7 +142,7 @@ func (e *executor) execute(ctx context.Context, record func(time.Duration, error
 			return
 		}
 		start := time.Now()
-		data, err := e.do(ctx, http.MethodPost, path, payload)
+		data, err := e.do(ctx, key, http.MethodPost, path, payload)
 		elapsed := time.Since(start)
 		if err == nil {
 			err = captureFields(data, request.Capture, values)
@@ -189,7 +205,7 @@ func (e *executor) awaitApproval(ctx context.Context, id string) error {
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		data, err := e.do(ctx, http.MethodGet, "/api/v1/jobs/"+url.PathEscape(id), nil)
+		data, err := e.do(ctx, e.approverKey, http.MethodGet, "/api/v1/jobs/"+url.PathEscape(id), nil)
 		var job struct {
 			State model.JobState `json:"state"`
 		}

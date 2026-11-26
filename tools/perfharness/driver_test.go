@@ -18,6 +18,22 @@ import (
 	"time"
 )
 
+const approveRequest = `      - kind: jobs.approve
+        path_params: {job_id: '{{capture.job_id}}'}
+        payload: {}
+`
+
+const approverRefusal = "jobs.approve needs CORDUM_APPROVER_API_KEY set to a credential distinct from the submit key (the gateway denies self-approval)"
+
+func setTarget(t *testing.T, url, key, approver string) {
+	t.Helper()
+	t.Setenv("PERF_URL", url)
+	t.Setenv("PERF_KEY", key)
+	t.Setenv(approverKeyEnv, approver)
+	t.Setenv("PERF_TENANT", "tenant")
+	t.Setenv("CORDUM_TLS_CA", "")
+}
+
 func writeFixture(t *testing.T, w http.ResponseWriter, body string) {
 	t.Helper()
 	if _, err := io.WriteString(w, body); err != nil {
@@ -57,11 +73,12 @@ func TestCLIValidate(t *testing.T) {
 }
 
 func TestRequestAdapters(t *testing.T) {
-	const key = "distinctive-key-must-never-be-recorded"
+	const key, approver = "distinctive-key-must-never-be-recorded", "distinctive-approver-never-recorded"
+	keys := map[string]string{"/api/v1/status": key, "/api/v1/jobs": key, "/api/v1/jobs/job-1": approver, "/api/v1/approvals/job-1/approve": approver}
 	var polls, approvals atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-API-Key") != key || r.Header.Get("X-Tenant-ID") != "tenant" {
-			t.Error("missing headers")
+		if r.Header.Get("X-API-Key") != keys[r.URL.Path] || r.Header.Get("X-Tenant-ID") != "tenant" {
+			t.Errorf("%s: wrong credential or tenant", r.URL.Path)
 		}
 		switch r.URL.Path {
 		case "/api/v1/status":
@@ -98,10 +115,7 @@ func TestRequestAdapters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PERF_URL", server.URL)
-	t.Setenv("PERF_KEY", key)
-	t.Setenv("PERF_TENANT", "tenant")
-	t.Setenv("CORDUM_TLS_CA", "")
+	setTarget(t, server.URL, key, approver)
 	e, err := newExecutor(w)
 	if err != nil {
 		t.Fatal(err)
@@ -123,8 +137,37 @@ func TestRequestAdapters(t *testing.T) {
 	r := syntheticResults(t)
 	r.Environment.Versions.Target = e.version(context.Background())
 	data, err := WriteResults(r)
-	if err != nil || bytes.Contains(data, []byte(key)) {
+	if err != nil || bytes.Contains(data, []byte(key)) || bytes.Contains(data, []byte(approver)) {
 		t.Fatal("key leaked or invalid results")
+	}
+}
+
+func TestApproverKeyContract(t *testing.T) {
+	submitOnly := strings.Replace(workloadFixture, approveRequest, "", 1)
+	for _, tc := range []struct{ name, workload, approver, err string }{
+		{"unset", workloadFixture, "", approverRefusal},
+		{"same as submit key", workloadFixture, "submit-key", approverRefusal},
+		{"distinct", workloadFixture, "approver-key", ""},
+		{"no jobs.approve never reads it", submitOnly, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w, err := loadFixture(t, tc.workload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			setTarget(t, "http://localhost:8081", "submit-key", tc.approver)
+			e, err := newExecutor(w)
+			if tc.err != "" {
+				if err == nil || err.Error() != tc.err {
+					t.Fatalf("err=%v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			e.client.CloseIdleConnections()
+		})
 	}
 }
 
@@ -141,10 +184,7 @@ func TestApprovalBoundAndUnknownVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PERF_URL", server.URL)
-	t.Setenv("PERF_KEY", "key")
-	t.Setenv("PERF_TENANT", "tenant")
-	t.Setenv("CORDUM_TLS_CA", "")
+	setTarget(t, server.URL, "key", "approver")
 	e, err := newExecutor(w)
 	if err != nil {
 		t.Fatal(err)
@@ -173,7 +213,7 @@ func TestWeightedSequences(t *testing.T) {
 }
 
 func TestRunWritesMeasuredResults(t *testing.T) {
-	const key = "sentinel-secret-never-in-results"
+	const key, approver = "sentinel-secret-never-in-results", "sentinel-approver-never-in-results"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/status":
@@ -189,11 +229,8 @@ func TestRunWritesMeasuredResults(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	t.Setenv("PERF_URL", server.URL)
+	setTarget(t, server.URL, key, approver)
 	t.Setenv("PERF_QUEUE_URL", server.URL+"/jsz")
-	t.Setenv("PERF_KEY", key)
-	t.Setenv("PERF_TENANT", "tenant")
-	t.Setenv("CORDUM_TLS_CA", "")
 	path := filepath.Join(t.TempDir(), "fixture.yaml")
 	if err := os.WriteFile(path, []byte(strings.ReplaceAll(workloadFixture, "duration: 1s", "duration: 100ms")), 0600); err != nil {
 		t.Fatal(err)
@@ -203,7 +240,7 @@ func TestRunWritesMeasuredResults(t *testing.T) {
 		t.Fatal(err)
 	}
 	r, err := ParseResults(data)
-	if err != nil || bytes.Contains(data, []byte(key)) {
+	if err != nil || bytes.Contains(data, []byte(key)) || bytes.Contains(data, []byte(approver)) {
 		t.Fatal("invalid or secret-bearing results")
 	}
 	if len(r.Steps) != 1 || r.Steps[0].Requests == 0 || len(r.QueueDepth.Samples) == 0 || r.QueueDepth.Samples[0].Value == nil || *r.QueueDepth.Samples[0].Value != 7 {
@@ -212,22 +249,33 @@ func TestRunWritesMeasuredResults(t *testing.T) {
 }
 
 func TestDriverRecordedConfiguration(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "fixture.yaml")
-	if err := os.WriteFile(path, []byte(workloadFixture), 0600); err != nil {
-		t.Fatal(err)
-	}
 	t.Setenv("PERF_URL", "http://localhost:8081")
-	w, r, err := prepareResults(context.Background(), path, "smoke")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(r.Environment.Configuration.RequestMix, w.RequestMix) || !reflect.DeepEqual(r.Environment.Configuration.ProfileSteps, w.Profiles["smoke"].Steps) {
-		t.Fatal("configuration changed")
-	}
-	r.Steps = []StepResult{{Index: 0, Concurrency: 1, DurationMS: 1000}}
-	r.Saturation = findSaturation(r.Steps, w.Saturation)
-	if _, err := WriteResults(*r); err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct {
+		workload string
+		envVars  []string
+	}{
+		{workloadFixture, []string{"CORDUM_APPROVER_API_KEY", "CORDUM_TLS_CA", "PERF_KEY", "PERF_QUEUE_URL", "PERF_TENANT", "PERF_URL"}},
+		{strings.Replace(workloadFixture, approveRequest, "", 1), []string{"CORDUM_TLS_CA", "PERF_KEY", "PERF_QUEUE_URL", "PERF_TENANT", "PERF_URL"}},
+	} {
+		path := filepath.Join(t.TempDir(), "fixture.yaml")
+		if err := os.WriteFile(path, []byte(tc.workload), 0600); err != nil {
+			t.Fatal(err)
+		}
+		w, r, err := prepareResults(context.Background(), path, "smoke")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(r.Environment.Configuration.RequestMix, w.RequestMix) || !reflect.DeepEqual(r.Environment.Configuration.ProfileSteps, w.Profiles["smoke"].Steps) {
+			t.Fatal("configuration changed")
+		}
+		if !reflect.DeepEqual(r.Environment.Configuration.EnvVarsRead, tc.envVars) {
+			t.Fatalf("env_vars_read %v", r.Environment.Configuration.EnvVarsRead)
+		}
+		r.Steps = []StepResult{{Index: 0, Concurrency: 1, DurationMS: 1000}}
+		r.Saturation = findSaturation(r.Steps, w.Saturation)
+		if _, err := WriteResults(*r); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -338,7 +386,7 @@ func TestDriverHTTPAndCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Requests != 5 || got.Errors != 2 || got.ThroughputRPS != 30 {
+	if got.Requests != 4 || got.Errors != 1 || got.ThroughputRPS != 30 {
 		t.Fatalf("%+v", got)
 	}
 	if got.LatencyMS.P50 < 2 || got.LatencyMS.Max >= 100 {
@@ -348,5 +396,50 @@ func TestDriverHTTPAndCancellation(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 	if requests.Load() != before {
 		t.Fatal("workers continued after step")
+	}
+}
+
+func TestStepBoundaryDropsCutOffRequests(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		state    string // The job state polls return; empty means the submit outlasts the step.
+		requests uint64
+	}{
+		{"submit slower than the step", "", 0},
+		{"approval wait cut off", "PENDING", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case tc.state == "":
+					<-r.Context().Done()
+				case r.URL.Path == "/api/v1/jobs":
+					writeFixture(t, w, `{"job_id":"job-1"}`)
+				default:
+					writeFixture(t, w, `{"state":"`+tc.state+`"}`)
+				}
+			}))
+			defer server.Close()
+			w, err := loadFixture(t, workloadFixture)
+			if err != nil {
+				t.Fatal(err)
+			}
+			setTarget(t, server.URL, "key", "approver")
+			e, err := newExecutor(w)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer e.client.CloseIdleConnections()
+			step, err := runStep(context.Background(), ProfileStep{Concurrency: 1, Duration: "300ms"}, 0, e.execute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if step.Requests != tc.requests || step.Errors != 0 {
+				t.Fatalf("%+v", step)
+			}
+			if got := findSaturation([]StepResult{step}, w.Saturation); got.Rule != "not reached" || got.Reached {
+				t.Fatalf("%+v", got)
+			}
+		})
 	}
 }
