@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -148,17 +149,32 @@ func (s *server) workerReadScope(w http.ResponseWriter, r *http.Request) (string
 		writeErrorJSON(w, http.StatusServiceUnavailable, "worker credential store unavailable")
 		return "", nil, false
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-	records, err := s.workerCredentialStore.List(ctx, tenant)
+	ids, err := s.workerCredentialIDs(r.Context(), tenant)
 	if err != nil {
 		writeInternalError(w, r, "list worker credentials", err)
 		return "", nil, false
 	}
+	return tenant, ids, true
+}
+
+func (s *server) workerCredentialIDs(ctx context.Context, tenant string) (map[string]bool, error) {
+	ids := make(map[string]bool)
+	if tenant == "" {
+		return ids, nil
+	}
+	if s.workerCredentialStore == nil {
+		return nil, errors.New("worker credential store unavailable")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	records, err := s.workerCredentialStore.List(ctx, tenant)
+	if err != nil {
+		return nil, err
+	}
 	for _, record := range records {
 		ids[record.WorkerID] = true
 	}
-	return tenant, ids, true
+	return ids, nil
 }
 
 // handleGetWorker returns a single worker by ID from the Redis snapshot.

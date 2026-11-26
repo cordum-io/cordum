@@ -46,6 +46,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- `GET /api/v1/status` counts the caller's own tenant's jobs and workers.
+  Deployment-wide figures and infrastructure details go to callers with platform
+  authority: no auth provider, an auth context that spans all tenants, or the
+  gateway's own tenant (task-51149f99).
+
 - Gateway: `POST /api/v1/users` creates the user in the caller's own tenant;
   naming another tenant requires platform authority (no auth provider, an
   auth context that spans all tenants, or membership of the gateway's own
