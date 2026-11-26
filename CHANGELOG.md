@@ -7,6 +7,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- MCP: JSON-RPC errors no longer expose execution ids. Errors caused by
+  Cordum's own stores carry a fixed message, such as `internal error`, and
+  the detail is in the gateway log (#492, task-e489e0c5).
 - Approvals: store the audit entry before applying an approval; if it cannot be
   stored, return 500 without applying the approval. An approval repair whose audit
   entry cannot be stored returns 500 and states that the repair was applied.
@@ -1057,9 +1060,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
-- MCP: JSON-RPC errors no longer expose execution ids. Errors caused by
-  Cordum's own stores carry a fixed message, such as `internal error`, and
-  the detail is in the gateway log (#492, task-e489e0c5).
 - Delegation issuance: a parent-token tenant mismatch returns HTTP 400 with
   `DELEGATION_REQUEST_INVALID` and `tenant_mismatch` (task-9b21101b).
 
