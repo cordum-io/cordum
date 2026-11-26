@@ -46,6 +46,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Gateway: `POST /api/v1/users` creates the user in the caller's own tenant;
+  naming another tenant requires platform authority (no auth provider, an
+  auth context that spans all tenants, or membership of the gateway's own
+  tenant, `TENANT_ID` or `default` when unset) (task-7f1c62ac).
+
 - Worker reads: a worker belongs to the tenant of its worker credential. For a
   caller without cross-tenant access, `GET /api/v1/workers` lists only that
   tenant's workers, `GET /api/v1/workers/{id}` and

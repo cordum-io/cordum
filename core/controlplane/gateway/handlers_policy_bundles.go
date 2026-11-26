@@ -36,13 +36,11 @@ type policyBundleSimulateRequest struct {
 // errSystemPolicyAuthority is the logged reason for a system policy write's 403.
 var errSystemPolicyAuthority = errors.New("system policy changes need platform authority")
 
-// requireSystemPolicyAuthority admits a write to the system policy document,
-// which governs every tenant, only when the gateway has no auth provider, the
+// hasPlatformAuthority reports whether the gateway has no auth provider, the
 // caller's access spans all tenants, or the caller belongs to the gateway's
 // own tenant (TENANT_ID, or "default" when unset, as handleAuthConfig
-// advertises). The X-Tenant-ID header is never consulted. Otherwise it writes
-// a 403 and returns false.
-func (s *server) requireSystemPolicyAuthority(w http.ResponseWriter, r *http.Request) bool {
+// advertises). The X-Tenant-ID header is never consulted.
+func (s *server) hasPlatformAuthority(r *http.Request) bool {
 	if s.auth == nil {
 		return true
 	}
@@ -54,6 +52,13 @@ func (s *server) requireSystemPolicyAuthority(w http.ResponseWriter, r *http.Req
 		if ac.AllowCrossTenant || strings.TrimSpace(ac.Tenant) == platformTenant {
 			return true
 		}
+	}
+	return false
+}
+
+func (s *server) requireSystemPolicyAuthority(w http.ResponseWriter, r *http.Request) bool {
+	if s.hasPlatformAuthority(r) {
+		return true
 	}
 	writeForbidden(w, r, errSystemPolicyAuthority)
 	return false
