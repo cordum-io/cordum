@@ -1,17 +1,136 @@
 package perfharness
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestRequestAdapters(t *testing.T) {
+	const key = "distinctive-key-must-never-be-recorded"
+	var polls, approvals atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-API-Key") != key || r.Header.Get("X-Tenant-ID") != "tenant" {
+			t.Error("missing headers")
+		}
+		switch r.URL.Path {
+		case "/api/v1/status":
+			fmt.Fprint(w, `{"build":{"version":"v-test"}}`)
+		case "/api/v1/jobs":
+			var body struct {
+				Prompt string `json:"prompt"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
+			if strings.Contains(body.Prompt, "{{") || !strings.HasSuffix(body.Prompt, "-1") {
+				t.Errorf("prompt %s", body.Prompt)
+			}
+			fmt.Fprint(w, `{"job_id":"job-1"}`)
+		case "/api/v1/jobs/job-1":
+			if polls.Add(1) == 1 {
+				fmt.Fprint(w, `{"state":"PENDING"}`)
+			} else {
+				fmt.Fprint(w, `{"state":"APPROVAL_REQUIRED"}`)
+			}
+		case "/api/v1/approvals/job-1/approve":
+			if polls.Load() < 2 {
+				t.Error("premature approval")
+			}
+			approvals.Add(1)
+			w.WriteHeader(204)
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	w, err := loadFixture(t, workloadFixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PERF_URL", server.URL)
+	t.Setenv("PERF_KEY", key)
+	t.Setenv("PERF_TENANT", "tenant")
+	t.Setenv("CORDUM_TLS_CA", "")
+	e, err := newExecutor(w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.client.CloseIdleConnections()
+	if version := e.version(context.Background()); version != (TargetVersion{Version: "v-test", Source: "status_endpoint"}) {
+		t.Fatalf("version %+v", version)
+	}
+	var count int
+	e.execute(context.Background(), func(_ time.Duration, err error) {
+		count++
+		if err != nil {
+			t.Error(err)
+		}
+	})
+	if count != 2 || approvals.Load() != 1 {
+		t.Fatalf("samples=%d approvals=%d", count, approvals.Load())
+	}
+	r := syntheticResults(t)
+	r.Environment.Versions.Target = e.version(context.Background())
+	data, err := WriteResults(r)
+	if err != nil || bytes.Contains(data, []byte(key)) {
+		t.Fatal("key leaked or invalid results")
+	}
+}
+
+func TestApprovalBoundAndUnknownVersion(t *testing.T) {
+	var approvals atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "approve") {
+			approvals.Add(1)
+		}
+		fmt.Fprint(w, `{"state":"PENDING"}`)
+	}))
+	defer server.Close()
+	w, err := loadFixture(t, workloadFixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PERF_URL", server.URL)
+	t.Setenv("PERF_KEY", "key")
+	t.Setenv("PERF_TENANT", "tenant")
+	t.Setenv("CORDUM_TLS_CA", "")
+	e, err := newExecutor(w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.client.CloseIdleConnections()
+	if got := e.version(context.Background()); got != (TargetVersion{Version: "unknown", Source: "unknown"}) {
+		t.Fatalf("%+v", got)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if err := e.awaitApproval(ctx, "job"); err == nil {
+		t.Fatal("pending accepted")
+	}
+	if approvals.Load() != 0 {
+		t.Fatal("approval mutation happened")
+	}
+}
+
+func TestWeightedSequences(t *testing.T) {
+	e := &executor{mix: []Sequence{{Name: "a", Weight: 1}, {Name: "b", Weight: 2}}, weight: 3}
+	for n, want := range []string{"a", "b", "b", "a"} {
+		if got := e.pick(uint64(n)).Name; got != want {
+			t.Fatalf("%d: %s != %s", n, got, want)
+		}
+	}
+}
 
 func TestDriverRecordedConfiguration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "fixture.yaml")
