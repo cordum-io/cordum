@@ -46,6 +46,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Custom roles belong to the tenant that creates them; role names remain unique
+  deployment-wide. Custom roles stored without a tenant belong to the gateway's
+  own tenant (`TENANT_ID`, or `default` when unset); other tenants must re-create
+  their roles with distinct names (task-767c5395).
+
 - Worker reads: a worker belongs to the tenant of its worker credential. For a
   caller without cross-tenant access, `GET /api/v1/workers` lists only that
   tenant's workers, `GET /api/v1/workers/{id}` and

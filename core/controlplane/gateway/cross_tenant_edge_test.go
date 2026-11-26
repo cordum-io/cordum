@@ -188,11 +188,11 @@ func crossTenantEdgeIngest(kind string) crossTenantCase {
 	return crossTenantCase{"POST " + path, kind + "-ingest", func(t *testing.T, sw *crossTenantSweep) {
 		role, handler := testRuntimeCollectorRole, http.HandlerFunc(sw.server.handleEdgeRuntimeIngest)
 		enableRuntimeIngest(t)
-		setupRuntimeIngestRBAC(t, sw.server)
+		setupRuntimeIngestRBAC(t, sw.server, sw.tenantB.tenantID)
 		session, execution := createRuntimeIngestBoundParentsForTenant(t, sw.server, sw.tenantB.tenantID, "sweep", "sweep-source")
 		if kind == "llm" {
 			enableLLMIngest(t)
-			setupLLMIngestRBAC(t, sw.server)
+			setupLLMIngestRBAC(t, sw.server, sw.tenantB.tenantID)
 			role, handler = testLLMProxyRole, sw.server.handleEdgeLLMIngest
 			execution.ExecutionID += "-llm"
 			execution.Adapter = edgecore.AdapterLLMProxy

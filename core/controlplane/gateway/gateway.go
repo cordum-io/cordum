@@ -496,6 +496,7 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	if err != nil {
 		slog.Warn("rbac store init failed, advanced RBAC unavailable", "error", err)
 	} else {
+		rbacStore.SetPlatformTenant(tenantID)
 		if err := rbacStore.BootstrapDefaultRoles(context.Background()); err != nil {
 			slog.Warn("rbac bootstrap default roles failed", "error", err)
 		}
