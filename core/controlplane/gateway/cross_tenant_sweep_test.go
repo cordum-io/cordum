@@ -23,6 +23,17 @@ var crossTenantGlobalRoutes = map[string]string{
 	"GET /healthz": "health.ProbeServer liveness or readiness probe; reports process and dependency status only, no tenant data",
 	"GET /readyz":  "health.ProbeServer liveness or readiness probe; reports process and dependency status only, no tenant data",
 	"GET /livez":   "health.ProbeServer liveness or readiness probe; reports process and dependency status only, no tenant data",
+	// PR1-02-IDENTITY
+	"GET /api/v1/auth/config":                   "public auth configuration (enabled login methods), served before authentication; takes no tenant record id",
+	"POST /api/v1/auth/login":                   "public password login that exchanges credentials for a session, served before authentication; takes no tenant record id",
+	"GET /api/v1/auth/sso/oidc/login":           "public OIDC browser login redirect, served before authentication; takes no tenant record id",
+	"GET /api/v1/auth/sso/oidc/callback":        "public OIDC authorization-code callback, served before authentication; takes no tenant record id",
+	"GET /api/v1/auth/sso/saml/metadata":        "public SAML service provider metadata document, served before authentication; takes no tenant record id",
+	"GET /api/v1/auth/sso/saml/login":           "public SAML browser login redirect, served before authentication; takes no tenant record id",
+	"POST /api/v1/auth/sso/saml/acs":            "public SAML assertion consumer endpoint, served before authentication; takes no tenant record id",
+	"GET /api/v1/scim/v2/ServiceProviderConfig": "static SCIM discovery document describing the service provider; takes no tenant record id",
+	"GET /api/v1/scim/v2/Schemas":               "static SCIM discovery document listing resource schemas; takes no tenant record id",
+	"GET /api/v1/scim/v2/ResourceTypes":         "static SCIM discovery document listing resource types; takes no tenant record id",
 	// PR1-02-POLICY
 	"GET /api/v1/policy/snapshots":              "reads system-scope policy snapshots only; cannot change the system scope",
 	"GET /api/v1/policy/rules":                  "reads system-scope policy rules only; cannot change the system scope",
@@ -70,7 +81,6 @@ var crossTenantPending = map[string][]string{
 	// Slice separator: keep unchanged when removing a pending block.
 	// Slice separator: keep unchanged when removing a pending block.
 	// Slice separator: keep unchanged when removing a pending block.
-	"PR1-02-IDENTITY": {"/api/v1/auth", "/api/v1/users"},
 	// Slice separator: keep unchanged when removing a pending block.
 	"PR1-02-PLATFORM": {"/api/v1/packs", "/api/v1/marketplace", "/api/v1/config", "/api/v1/evals", "/api/v1/governance", "/api/v1/license", "/api/v1/telemetry", "/api/v1/status", "/api/v1/admin", "/api/v1/copilot", "/health", "/api/v1/health"},
 	// Slice separator: keep unchanged when removing a pending block.
@@ -143,6 +153,12 @@ func crossTenantLiveRoutes(t *testing.T, sw *crossTenantSweep) map[string]bool {
 			t.Errorf("probe route %s mounted as %q", key, pattern)
 		}
 		live[key] = true
+	}
+	for route := range crossTenantProviderRoutes(t, sw) {
+		if live[route] {
+			t.Errorf("duplicate live route: %s", route)
+		}
+		live[route] = true
 	}
 	return live
 }
