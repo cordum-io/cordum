@@ -83,6 +83,41 @@ func TestRepairApprovalAuditFailureReportsAppliedRepair(t *testing.T) {
 	require.Len(t, auditPersistErrors(logs, "repair"), 1)
 }
 
+func TestApproveJobRefreshedSnapshotStillRequiresAudit(t *testing.T) {
+	s, _, hooked, _ := auditPersistServer(t)
+	jobID := seedApprovalJob(t, s, "")
+	ctx := context.Background()
+	request, err := s.jobStore.GetJobRequest(ctx, jobID)
+	require.NoError(t, err)
+	request.PrincipalId = "original-requester"
+	require.NoError(t, s.jobStore.SetJobRequest(ctx, request))
+	s.safetyClient.(*stubSafetyClient).setSnapshots([]string{"snap-refreshed"})
+	before, err := s.jobStore.GetApprovalRecord(ctx, jobID)
+	require.NoError(t, err)
+	hooked.AddHook(auditPersistHook{failKey: auditPersistLogKey})
+	logs := storeWriterLogs(t)
+	rr := httptest.NewRecorder()
+	s.handleApproveJob(rr, approvalDecisionRequest(t, jobID, "approve", `{}`, "", "alice"))
+
+	require.Equal(t, http.StatusInternalServerError, rr.Code, rr.Body.String())
+	require.Contains(t, rr.Body.String(), "approval not applied: its audit entry was not stored")
+	decision, err := s.jobStore.GetSafetyDecision(ctx, jobID)
+	require.NoError(t, err)
+	require.Equal(t, "snap-refreshed", decision.PolicySnapshot)
+	after, err := s.jobStore.GetApprovalRecord(ctx, jobID)
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+	state, err := s.jobStore.GetState(ctx, jobID)
+	require.NoError(t, err)
+	require.Equal(t, model.JobStateApproval, state)
+	requestAfter, err := s.jobStore.GetJobRequest(ctx, jobID)
+	require.NoError(t, err)
+	require.Equal(t, request, requestAfter)
+	require.Empty(t, s.bus.(*stubBus).published)
+	require.Len(t, auditPersistErrors(logs, "approve_snapshot_refreshed"), 1)
+	require.Len(t, auditPersistErrors(logs, "approve"), 1)
+}
+
 func TestApproveJobAuditPersistsAndExportsOriginalFields(t *testing.T) {
 	s, _, _, _ := auditPersistServer(t)
 	jobID := seedApprovalJob(t, s, "")
