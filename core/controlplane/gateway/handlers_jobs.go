@@ -2021,6 +2021,13 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	packet := jobRequestPacket(traceID, servicetoken.IdentityGateway, jobReq)
 	s.attachServiceToken(packet)
 
+	// The "submit" entry is stored before the job is dispatched: a job whose
+	// entry was not stored is set FAILED and never published.
+	if err := s.appendSubmitSafetyDecisionAudit(r.Context(), "submit", jobID, req.Topic, submitActorID, policybundles.PolicyRole(r), submitIdentitySource, submitIdentityLabel, "submit job "+jobID, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier); err != nil {
+		_ = s.jobStore.SetState(r.Context(), jobID, model.JobStateFailed)
+		writeErrorJSON(w, http.StatusServiceUnavailable, submitAuditNotStored)
+		return
+	}
 	if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
 		slog.Error("job publish failed", "job_id", jobID, "error", err)
 		_ = s.jobStore.SetState(r.Context(), jobID, model.JobStateFailed)
@@ -2037,7 +2044,6 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		"topic", req.Topic,
 	)
 
-	s.appendSubmitSafetyDecisionAudit(r.Context(), "submit", jobID, req.Topic, submitActorID, policybundles.PolicyRole(r), submitIdentitySource, submitIdentityLabel, "submit job "+jobID, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
 	w.Header().Set("X-Trace-Id", traceID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]string{

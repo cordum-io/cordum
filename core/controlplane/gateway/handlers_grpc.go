@@ -507,6 +507,12 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 	packet := jobRequestPacket(traceID, "api-gateway", jobReq)
 	s.attachServiceToken(packet)
 
+	// The "submit" entry is stored before the job is dispatched: a job whose
+	// entry was not stored is set FAILED and never published.
+	if err := s.appendSubmitSafetyDecisionAudit(ctx, "submit", jobID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit job "+jobID, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier); err != nil {
+		_ = s.jobStore.SetState(ctx, jobID, model.JobStateFailed)
+		return nil, status.Error(codes.Unavailable, submitAuditNotStored)
+	}
 	if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
 		_ = s.jobStore.SetState(ctx, jobID, model.JobStateFailed)
 		slog.Error("job publish failed", "job_id", jobID, "error", err)
@@ -518,7 +524,6 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		"traceId", traceID,
 		"topic", payloadReq.Topic,
 	)
-	s.appendSubmitSafetyDecisionAudit(ctx, "submit", jobID, payloadReq.Topic, actorForAudit, roleForAudit, identitySource, identityLabel, "submit job "+jobID, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
 	return &pb.SubmitJobResponse{JobId: jobID, TraceId: traceID}, nil
 }
 
