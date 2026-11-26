@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -125,7 +127,71 @@ func edgeCalibrationBody(since, until, repos, labels string, now time.Time) (edg
 	return body, nil
 }
 
-// renderEdgeCalibrationReport prints the report as ASCII text.
+// renderEdgeCalibrationReport prints the report as ASCII text. The Edge
+// counts are decisions recorded in observe-mode sessions; only the shadow
+// section says what a candidate bundle would decide.
 func renderEdgeCalibrationReport(out io.Writer, r calibration.Report) {
-	_, _ = fmt.Fprintf(out, "Calibration report %s\n", r.ID)
+	line := func(format string, a ...any) { _, _ = fmt.Fprintf(out, format+"\n", a...) }
+	section := func(heading string, entries []string) {
+		line("%s", heading)
+		if len(entries) == 0 {
+			entries = []string{"(none)"}
+		}
+		for _, entry := range entries {
+			line("  %s", entry)
+		}
+	}
+	truncated := "no"
+	if r.Truncated {
+		truncated = "yes"
+	}
+	line("Calibration report %s", r.ID)
+	line("Tenant: %s  Window: %s to %s  Truncated: %s", r.TenantID, r.Since.Format(time.RFC3339), r.Until.Format(time.RFC3339), truncated)
+	var rules []string
+	for _, rule := range r.Rules {
+		rules = append(rules, fmt.Sprintf("%s  deny=%d  require_approval=%d", edgeCalibrationRuleName(rule.RuleID), rule.Deny, rule.RequireApproval))
+	}
+	if r.SessionsObserved == 0 {
+		rules = []string{"No observe-mode sessions matched this window and scope."}
+	}
+	section(fmt.Sprintf("Policy decisions recorded in observe-mode sessions (%d sessions, %d events):", r.SessionsObserved, r.EventsScanned), rules)
+	section("Rules with no matching Edge event:", r.NeverFired)
+	section("Most affected tools:", edgeCalibrationNameCounts(r.TopTools))
+	section("Most affected command classes:", edgeCalibrationNameCounts(r.TopCommandClasses))
+	var days []string
+	total := 0
+	for _, day := range r.ApprovalsPerDay {
+		days = append(days, fmt.Sprintf("%s  %d", day.Day, day.Count))
+		total += day.Count
+	}
+	mean := 0.0
+	if len(days) > 0 {
+		mean = float64(total) / float64(len(days))
+	}
+	section(fmt.Sprintf("Approval requests per UTC day (mean %.1f):", mean), days)
+	var shadow []string
+	for _, rule := range r.ShadowRules {
+		shadow = append(shadow, fmt.Sprintf("%s/%s  deny=%d  require_approval=%d", rule.BundleID, edgeCalibrationRuleName(rule.RuleID), rule.Deny, rule.RequireApproval))
+	}
+	section("Candidate shadow bundles, what each would decide (tenant-wide, not filtered by scope):", shadow)
+	var assurance []string
+	for _, state := range slices.Sorted(maps.Keys(r.Assurance)) {
+		assurance = append(assurance, fmt.Sprintf("%s  %d", state, r.Assurance[state]))
+	}
+	section("Assurance state of observed sessions (at report time):", assurance)
+}
+
+func edgeCalibrationRuleName(id string) string {
+	if id == "" {
+		return "(no rule)"
+	}
+	return id
+}
+
+func edgeCalibrationNameCounts(list []calibration.NameCount) []string {
+	entries := make([]string, 0, len(list))
+	for _, item := range list {
+		entries = append(entries, fmt.Sprintf("%s  %d", item.Name, item.Count))
+	}
+	return entries
 }

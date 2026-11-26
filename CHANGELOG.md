@@ -347,6 +347,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   would decide (deny and require-approval per bundle and rule) over the tenant's whole
   window, not filtered by repository or label, and the assurance state of the observed
   sessions at report time (M5-01C, task-bdf2f376).
+- `cordumctl edge calibration-report [--since T] [--until T] [--repos a,b] [--labels k=v,...]`
+  creates a calibration report through that API and prints a text summary of each section,
+  or the server's JSON unchanged with `--json`. `cordumctl edge calibration-report get <id>`
+  fetches a stored report by its id (M5-01, task-9e3c8fbf).
 
 - Execution grant v1 schema (M2A-02A) and `core/execgrant` canonical bytes, strict
   decoder and golden vectors; no service issues, signs or verifies grants yet (task-85bb037a).
