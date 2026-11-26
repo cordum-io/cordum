@@ -118,7 +118,11 @@ func platformSettingsLocks(t *testing.T, sw *crossTenantSweep, who crossTenantSw
 	if err := rdb.Set(ctx, key, holder, time.Minute).Err(); err != nil {
 		t.Fatal(err)
 	}
-	before, ttl := crossTenantJobMeta(t, sw, id), rdb.PTTL(ctx, key).Val()
+	before := crossTenantJobMeta(t, sw, id)
+	ttl, err := rdb.PTTL(ctx, key).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
 	rr := sw.as(t, sw.tenantA, "GET", "/api/v1/admin/locks", "")
 	platformSettingsStatus(t, rr, http.StatusForbidden)
 	for _, marker := range []string{holder, id, sw.tenantB.tenantID} {
@@ -127,7 +131,8 @@ func platformSettingsLocks(t *testing.T, sw *crossTenantSweep, who crossTenantSw
 		}
 	}
 	value, err := rdb.Get(ctx, key).Result()
-	if err != nil || value != holder || rdb.PTTL(ctx, key).Val() != ttl || !reflect.DeepEqual(before, crossTenantJobMeta(t, sw, id)) {
+	afterTTL, ttlErr := rdb.PTTL(ctx, key).Result()
+	if err != nil || ttlErr != nil || value != holder || afterTTL != ttl || !reflect.DeepEqual(before, crossTenantJobMeta(t, sw, id)) {
 		t.Fatal("job or lock changed")
 	}
 	rr = sw.as(t, who, "GET", "/api/v1/admin/locks", "")
