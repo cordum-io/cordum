@@ -227,6 +227,8 @@ type server struct {
 	auditExporter       audit.AuditSender
 	auditChainer        *audit.Chainer
 	auditVerifyCoalesce singleflight.Group
+	// policyAudit batches concurrent writes of the policy audit log.
+	policyAudit policyAuditQueue
 
 	// edgeRecorder is the EDGE-014 observability recorder used by Edge
 	// handlers to emit metrics, shared with the Edge store
