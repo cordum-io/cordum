@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -12,8 +14,57 @@ import (
 	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
+	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/redis/go-redis/v9"
 )
+
+func TestMain(m *testing.M) {
+	for name, value := range map[string]int{
+		"REDIS_POOL_SIZE":      testRedisPoolSize,
+		"REDIS_MIN_IDLE_CONNS": testRedisMinIdleConns,
+	} {
+		if err := os.Setenv(name, strconv.Itoa(value)); err != nil {
+			panic(err)
+		}
+	}
+	os.Exit(m.Run())
+}
+
+func TestRedisStoresTakeClusterClient(t *testing.T) {
+	for _, cluster := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cluster=%t", cluster), func(t *testing.T) {
+			srv := miniredis.RunT(t)
+			addrs := ""
+			if cluster {
+				addrs = srv.Addr() + "," + srv.Addr()
+			}
+			t.Setenv("REDIS_CLUSTER_ADDRESSES", addrs)
+			url := testRedisURL(srv.Addr())
+			keys, err := NewRedisKeyStore(url)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = keys.Close() })
+			users, err := NewRedisUserStore(url)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = users.Close() })
+			rbac, err := NewRBACStore(url)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = rbac.Close() })
+			for name, client := range map[string]redis.UniversalClient{
+				"keys": keys.client, "users": users.client, "rbac": rbac.client,
+			} {
+				if got := redisutil.IsCluster(client); got != cluster {
+					t.Errorf("%s IsCluster = %t, want %t", name, got, cluster)
+				}
+			}
+		})
+	}
+}
 
 func newTestUserStore(t *testing.T) (*RedisUserStore, *miniredis.Miniredis) {
 	t.Helper()
@@ -50,7 +101,7 @@ func TestTestRedisURLConstrainsPoolOptions(t *testing.T) {
 
 func TestNewTestUserStoreConstrainsRedisPool(t *testing.T) {
 	store, _ := newTestUserStore(t)
-	opts := store.client.Options()
+	opts := store.client.(*redis.Client).Options()
 
 	if opts.PoolSize != testRedisPoolSize {
 		t.Fatalf("PoolSize = %d, want %d", opts.PoolSize, testRedisPoolSize)

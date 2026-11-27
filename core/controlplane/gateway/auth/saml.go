@@ -64,7 +64,7 @@ type samlStateStore interface {
 }
 
 type redisSAMLStateStore struct {
-	client *redis.Client
+	client redis.UniversalClient
 }
 
 func (s *redisSAMLStateStore) Put(ctx context.Context, state, requestID, redirect string, ttl time.Duration) error {

@@ -40,7 +40,7 @@ type oidcStateStore interface {
 }
 
 type redisOIDCStateStore struct {
-	client *redis.Client
+	client redis.UniversalClient
 }
 
 func (s *redisOIDCStateStore) Put(ctx context.Context, state, nonce, redirect string, ttl time.Duration) error {

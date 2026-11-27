@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Gateway: key, user, RBAC and legal-hold stores now use the shared cluster-aware Redis client.
+
 - Workflows: saving and deleting workflows, and creating, updating and deleting workflow runs,
   now work on Redis Cluster instead of failing with `CROSSSLOT`. Each record is written before
   its list and status indexes and removed after them, and the per-org active-run count reads
