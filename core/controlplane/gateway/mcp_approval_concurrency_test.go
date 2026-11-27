@@ -10,7 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/internal/testredis"
 	"github.com/cordum/cordum/core/mcp"
 	"github.com/cordum/cordum/core/model"
 	"github.com/redis/go-redis/v9"
@@ -372,23 +374,37 @@ func TestIndexPrunesTerminalEntries(t *testing.T) {
 // before any can write, so without the WATCH each would add its own record.
 func TestEnqueueMCPApprovalConcurrentDuplicatesShareOnePending(t *testing.T) {
 	t.Parallel()
-	seed := newTestMCPStore(t)
+	for _, cluster := range []bool{false, true} {
+		name := "single-node"
+		if cluster {
+			name = "cluster"
+		}
+		t.Run(name, func(t *testing.T) {
+			mr := miniredis.RunT(t)
+			var client redis.UniversalClient
+			if cluster {
+				client = testredis.NewMiniClusterClient(t, mr.Addr())
+			} else {
+				opts := testRedisOptions(mr.Addr())
+				opts.PoolSize = 8
+				client = redis.NewClient(opts)
+				t.Cleanup(func() { _ = client.Close() })
+			}
+			concurrentMCPEnqueues(t, client)
+		})
+	}
+}
+
+func concurrentMCPEnqueues(t *testing.T, client redis.UniversalClient) {
+	t.Helper()
 	ctx := context.Background()
 	req := testReq()
 	idxKey := mcpApprovalIndexKey(req.Tenant, req.AgentID, req.ToolName, req.ArgsHash)
 
 	const workers = 8
-	base, ok := seed.client.(*redis.Client)
-	if !ok {
-		t.Fatalf("test store client is %T; want *redis.Client", seed.client)
-	}
-	opts := testRedisOptions(base.Options().Addr)
-	opts.PoolSize = workers
-	wide := redis.NewClient(opts)
-	t.Cleanup(func() { _ = wide.Close() })
 	barrier := &consumeReadBarrier{cmd: "smembers", key: idxKey, parties: workers, release: make(chan struct{})}
-	wide.AddHook(barrier)
-	enqueuers := NewMCPApprovalStore(wide)
+	client.AddHook(barrier)
+	enqueuers := NewMCPApprovalStore(client)
 
 	ids := make([]string, workers)
 	var wg sync.WaitGroup
@@ -409,6 +425,12 @@ func TestEnqueueMCPApprovalConcurrentDuplicatesShareOnePending(t *testing.T) {
 	if n := barrier.timedOut.Load(); n != 0 {
 		t.Errorf("barrier timed out %d times; want every enqueuer to read the index before any writes", n)
 	}
+	assertOnePendingMCPRecord(t, enqueuers, idxKey, ids)
+}
+
+func assertOnePendingMCPRecord(t *testing.T, seed *MCPApprovalStore, idxKey string, ids []string) {
+	t.Helper()
+	ctx := context.Background()
 	members, err := seed.client.SMembers(ctx, idxKey).Result()
 	if err != nil || len(members) != 1 {
 		t.Fatalf("index members = %v (err %v); want exactly one PENDING record", members, err)
