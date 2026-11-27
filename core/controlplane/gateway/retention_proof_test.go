@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -183,5 +185,45 @@ func TestRetentionProofDIC44Cascade(t *testing.T) {
 		if !slices.ContainsFunc(dic43, func(family string) bool { return strings.HasPrefix(hit, family) }) {
 			t.Fatalf("trace outside DI-C43's families after cleanup: %v", hits)
 		}
+	}
+}
+
+// TestRetentionProofDIC54 is cited by docs/contract/deletion-proofs.md. It
+// proves only DI-C54's snapshot trim: both capture sites keep the newest 10
+// entries of cfg:system:policy_snapshots, so 10 newer captures through a site
+// push that site's marker note out while the key stays. C54's explicit deletes
+// are out of scope. The capture handler's audit entry (DI-C05) carries the
+// snapshot id, not the note, and auditExporter is nil, so no export is reached.
+func TestRetentionProofDIC54(t *testing.T) {
+	_, client, marker := servicesRetentionFixture(t)
+	ctx := context.Background()
+	s := &server{configSvc: configsvc.NewFromClient(client)}
+	handler := func(note string) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/policy/bundles/snapshots", strings.NewReader(`{"note":"`+note+`"}`))
+		rec := httptest.NewRecorder()
+		s.handleCapturePolicyBundleSnapshot(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("handleCapturePolicyBundleSnapshot(%q): %d %s", note, rec.Code, rec.Body.String())
+		}
+	}
+	withBundles := func(note string) {
+		bundles := map[string]any{"proof": map[string]any{"enabled": true}}
+		if id, err := s.capturePolicyBundleSnapshotWithBundles(ctx, bundles, note); err != nil || id == "" {
+			t.Fatalf("capturePolicyBundleSnapshotWithBundles(%q): id=%q err=%v", note, id, err)
+		}
+	}
+	for _, site := range []struct {
+		name    string
+		capture func(string)
+	}{{"handler", handler}, {"bundles", withBundles}} {
+		site.capture(marker + "-" + site.name)
+		servicesRetentionRequire(t, servicesRetentionTrace(t, client, marker), "cfg:system:policy_snapshots")
+		for i := range 10 {
+			site.capture(fmt.Sprintf("newer-%s-%d", site.name, i))
+		}
+		servicesRetentionGone(t, client, marker)
+	}
+	if n, err := client.Exists(ctx, "cfg:system:policy_snapshots").Result(); err != nil || n != 1 {
+		t.Fatalf("cfg:system:policy_snapshots should remain: n=%d err=%v", n, err)
 	}
 }
