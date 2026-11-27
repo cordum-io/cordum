@@ -12,7 +12,9 @@ import (
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
+	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/infra/store"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
@@ -184,4 +186,54 @@ func TestAdminAudit_DrainPoolStillDrains(t *testing.T) {
 	_, poolMap, err := extractPoolsFromConfig(doc)
 	require.NoError(t, err)
 	require.Equal(t, config.PoolStatusDraining, poolMap["audit-pool"].EffectiveStatus())
+}
+
+func TestAdminAudit_RotateWorkerCredentialIssuesNothing(t *testing.T) {
+	s, _, hooked, _ := auditPersistServer(t)
+	ctx := context.Background()
+	old, err := s.workerCredentialStore.Create(ctx, workercredentials.IssueInput{TenantID: "default", WorkerID: "worker-audit", CreatedBy: "admin"})
+	require.NoError(t, err)
+	before, err := s.workerCredentialStore.Get(ctx, "default", "worker-audit")
+	require.NoError(t, err)
+	logs := adminAuditFail(t, hooked)
+	rec := httptest.NewRecorder()
+	s.handleCreateWorkerCredential(rec, adminAuditRequest(http.MethodPost, "/api/v1/workers/credentials", `{"worker_id":"worker-audit"}`))
+
+	requireAuditNotStored(t, rec, logs, "rotate", "worker credential not issued: its audit entry was not stored")
+	after, err := s.workerCredentialStore.Get(ctx, "default", "worker-audit")
+	require.NoError(t, err)
+	require.Equal(t, before, after, "a credential was issued without its entry")
+	_, ok, err := s.workerCredentialStore.Verify(ctx, "worker-audit", old.Token)
+	require.NoError(t, err)
+	require.True(t, ok, "the old token stopped verifying")
+}
+
+func TestAdminAudit_CreateAgentAnswers500(t *testing.T) {
+	s, _, hooked, _ := auditPersistServer(t)
+	enableAgentIdentityEntitlement(t, s)
+	logs := adminAuditFail(t, hooked)
+	rec := httptest.NewRecorder()
+	s.handleCreateAgent(rec, adminAuditRequest(http.MethodPost, "/api/v1/agents", `{"name":"audit-agent","owner":"team","risk_tier":"high"}`))
+
+	requireAuditNotStored(t, rec, logs, "create", "agent identity created but its audit entry was not stored")
+}
+
+func TestAdminAudit_DeleteAgentStillRevokes(t *testing.T) {
+	s, _, hooked, _ := auditPersistServer(t)
+	enableAgentIdentityEntitlement(t, s)
+	ctx := context.Background()
+	agent, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{Name: "audit-agent", TenantID: "default", Owner: "team", RiskTier: "high"})
+	require.NoError(t, err)
+	logs := adminAuditFail(t, hooked)
+	req := adminAuditRequest(http.MethodDelete, "/api/v1/agents/"+agent.ID, "")
+	req.SetPathValue("id", agent.ID)
+	rec := httptest.NewRecorder()
+	s.handleDeleteAgent(rec, req)
+
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+	require.Len(t, auditPersistErrors(logs, "revoke"), 1)
+	revoked, err := s.agentIdentityStore.Get(ctx, "default", agent.ID)
+	require.NoError(t, err)
+	require.Equal(t, "active", agent.Status)
+	require.Equal(t, "revoked", revoked.Status)
 }
