@@ -69,6 +69,25 @@ func NewMiniClusterClient(t testing.TB, addr string) *redis.ClusterClient {
 	return client
 }
 
+// NewTwoMasterClusterClient routes each half of the slots to a separate
+// miniredis server, so tests can exercise scans across multiple masters.
+func NewTwoMasterClusterClient(t testing.TB, addrA, addrB string) *redis.ClusterClient {
+	t.Helper()
+	client := redis.NewClusterClient(&redis.ClusterOptions{
+		Addrs:        []string{addrA, addrB},
+		PoolSize:     PoolSize,
+		MinIdleConns: MinIdleConns,
+		ClusterSlots: func(context.Context) ([]redis.ClusterSlot, error) {
+			return []redis.ClusterSlot{
+				{Start: 0, End: 8191, Nodes: []redis.ClusterNode{{Addr: addrA}}},
+				{Start: 8192, End: 16383, Nodes: []redis.ClusterNode{{Addr: addrB}}},
+			}, nil
+		},
+	})
+	t.Cleanup(func() { _ = client.Close() })
+	return client
+}
+
 // ClusterAddrsEnv names the comma-separated seed addresses of a cluster-mode
 // Redis (production: REDIS_CLUSTER_ADDRESSES). Cluster integration tests skip
 // when it is unset. They write only keys under unique test prefixes or
