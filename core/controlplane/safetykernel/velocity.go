@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/infra/config"
-	"github.com/cordum/cordum/core/licensing"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 )
@@ -221,24 +220,9 @@ func hasVelocityRules(rules []config.PolicyRule) bool {
 func (s *server) evaluateRulesWithVelocity(ctx context.Context, policy *config.SafetyPolicy, input config.PolicyInput, jobID, method string) config.PolicyDecision {
 	rules := policy.EffectiveRules()
 	dryRun := method == "simulate" || method == "explain"
-	velocityRuleLimit := s.velocityRuleLimit()
-	velocityRuleCount := int64(0)
 
+	// velocity_rules caps adding rules (gateway handleCreateVelocityRule), not evaluating them.
 	for _, rule := range rules {
-		if rule.Velocity != nil {
-			velocityRuleCount++
-			if velocityRuleLimit != licensing.Unlimited && velocityRuleCount > velocityRuleLimit {
-				slog.Warn("velocity rule skipped by tier limit",
-					"component", "safety",
-					"rule", rule.ID,
-					"configured_index", velocityRuleCount,
-					"allowed", velocityRuleLimit,
-					"plan", s.resolvedPlan(),
-					"upgrade_url", licensing.DefaultUpgradeURL,
-				)
-				continue
-			}
-		}
 		if !config.MatchRule(rule, input) {
 			continue
 		}

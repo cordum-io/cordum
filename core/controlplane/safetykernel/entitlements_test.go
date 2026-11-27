@@ -132,7 +132,7 @@ rules:
 	}
 }
 
-func TestVelocityRulesBeyondTierLimitAreSkipped(t *testing.T) {
+func TestVelocityRulesBeyondTierLimitStayBinding(t *testing.T) {
 	policy := &config.SafetyPolicy{
 		DefaultTenant:   "default",
 		DefaultDecision: "deny",
@@ -161,7 +161,7 @@ func TestVelocityRulesBeyondTierLimitAreSkipped(t *testing.T) {
 					Key:           "labels.session_id",
 				},
 				Decision: "deny",
-				Reason:   "second velocity rule should be skipped",
+				Reason:   "second velocity rule stays binding",
 			},
 			{
 				ID: "allow-fallback",
@@ -189,9 +189,21 @@ func TestVelocityRulesBeyondTierLimitAreSkipped(t *testing.T) {
 		t.Fatalf("Check returned error: %v", err)
 	}
 	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_ALLOW {
-		t.Fatalf("expected allow when capped velocity rule is skipped, got %v", resp.GetDecision())
+		t.Fatalf("expected allow within the velocity window, got %v", resp.GetDecision())
 	}
 	if resp.GetRuleId() != "allow-fallback" {
 		t.Fatalf("expected fallback rule to fire, got %q", resp.GetRuleId())
+	}
+	resp, err = srv.Check(context.Background(), &pb.PolicyCheckRequest{
+		JobId:  "job-tier-velocity-2",
+		Topic:  "job.target",
+		Tenant: "default",
+		Labels: map[string]string{"session_id": "session-1"},
+	})
+	if err != nil {
+		t.Fatalf("second Check returned error: %v", err)
+	}
+	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY || resp.GetRuleId() != "velocity-capped" {
+		t.Fatalf("expected DENY by velocity-capped, got %v by %q", resp.GetDecision(), resp.GetRuleId())
 	}
 }
