@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- API keys: creating a key with a managed (`ck_`) key now works on Redis Cluster instead of failing with `CROSSSLOT`. If the calling key is revoked during the request, the request returns 403 and the new key is removed.
+
 - Decision-log queries with multiple filters now use single-key commands on Redis Cluster while preserving ordering and pagination.
 
 - Job trace, worker and deadline index writes now run one key at a time on Redis Cluster. The deadline sweep skips index entries with no recorded deadline.

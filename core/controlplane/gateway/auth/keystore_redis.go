@@ -171,42 +171,54 @@ func (s *RedisKeyStore) Create(ctx context.Context, key *ManagedKey, rawSecret s
 }
 
 // CreateChild stores key as Create does, but requires the key parentID to be
-// unexpired by this process's clock when its record is read inside the WATCH,
-// and still unrevoked at the EXEC that writes key. A write to the parent record
-// in between (Revoke on any gateway replica, or RecordUsage) aborts the EXEC
-// and the check runs again. Expiry is a time, not a write, so it does not abort
-// the EXEC. A missing, unreadable, revoked or expired parent at the check
-// returns ErrInvalidKey and nothing is written.
+// readable, unrevoked and unexpired at checks before and after the child writes.
+// Revocation is one-way, so the second check orders creation before any later
+// revoke. The caller must not release the secret until this returns nil.
+// A refused first check writes nothing; a refused second check removes the child.
+// Each command names one key, without a transaction, for Redis Cluster.
 func (s *RedisKeyStore) CreateChild(ctx context.Context, parentID string, key *ManagedKey, rawSecret string) error {
-	data, err := prepareKey(key, rawSecret)
-	if err != nil {
-		return err
+	if err := s.checkChildParent(ctx, parentID); err != nil {
+		return fmt.Errorf("create child key: %w", err)
 	}
-	txFunc := func(tx *redis.Tx) error {
-		raw, err := tx.Get(ctx, keyRecordKey(parentID)).Bytes()
-		if errors.Is(err, redis.Nil) {
-			return ErrInvalidKey
-		}
-		if err != nil {
-			return fmt.Errorf("get parent key: %w", err)
-		}
-		parent, err := unmarshalManagedKey(raw)
-		if err != nil || parent.Revoked || (!parent.ExpiresAt.IsZero() && time.Now().After(parent.ExpiresAt)) {
-			return ErrInvalidKey
-		}
-		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-			queueKeyWrites(ctx, pipe, key, data)
-			return nil
-		})
-		return err
+	if err := s.Create(ctx, key, rawSecret); err != nil {
+		return fmt.Errorf("create child key: %w", err)
 	}
-	if err := redisutil.Retry(ctx, s.client, txFunc, redisutil.WithKeys(keyRecordKey(parentID))); err != nil {
+	if err := s.checkChildParent(ctx, parentID); err != nil {
 		if errors.Is(err, ErrInvalidKey) {
-			return err
+			if err := s.removeChildKey(ctx, key); err != nil {
+				slog.WarnContext(ctx, "remove child key", "key_id", key.ID, "error", err)
+				return fmt.Errorf("%w: remove child key: %w", ErrInvalidKey, err)
+			}
+			return ErrInvalidKey
 		}
 		return fmt.Errorf("create child key: %w", err)
 	}
 	return nil
+}
+
+func (s *RedisKeyStore) checkChildParent(ctx context.Context, parentID string) error {
+	raw, err := s.client.Get(ctx, keyRecordKey(parentID)).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return ErrInvalidKey
+	}
+	if err != nil {
+		return fmt.Errorf("get parent key: %w", err)
+	}
+	parent, err := unmarshalManagedKey(raw)
+	if err != nil || parent.Revoked || (!parent.ExpiresAt.IsZero() && time.Now().After(parent.ExpiresAt)) {
+		return ErrInvalidKey
+	}
+	return nil
+}
+
+func (s *RedisKeyStore) removeChildKey(ctx context.Context, key *ManagedKey) error {
+	if err := s.client.SRem(ctx, keyPrefixIndexKey(key.Prefix), key.ID).Err(); err != nil {
+		return err
+	}
+	if err := s.client.SRem(ctx, keyTenantKey(key.Tenant), key.ID).Err(); err != nil {
+		return err
+	}
+	return s.client.Del(ctx, keyRecordKey(key.ID)).Err()
 }
 
 // prepareKey sets key's ID, prefix and hash and returns its record, so the
@@ -236,13 +248,6 @@ func prepareKey(key *ManagedKey, rawSecret string) ([]byte, error) {
 		return nil, fmt.Errorf("marshal key: %w", err)
 	}
 	return data, nil
-}
-
-// queueKeyWrites queues key's record and its prefix- and tenant-index entries.
-func queueKeyWrites(ctx context.Context, pipe redis.Pipeliner, key *ManagedKey, data []byte) {
-	pipe.Set(ctx, keyRecordKey(key.ID), data, 0)
-	pipe.SAdd(ctx, keyPrefixIndexKey(key.Prefix), key.ID)
-	pipe.SAdd(ctx, keyTenantKey(key.Tenant), key.ID)
 }
 
 // Revoke marks a key as revoked and removes its lookup index so it stops working immediately.
