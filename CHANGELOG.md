@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Workflows: saving and deleting workflows, and creating, updating and deleting workflow runs,
+  now work on Redis Cluster instead of failing with `CROSSSLOT`. Each record is written before
+  its list and status indexes and removed after them, and the per-org active-run count reads
+  the run records, so a run left behind by a failed delete no longer holds a concurrency slot.
 - MCP: the gateway's HTTP MCP endpoint now serves nine read tools instead of answering
   501 `read_only_unsupported`: listing jobs, runs, workflows, topics, agents and pending
   approvals, reading a run and its timeline, and verifying the audit chain. Each read runs through

@@ -421,6 +421,12 @@ func (s *RedisStore) UpdateRun(ctx context.Context, run *WorkflowRun) error {
 	return nil
 }
 
+// RepairRunIndexes rewrites the run's index entries from its record, for a run
+// a failed index update left listed under a stale status.
+func (s *RedisStore) RepairRunIndexes(ctx context.Context, run *WorkflowRun) error {
+	return s.syncRunIndexes(ctx, run, nil, nil)
+}
+
 // allRunStatuses lists every status set a run can be indexed under.
 var allRunStatuses = []RunStatus{
 	RunStatusPending, RunStatusRunning, RunStatusWaiting, RunStatusSucceeded,
@@ -537,16 +543,50 @@ func (s *RedisStore) DeleteRun(ctx context.Context, runID string) error {
 	return nil
 }
 
-// CountActiveRuns returns the number of active runs for an org.
+// CountActiveRuns returns the number of active runs for an org. It counts the
+// active-set members whose run record exists with an active status, and drops
+// the others, which a failed delete or index update can leave behind.
 func (s *RedisStore) CountActiveRuns(ctx context.Context, orgID string) (int, error) {
 	if orgID == "" {
 		return 0, fmt.Errorf("org id required")
 	}
-	count, err := s.client.SCard(ctx, runOrgActiveKey(orgID)).Result()
+	activeKey := runOrgActiveKey(orgID)
+	ids, err := s.client.SMembers(ctx, activeKey).Result()
 	if err != nil {
 		return 0, fmt.Errorf("count active runs: %w", err)
 	}
-	return int(count), nil
+	pipe := s.client.Pipeline()
+	cmds := make([]*redis.StringCmd, len(ids))
+	for i, id := range ids {
+		cmds[i] = pipe.Get(ctx, runKey(id))
+	}
+	_, _ = pipe.Exec(ctx) // each command's error is checked below
+	count := 0
+	var stale []any
+	for i, cmd := range cmds {
+		data, err := cmd.Bytes()
+		if errors.Is(err, redis.Nil) {
+			stale = append(stale, ids[i])
+			continue
+		}
+		if err != nil {
+			return 0, fmt.Errorf("count active runs: %w", err)
+		}
+		var rec struct {
+			Status RunStatus `json:"status"`
+		}
+		if json.Unmarshal(data, &rec) == nil && !isActiveRunStatus(rec.Status) {
+			stale = append(stale, ids[i])
+			continue
+		}
+		count++
+	}
+	if len(stale) > 0 {
+		if err := s.client.SRem(ctx, activeKey, stale...).Err(); err != nil {
+			slog.Warn("workflow: stale active run cleanup failed", "org_id", orgID, "error", err)
+		}
+	}
+	return count, nil
 }
 
 // CountRunsSince returns the number of workflow runs updated on or after the
