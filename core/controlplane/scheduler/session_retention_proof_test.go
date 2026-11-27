@@ -11,11 +11,11 @@ import (
 	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
+	agentv1 "github.com/cordum-io/cap/v2/cordum/agent/v1"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/tracescan"
 	"github.com/cordum/cordum/core/internal/testredis"
 	"github.com/cordum/cordum/core/policysign"
-	agentv1 "github.com/cordum-io/cap/v2/cordum/agent/v1"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -112,12 +112,12 @@ func TestRetentionProofDIC45(t *testing.T) {
 	terms := []string{marker, tenant, worker, agent}
 	hits := sessionRetentionTrace(t, client, terms...)
 	for family, want := range map[string]int{
-		"session:worker:v2:" + tenant + ":" + worker:                               1,
-		"session:worker:legacy:" + agent:                                           1,
-		"session:revoked:" + tenant + ":":                                          2,
+		"session:worker:v2:" + tenant + ":" + worker:                                 1,
+		"session:worker:legacy:" + agent:                                             1,
+		"session:revoked:" + tenant + ":":                                            2,
 		"session:handshake:challenge:" + encodeSessionKeyPart(challenge.ChallengeId): 1,
-		"session:handshake:request:" + worker + ":":                                1,
-		"session:handshake:nonce:" + worker + ":":                                  1,
+		"session:handshake:request:" + worker + ":":                                  1,
+		"session:handshake:nonce:" + worker + ":":                                    1,
 	} {
 		if got := sessionRetentionCount(hits, family); got != want {
 			t.Fatalf("%s*: %d traces before cleanup, want %d; hits=%v", family, got, want, hits)
