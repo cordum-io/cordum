@@ -719,13 +719,8 @@ func (s *RedisUserStore) Close() error {
 // backfillTenantIndex scans for existing user:id:* keys and adds their IDs
 // to the tenant user set. This is idempotent (SADD ignores duplicates).
 func (s *RedisUserStore) backfillTenantIndex(ctx context.Context) error {
-	var cursor uint64
 	var count int
-	for {
-		keys, next, err := s.client.Scan(ctx, cursor, "user:id:*", 100).Result()
-		if err != nil {
-			return fmt.Errorf("redis scan: %w", err)
-		}
+	err := redisutil.ScanKeys(ctx, s.client, "user:id:*", 100, func(keys []string) error {
 		for _, key := range keys {
 			ref, err := s.client.Get(ctx, key).Result()
 			if err != nil {
@@ -741,10 +736,10 @@ func (s *RedisUserStore) backfillTenantIndex(ctx context.Context) error {
 			s.client.SAdd(ctx, userTenantIndexPrefix+tenant, userID)
 			count++
 		}
-		cursor = next
-		if cursor == 0 {
-			break
-		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("redis scan: %w", err)
 	}
 	if count > 0 {
 		slog.Info("user store: backfilled tenant index", "users", count)
