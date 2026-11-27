@@ -127,3 +127,31 @@ func TestPackInstall_StoresOneEditEntryAndSendsItOnce(t *testing.T) {
 	}
 	require.Equal(t, 1, sent, "SIEM events for the edit entry")
 }
+
+func TestPackInstallAndUninstall_UnstoredEntryAnswers500(t *testing.T) {
+	for _, c := range []struct {
+		name, want, status string
+		uninstall          bool
+	}{
+		{name: "install", want: "pack test-pack installed but its audit entry was not stored", status: "ACTIVE"},
+		{name: "uninstall", want: "pack test-pack uninstalled but its audit entry was not stored", status: "DISABLED", uninstall: true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s, _, hooked := packAuditServer(t)
+			call := postTestPack
+			if c.uninstall {
+				rr := postTestPack(t, s)
+				require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+				call = func(*testing.T, *server) *httptest.ResponseRecorder { return packUninstall(s) }
+			}
+			hooked.AddHook(auditPersistHook{failKey: auditPersistLogKey})
+
+			rr := call(t, s)
+			require.Equal(t, http.StatusInternalServerError, rr.Code, rr.Body.String())
+			require.Equal(t, c.want, decodeBody(t, rr)["error"])
+			records, _, err := s.loadPackRegistry(context.Background())
+			require.NoError(t, err)
+			require.Equal(t, c.status, records["test-pack"].Status, "the registry must show what the body says")
+		})
+	}
+}

@@ -133,12 +133,26 @@ func (s *server) handleInstallPack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.appendAuditEntryNamed(r.Context(), "install", "pack", record.ID, record.Manifest.Metadata.Title, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "install pack "+record.ID)
+	if !s.appendPackAudit(w, r, "install", record.ID, record.Manifest.Metadata.Title, "install pack "+record.ID) {
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, packInstallResponse{
 		PackRecord:       record,
 		WorkerCredential: workerCredential,
 	})
+}
+
+// appendPackAudit stores the entry for a pack install or uninstall that has
+// already happened. When the entry cannot be stored it answers 500, saying so,
+// and returns false.
+func (s *server) appendPackAudit(w http.ResponseWriter, r *http.Request, action, packID, title, message string) bool {
+	err := s.appendNamedAuditEntry(r.Context(), action, "pack", packID, title, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), message)
+	if err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "pack "+packID+" "+action+"ed but its audit entry was not stored")
+		return false
+	}
+	return true
 }
 
 func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts packs.PackInstallOptions) (packs.PackRecord, *packWorkerCredentialResponse, error) {
@@ -165,6 +179,7 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 	// when cordumctl verified locally. The client is untrusted.
 	verifyResult, verifyErr := verifyPackInstallBundle(ctx, s.redisClient(), bundleDir, manifest.Metadata.ID)
 	if verifyErr != nil {
+		// Must-complete: a refusal keeps its 400 even if its entry is not stored.
 		s.appendAuditEntryNamed(ctx, PackVerificationEventRejected, "pack", manifest.Metadata.ID, manifest.Metadata.Title, opts.InstalledBy, "", verifyErr.Error())
 		return packs.PackRecord{}, nil, &packs.PackInstallError{
 			Status: http.StatusBadRequest,
@@ -176,10 +191,12 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 		policySigner, err = resolvePolicyStoreSigner("pack " + manifest.Metadata.ID)
 		if err != nil {
 			refusal := fmt.Errorf("%s: pack %q %w", PackVerificationCodePolicyUnsigned, manifest.Metadata.ID, err)
+			// Must-complete: a refusal keeps its 400 even if its entry is not stored.
 			s.appendAuditEntryNamed(ctx, PackVerificationEventRejected, "pack", manifest.Metadata.ID, manifest.Metadata.Title, opts.InstalledBy, "", refusal.Error())
 			return packs.PackRecord{}, nil, &packs.PackInstallError{Status: http.StatusBadRequest, Err: refusal}
 		}
 	}
+	// Informational: it records a check that changes no state.
 	s.appendAuditEntryNamed(ctx, PackVerificationEventVerified, "pack", manifest.Metadata.ID, manifest.Metadata.Title, opts.InstalledBy, "", fmt.Sprintf("signed=%t kid=%s cordum=%t", verifyResult.Signed, verifyResult.KID, verifyResult.HasCordumCounterSig))
 	owner := strings.TrimSpace(opts.Owner)
 	if owner == "" {
@@ -470,7 +487,9 @@ func (s *server) handleUninstallPack(w http.ResponseWriter, r *http.Request) {
 		}
 		s.publishConfigChanged("system", "workers")
 	}
-	s.appendAuditEntryNamed(r.Context(), "uninstall", "pack", packID, rec.Manifest.Metadata.Title, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "uninstall pack "+packID)
+	if !s.appendPackAudit(w, r, "uninstall", packID, rec.Manifest.Metadata.Title, "uninstall pack "+packID) {
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, rec)
 }
@@ -1444,7 +1463,9 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	s.appendAuditEntryNamed(r.Context(), "install", "pack", record.ID, record.Manifest.Metadata.Title, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "install marketplace pack "+record.ID)
+	if !s.appendPackAudit(w, r, "install", record.ID, record.Manifest.Metadata.Title, "install marketplace pack "+record.ID) {
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, packInstallResponse{
 		PackRecord:       record,
