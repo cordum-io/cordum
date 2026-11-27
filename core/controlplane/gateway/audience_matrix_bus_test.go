@@ -194,12 +194,13 @@ func (m *audienceMatrix) matrixDLQ(t *testing.T, p *pb.BusPacket, jobID string) 
 }
 
 // matrixRelayed counts the events client receives for jobID up to a sentinel
-// queued after them, so an event still in flight never reads as dropped.
+// queued after them for the client's tenant, so an event still in flight never
+// reads as dropped.
 func (m *audienceMatrix) matrixRelayed(t *testing.T, client *wsClient, jobID string) int {
 	t.Helper()
 	sentinel := []byte("matrix-sentinel-" + matrixRandom(t))
 	deadline := time.Now().Add(5 * time.Second)
-	for !m.s.enqueueWSEvent(sentinel, "", "") {
+	for !m.s.enqueueWSEvent(sentinel, client.tenant, "") {
 		if time.Now().After(deadline) {
 			t.Fatalf("stream sentinel not queued")
 		}
