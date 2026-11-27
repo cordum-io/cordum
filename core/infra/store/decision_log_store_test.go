@@ -41,6 +41,36 @@ func TestRedisDecisionLogStoreAppendAndQueryRoundTrip(t *testing.T) {
 	}
 }
 
+func TestDecisionLogIndexKeysShareRecordTTL(t *testing.T) {
+	t.Setenv(decisionLogTTLSecondsEnv, "60")
+	store, srv := newTestDecisionLogStore(t)
+	defer srv.Close()
+	defer func() { _ = store.Close() }()
+	record := decisionFixture("tenant-ttl", "job-ttl", time.Now().UTC().UnixMilli())
+	if err := store.AppendDecision(context.Background(), record); err != nil {
+		t.Fatalf("AppendDecision() error = %v", err)
+	}
+	recordTTL := srv.TTL(decisionRecordKey(record.Tenant, decisionRecordID(record)))
+	if recordTTL <= 0 {
+		t.Fatalf("record TTL = %v; want positive", recordTTL)
+	}
+	verdict, err := record.Verdict.DecisionLogWireValue()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{
+		decisionPrimaryIndexKey(record.Tenant),
+		decisionRuleIndexKey(record.Tenant, record.RuleID),
+		decisionAgentIndexKey(record.Tenant, record.AgentID),
+		decisionTopicIndexKey(record.Tenant, record.Topic),
+		decisionVerdictIndexKey(record.Tenant, verdict),
+	} {
+		if got := srv.TTL(key); got != recordTTL {
+			t.Errorf("%s TTL = %v; want record TTL %v", key, got, recordTTL)
+		}
+	}
+}
+
 func TestRedisDecisionLogStoreQueryFilters(t *testing.T) {
 	store, srv := newTestDecisionLogStore(t)
 	defer srv.Close()
