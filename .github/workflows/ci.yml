@@ -762,9 +762,9 @@ jobs:
       env:
         OPENAPI_BASE_REF: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || format('origin/{0}', github.base_ref || 'main') }}
 
-    # The generated Python client must match the spec. This job is a required check, and ci.yml has
-    # no paths filter, so these steps run whatever files a PR changes. sdk-python.yml's paths
-    # filter reads only a PR's first 300 files, so large PRs skipped it.
+    # The generated Python client must match the spec. This job is a required check and ci.yml has no
+    # paths filter, so these steps run whatever a PR changes. sdk-python.yml's filter leaves out
+    # spec-only PRs, and it reads only a PR's first 300 files.
     - name: Set up Python for the Python SDK generator
       uses: actions/setup-python@v7
       with:
