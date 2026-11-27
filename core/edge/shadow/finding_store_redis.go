@@ -1090,16 +1090,15 @@ func (s *RedisStore) pruneFindingIndexes(ctx context.Context, tenant, id string,
 	if shared {
 		keys = append(keys, sharedKeys...)
 	}
-	_, err = s.client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+	// A pipeline that reports an error may still have run some of its
+	// commands, so the repair runs either way.
+	_, _ = s.client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
 		for _, key := range keys {
 			pipe.ZRem(ctx, key, id)
 		}
 		pipe.Del(ctx, refKey)
 		return nil
 	})
-	if err != nil {
-		return
-	}
 	s.repairFindingIndexes(ctx, tenant, id, shared)
 }
 

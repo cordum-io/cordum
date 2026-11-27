@@ -3,6 +3,7 @@ package shadow
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -159,9 +160,11 @@ func TestStaleCleanupKeepsOtherTenantSharedMembers(t *testing.T) {
 
 // cmdHook runs after on each command once it has run, and pipeline on each
 // pipeline before it runs.
+// cmdHook runs after and pipeline once next returns; a non-nil error from
+// pipeline replaces the pipeline's result.
 type cmdHook struct {
 	after    func(redis.Cmder)
-	pipeline func([]redis.Cmder)
+	pipeline func([]redis.Cmder) error
 }
 
 func (h cmdHook) DialHook(next redis.DialHook) redis.DialHook { return next }
@@ -178,10 +181,13 @@ func (h cmdHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 
 func (h cmdHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
 	return func(ctx context.Context, cmds []redis.Cmder) error {
+		err := next(ctx, cmds)
 		if h.pipeline != nil {
-			h.pipeline(cmds)
+			if herr := h.pipeline(cmds); herr != nil {
+				return herr
+			}
 		}
-		return next(ctx, cmds)
+		return err
 	}
 }
 
@@ -195,23 +201,40 @@ func cmdKey(cmd redis.Cmder) string {
 // TestStaleCleanupRestoresRecreatedFinding: X is created again, for the same
 // or another tenant, while tenant A's cleanup reads A's index record. After
 // the cleanup the new finding is listed and in every set it was written to,
-// with its record.
+// with its record, also when the prune pipeline reports an error.
 func TestStaleCleanupRestoresRecreatedFinding(t *testing.T) {
 	const tenantA, marker = "tenant-idxref-a", "pr2-08-f1-repair"
-	for _, owner := range []string{tenantA, "tenant-idxref-b"} {
-		t.Run(owner, func(t *testing.T) {
+	cases := []struct {
+		name, owner string
+		failPrune   bool
+	}{
+		{"same tenant", tenantA, false},
+		{"other tenant", "tenant-idxref-b", false},
+		{"prune pipeline error", tenantA, true},
+	}
+	for _, tc := range cases {
+		owner := tc.owner
+		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			s, mr := newIndexRefStore(t)
 			x := expiredIndexRefFinding(t, s, mr, tenantA, marker)
 			var fired atomic.Bool
-			s.client.(*redis.Client).AddHook(cmdHook{after: func(cmd redis.Cmder) {
-				if cmd.Name() != "get" || !strings.HasPrefix(cmdKey(cmd), redisKeyFindingIndexRef) || !fired.CompareAndSwap(false, true) {
-					return
-				}
-				if _, err := s.CreateFinding(context.Background(), indexRefReq(owner, marker)); err != nil {
-					t.Errorf("CreateFinding during cleanup: %v", err)
-				}
-			}})
+			s.client.(*redis.Client).AddHook(cmdHook{
+				after: func(cmd redis.Cmder) {
+					if cmd.Name() != "get" || !strings.HasPrefix(cmdKey(cmd), redisKeyFindingIndexRef) || !fired.CompareAndSwap(false, true) {
+						return
+					}
+					if _, err := s.CreateFinding(context.Background(), indexRefReq(owner, marker)); err != nil {
+						t.Errorf("CreateFinding during cleanup: %v", err)
+					}
+				},
+				pipeline: func(cmds []redis.Cmder) error {
+					if tc.failPrune && len(cmds) > 0 && cmds[0].Name() == "zrem" {
+						return errors.New("injected prune pipeline error")
+					}
+					return nil
+				},
+			})
 
 			s.opportunisticCleanup(ctx, tenantA, []string{x.FindingID})
 
@@ -260,9 +283,9 @@ func TestStaleCleanupWatchAndMultiNameOneKey(t *testing.T) {
 				t.Errorf("cleanup WATCH names more than one key: %v", cmd.Args())
 			}
 		},
-		pipeline: func(cmds []redis.Cmder) {
+		pipeline: func(cmds []redis.Cmder) error {
 			if !armed.Load() || len(cmds) == 0 || cmds[0].Name() != "multi" {
-				return
+				return nil
 			}
 			keys := map[string]bool{}
 			for _, cmd := range cmds {
@@ -273,6 +296,7 @@ func TestStaleCleanupWatchAndMultiNameOneKey(t *testing.T) {
 			if len(keys) > 1 {
 				t.Errorf("cleanup MULTI names %d keys: %v", len(keys), cmds)
 			}
+			return nil
 		},
 	})
 
