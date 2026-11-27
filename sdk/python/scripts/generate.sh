@@ -28,16 +28,14 @@ else
   exit 1
 fi
 
-if [[ "${GENERATOR[0]}" == *.exe ]]; then
-  if command -v cygpath >/dev/null 2>&1; then
-    SPEC_PATH="$(cygpath -w "${SPEC_PATH}")"
-    CONFIG_PATH="$(cygpath -w "${CONFIG_PATH}")"
-    OUTPUT_PATH="$(cygpath -w "${OUTPUT_PATH}")"
-  elif command -v wslpath >/dev/null 2>&1; then
-    SPEC_PATH="$(wslpath -w "${SPEC_PATH}")"
-    CONFIG_PATH="$(wslpath -w "${CONFIG_PATH}")"
-    OUTPUT_PATH="$(wslpath -w "${OUTPUT_PATH}")"
-  fi
+if command -v cygpath >/dev/null 2>&1; then
+  SPEC_PATH="$(cygpath -w "${SPEC_PATH}")"
+  CONFIG_PATH="$(cygpath -w "${CONFIG_PATH}")"
+  OUTPUT_PATH="$(cygpath -w "${OUTPUT_PATH}")"
+elif [[ "${GENERATOR[0]}" == *.exe ]] && command -v wslpath >/dev/null 2>&1; then
+  SPEC_PATH="$(wslpath -w "${SPEC_PATH}")"
+  CONFIG_PATH="$(wslpath -w "${CONFIG_PATH}")"
+  OUTPUT_PATH="$(wslpath -w "${OUTPUT_PATH}")"
 fi
 
 # openapi-python-client orders some imports by iterating a set, so fix the hash seed.
