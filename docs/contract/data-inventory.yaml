@@ -165,7 +165,7 @@ control_plane:
   - {id: DI-C21, class: artifacts,
      storage: {kind: jetstream, location: Live NATS file-backed streams, streams: [{name: CORDUM_SYS, path: core/infra/bus/nats.go}, {name: CORDUM_JOBS, path: core/infra/bus/nats.go}], writers: [{path: core/infra/bus/nats.go, symbol: NatsBus.initJetStreamFromEnv}]},
      content: {description: CAP bus packets with job/workflow/worker identifiers and payload pointers, personal_data: possible},
-     retention: {settings: [{name: NATS_JS_MAX_AGE, path: core/infra/bus/nats.go}], default: '7d live-message MaxAge when JetStream is enabled; not a backup policy'},
+     retention: {settings: [{name: NATS_JS_MAX_AGE, path: core/infra/bus/nats.go}], default: '7d live-message MaxAge when JetStream is enabled, applied to existing streams at bus start; not a backup policy'},
      deletion: {paths: [{path: core/infra/bus/nats.go, symbol: NatsBus.initJetStreamFromEnv}]},
      legal_hold: {applies: false, reason: Stream MaxAge is delegated to NATS and does not consult legal holds}}
   - {id: DI-C22, class: control-records,

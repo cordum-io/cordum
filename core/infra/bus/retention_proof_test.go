@@ -28,7 +28,7 @@ import (
 // stream and requires JetStream MaxAge to remove it. 2m is the lowest MaxAge
 // the streams accept: their Duplicates window is 2m, and nats-server refuses a
 // MaxAge below it (server/stream.go, "duplicates window can not be larger then
-// max age"). The subtest covers streams that initJetStreamFromEnv creates.
+// max age"). The subtests run in order because t.Setenv forbids t.Parallel.
 func TestRetentionProofDIC21(t *testing.T) {
 	const maxAge = 2 * time.Minute
 	t.Run("new_streams", func(t *testing.T) {
@@ -36,6 +36,14 @@ func TestRetentionProofDIC21(t *testing.T) {
 		t.Setenv(envJSMaxAge, maxAge.String())
 		ns := startTestNATSServer(t, true)
 		proveStreamMaxAge(t, newRetentionProofBus(t, ns), maxAge)
+	})
+	t.Run("lowered_on_existing_streams", func(t *testing.T) {
+		t.Setenv(envUseJetStream, "1")
+		t.Setenv(envJSMaxAge, "")
+		ns := startTestNATSServer(t, true)
+		newRetentionProofBus(t, ns) // creates the streams at the 7d default
+		t.Setenv(envJSMaxAge, maxAge.String())
+		proveStreamMaxAge(t, newRetentionProofBus(t, ns), maxAge) // an operator restart
 	})
 }
 

@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -76,6 +77,54 @@ func TestInitJetStreamEnabled(t *testing.T) {
 	t.Setenv(envUseJetStream, "no")
 	if initJetStreamEnabled() {
 		t.Fatalf("expected jetstream disabled for no")
+	}
+}
+
+// TestJetStreamStreamMaxAgeReconciles re-runs bus init against existing
+// streams, as an operator restart does. Each stream holds one message and an
+// operator-set Description and MaxMsgs. A changed NATS_JS_MAX_AGE must update
+// MaxAge in place; the stream, its message and every other field are kept.
+func TestJetStreamStreamMaxAgeReconciles(t *testing.T) {
+	t.Setenv(envUseJetStream, "1")
+	ns := startTestNATSServer(t, true)
+	initAt := func(maxAge time.Duration) *NatsBus {
+		t.Helper()
+		t.Setenv(envJSMaxAge, maxAge.String())
+		return newRetentionProofBus(t, ns)
+	}
+	b := initAt(time.Hour)
+	base := map[string]*nats.StreamInfo{}
+	for stream, subject := range map[string]string{streamSys: capsdk.SubjectSubmit, streamJobs: "job.dic21.reconcile"} {
+		if _, err := b.js.Publish(subject, []byte("kept")); err != nil {
+			t.Fatalf("publish %s: %v", subject, err)
+		}
+		info, err := b.js.StreamInfo(stream)
+		if err != nil {
+			t.Fatalf("StreamInfo(%s): %v", stream, err)
+		}
+		cfg := info.Config
+		cfg.Description, cfg.MaxMsgs = "operator note", 1000
+		if base[stream], err = b.js.UpdateStream(&cfg); err != nil {
+			t.Fatalf("UpdateStream(%s): %v", stream, err)
+		}
+	}
+	for _, maxAge := range []time.Duration{time.Hour, 30 * time.Minute, 2 * time.Hour} {
+		b := initAt(maxAge)
+		for stream, want := range base {
+			got, err := b.js.StreamInfo(stream)
+			if err != nil {
+				t.Fatalf("StreamInfo(%s): %v", stream, err)
+			}
+			wantCfg := want.Config
+			wantCfg.MaxAge = maxAge
+			if !reflect.DeepEqual(got.Config, wantCfg) {
+				t.Fatalf("init at %s: %s config = %+v; want %+v", maxAge, stream, got.Config, wantCfg)
+			}
+			if !got.Created.Equal(want.Created) || got.State.FirstSeq != want.State.FirstSeq || got.State.Msgs != 1 {
+				t.Fatalf("init at %s: %s created %s first_seq %d msgs %d; want the kept stream (created %s, first_seq %d, 1 msg)",
+					maxAge, stream, got.Created, got.State.FirstSeq, got.State.Msgs, want.Created, want.State.FirstSeq)
+			}
+		}
 	}
 }
 
