@@ -81,8 +81,11 @@ func TestDecisionQueryClusterSource(t *testing.T) {
 			source, others, err := s.querySourceKey(ctx, model.DecisionQuery{Tenant: "t", RuleID: "r", AgentID: "a", Since: tc.since, Until: tc.until})
 			require.NoError(t, err)
 			require.Equal(t, tc.source, source)
-			require.Len(t, others, 1)
-			require.NotEqual(t, source, others[0])
+			expectedOther := rule
+			if source == rule {
+				expectedOther = agent
+			}
+			require.Equal(t, []string{expectedOther}, others)
 		})
 	}
 }
