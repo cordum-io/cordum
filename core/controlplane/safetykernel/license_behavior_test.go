@@ -39,10 +39,6 @@ var kernelLicenseStates = []kernelLicenseState{
 	{"missing", licensing.PlanCommunity, "active"},
 }
 
-// kernelLicenseEnterpriseStates are the states whose velocity cells this file
-// covers.
-var kernelLicenseEnterpriseStates = []string{"valid", "warning", "grace"}
-
 // The base policy allows by default and holds four velocity rules, the deny
 // last.
 const kernelLicenseBasePolicy = `default_tenant: default
@@ -227,7 +223,7 @@ func TestLicenseBehaviorKernel_InvariantsDeny(t *testing.T) {
 }
 
 func TestLicenseBehaviorKernel_VelocityDeny(t *testing.T) {
-	forKernelLicenseStates(t, kernelLicenseEnterpriseStates, func(t *testing.T, f *kernelLicenseFixture) {
+	forKernelLicenseStates(t, nil, func(t *testing.T, f *kernelLicenseFixture) {
 		labels := map[string]string{"session_id": "license-velocity"}
 		f.check(t, f.nextJobID(), "job.license.velocity", labels)
 		f.requireDeny(t, "job.license.velocity", "license-velocity-deny", labels)

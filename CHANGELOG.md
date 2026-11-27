@@ -6,6 +6,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Fixed
+- Safety kernel: every velocity rule in the loaded policy takes part in evaluation on every plan and in every license state. A plan's or license's velocity rule count applies when `POST /api/v1/policy/velocity-rules` adds a rule (task-709ca9ab).
 
 - Safety kernel: enabled `secops/` policy bundles, `secops/invariants` included, are enforced on every plan and in every license state. In the enforce signing mode each one must verify, or the policy load fails. The `max_policy_bundles` limit applies when `PUT /api/v1/policy/bundles/{id}` adds a bundle (task-9394e8a9).
 - Dashboard: policy edit, publish, tenant, output-rule and quarantine-release controls are shown only to the `admin` role, the role the gateway admits on those routes (task-20c071ba).

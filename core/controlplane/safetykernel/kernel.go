@@ -636,53 +636,11 @@ func newGRPCServer(srv *server, serverCreds grpc.ServerOption) *grpc.Server {
 	return grpcServer
 }
 
-func (s *server) currentEntitlements() licensing.Entitlements {
-	if s != nil && s.entitlements != nil {
-		return s.entitlements.Entitlements()
-	}
-	return licensing.DefaultEntitlements(licensing.PlanCommunity)
-}
-
 func (s *server) resolvedPlan() licensing.Plan {
 	if s != nil && s.entitlements != nil {
 		return s.entitlements.ResolvedPlan()
 	}
 	return licensing.PlanCommunity
-}
-
-func (s *server) velocityRuleLimit() int64 {
-	if entitlements := s.currentEntitlements(); entitlements.Limits != nil {
-		for _, key := range []string{"velocity_rule_count", "velocity_rules"} {
-			if limit, ok := entitlements.Limits[key]; ok {
-				return limit
-			}
-		}
-	}
-	switch s.resolvedPlan() {
-	case licensing.PlanEnterprise:
-		return licensing.Unlimited
-	case licensing.PlanTeam:
-		return 20
-	default:
-		return 3
-	}
-}
-
-func effectiveVelocityRuleCount(policy *config.SafetyPolicy, limit int64) int {
-	if policy == nil || limit == 0 {
-		return 0
-	}
-	count := 0
-	for _, rule := range policy.EffectiveRules() {
-		if rule.Velocity == nil {
-			continue
-		}
-		count++
-		if limit != licensing.Unlimited && int64(count) >= limit {
-			break
-		}
-	}
-	return count
 }
 
 func (s *server) Check(ctx context.Context, req *pb.PolicyCheckRequest) (*pb.PolicyCheckResponse, error) {
@@ -759,11 +717,11 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	evalPolicy := scopedPolicyForRequest(policy, global, workflowID, scopedJobID, topic)
 	inputRules = selectInputRulesForScope(inputRules, workflowID, scopedJobID)
 
-	// Bypass decision cache when the active policy has effective velocity rules.
+	// Do not cache decisions when the evaluated policy has velocity rules.
 	// Velocity decisions depend on sliding-window state that changes with every
 	// request, so caching any result (even a fallthrough ALLOW) would prevent
 	// the window from advancing correctly.
-	policyHasVelocity := effectiveVelocityRuleCount(evalPolicy, s.velocityRuleLimit()) > 0
+	policyHasVelocity := evalPolicy != nil && hasVelocityRules(evalPolicy.EffectiveRules())
 	requestHasActionDescriptor := requestHasActionDescriptorLabel(req)
 	// Bypass the decision cache for agent-enriched requests: the resolved agent
 	// identity (risk tier / data classifications, fetched from the mutable
