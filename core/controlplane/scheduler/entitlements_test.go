@@ -26,6 +26,15 @@ func (s *activeCountJobStore) CountActiveByTenant(_ context.Context, _ string) (
 	return s.active, nil
 }
 
+// ReserveTenantSlot refuses at limit as the Redis store does, with active
+// other jobs holding slots.
+func (s *activeCountJobStore) ReserveTenantSlot(_ context.Context, _, _ string, limit int64) (bool, int, error) {
+	if s.countErr != nil {
+		return false, 0, s.countErr
+	}
+	return int64(s.active) < limit, s.active, nil
+}
+
 func newSchedulerEntitlementResolver(t *testing.T, plan licensing.Plan, mutate func(*licensing.Entitlements)) *licensing.EntitlementResolver {
 	t.Helper()
 

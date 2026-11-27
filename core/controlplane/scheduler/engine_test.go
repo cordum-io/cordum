@@ -20,6 +20,7 @@ import (
 	"github.com/cordum/cordum/core/infra/redisutil"
 	infraSchema "github.com/cordum/cordum/core/infra/schema"
 	infraStore "github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -809,6 +810,14 @@ func newConfigChangedWorkersPacket() *pb.BusPacket {
 
 func (s *fakeJobStore) CountActiveByTenant(_ context.Context, _ string) (int, error) {
 	return 0, nil
+}
+
+func (s *fakeJobStore) ReserveTenantSlot(context.Context, string, string, int64) (bool, int, error) {
+	return true, 0, nil
+}
+
+func (s *fakeJobStore) ReleaseTenantSlot(context.Context, string, string) error {
+	return nil
 }
 
 func (s *fakeJobStore) TryAcquireLock(_ context.Context, key string, ttl time.Duration) (string, error) {
@@ -3426,5 +3435,260 @@ func TestApplyConstraints_SerialiseFailureEmitsMetric_KeepsStructuralCap(t *test
 	// env propagation failed. Worker still gets the runtime ceiling via Budget.
 	if req.Budget == nil || req.Budget.DeadlineMs != 1000 {
 		t.Fatalf("Budget.DeadlineMs = %v, want 1000 (structural cap must survive serialise failure)", req.Budget)
+	}
+}
+
+// rendezvousSlotStore holds each ReserveTenantSlot call until two have
+// arrived, so the two admissions under test overlap.
+type rendezvousSlotStore struct {
+	*infraStore.RedisJobStore
+	mu      sync.Mutex
+	arrived int
+	both    chan struct{}
+}
+
+func (s *rendezvousSlotStore) ReserveTenantSlot(ctx context.Context, tenant, jobID string, limit int64) (bool, int, error) {
+	s.mu.Lock()
+	if s.arrived++; s.arrived == 2 {
+		close(s.both)
+	}
+	s.mu.Unlock()
+	select {
+	case <-s.both:
+	case <-ctx.Done():
+		return false, 0, ctx.Err()
+	}
+	return s.RedisJobStore.ReserveTenantSlot(ctx, tenant, jobID, limit)
+}
+
+func newTenantSlotTestStore(t *testing.T) *infraStore.RedisJobStore {
+	t.Helper()
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(srv.Close)
+	js, err := infraStore.NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("NewRedisJobStore: %v", err)
+	}
+	t.Cleanup(func() { _ = js.Close() })
+	return js
+}
+
+// submitTenantJob writes a job as the gateway does: PENDING first, then the
+// meta with its tenant, so the job is not in the tenant's active set yet.
+func submitTenantJob(t *testing.T, js *infraStore.RedisJobStore, jobID string) *pb.JobRequest {
+	t.Helper()
+	req := &pb.JobRequest{JobId: jobID, Topic: "job.default", TenantId: "tenant-a"}
+	if err := js.SetState(context.Background(), jobID, JobStatePending); err != nil {
+		t.Fatalf("SetState(%s): %v", jobID, err)
+	}
+	if err := js.SetJobMeta(context.Background(), req); err != nil {
+		t.Fatalf("SetJobMeta(%s): %v", jobID, err)
+	}
+	return req
+}
+
+func publishedJobIDs(bus *fakeBus) []string {
+	var ids []string
+	for _, msg := range bus.snapshotPublished() {
+		if jr := msg.packet.GetJobRequest(); jr != nil {
+			ids = append(ids, jr.GetJobId())
+		}
+	}
+	return ids
+}
+
+var capOneSafety = &fixedSafetyRecordChecker{record: SafetyDecisionRecord{
+	Decision:    SafetyAllowWithConstraints,
+	Constraints: &pb.PolicyConstraints{Budgets: &pb.BudgetConstraints{MaxConcurrentJobs: 1}},
+}}
+
+func TestProcessJobTenantConcurrencyCapAdmitsOneOfTwoConcurrent(t *testing.T) {
+	tests := []struct {
+		name    string
+		safety  SafetyChecker
+		running int // jobs of the tenant already running
+		refused func(error) bool
+	}{
+		{"policy max_concurrent_jobs 1", capOneSafety, 0, func(err error) bool { return errors.Is(err, ErrTenantLimit) }},
+		{"community tier limit 3", NewSafetyBasic(), 2, func(err error) bool {
+			var limitErr *licensing.TierLimitError
+			return errors.As(err, &limitErr) && limitErr.Limit == "max_concurrent_jobs" && limitErr.Allowed == 3
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			js := newTenantSlotTestStore(t)
+			for i := range tt.running {
+				id := fmt.Sprintf("running-%d", i)
+				submitTenantJob(t, js, id)
+				if err := js.SetState(context.Background(), id, JobStateRunning); err != nil {
+					t.Fatalf("SetState(%s, RUNNING): %v", id, err)
+				}
+			}
+			bus := &fakeBus{}
+			engine := NewEngine(bus, tt.safety, newTestRegistry(t), NewNaiveStrategy(),
+				&rendezvousSlotStore{RedisJobStore: js, both: make(chan struct{})}, nil)
+			ids := []string{"job-a", "job-b"}
+			errs := make([]error, len(ids))
+			var wg sync.WaitGroup
+			for i, id := range ids {
+				req := submitTenantJob(t, js, id)
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					errs[i] = engine.processJob(testCtx(t), req, "trace-"+id)
+				}()
+			}
+			wg.Wait()
+
+			var dispatched, refused []string
+			for i, err := range errs {
+				var retryErr *retryableError
+				switch {
+				case err == nil:
+					dispatched = append(dispatched, ids[i])
+				case tt.refused(err) && errors.As(err, &retryErr) && retryErr.RetryDelay() == retryDelayNoWorkers:
+					refused = append(refused, ids[i])
+				default:
+					t.Fatalf("processJob(%s) = %v, want nil or a requeue at the limit", ids[i], err)
+				}
+			}
+			if len(dispatched) != 1 || len(refused) != 1 {
+				t.Fatalf("dispatched %v, refused %v; want exactly one of each", dispatched, refused)
+			}
+			if got := publishedJobIDs(bus); len(got) != 1 || got[0] != dispatched[0] {
+				t.Fatalf("published job requests %v, want only %s", got, dispatched[0])
+			}
+			if state, err := js.GetState(context.Background(), refused[0]); err != nil || state != JobStatePending {
+				t.Fatalf("refused job state = %q, %v; want PENDING", state, err)
+			}
+			if active, err := js.CountActiveByTenant(context.Background(), "tenant-a"); err != nil || active != tt.running+1 {
+				t.Fatalf("CountActiveByTenant = %d, %v; want %d", active, err, tt.running+1)
+			}
+		})
+	}
+}
+
+// Jobs submitted straight to the bus, such as workflow steps, get their
+// PENDING state from handleJobRequest after their tenant, so both are in the
+// active set before either reserves. Neither may count against itself, and
+// the refused one must not keep the other out.
+func TestHandleJobRequestTenantLimitAdmitsOneOfTwoBusJobs(t *testing.T) {
+	js := newTenantSlotTestStore(t)
+	bus := &fakeBus{}
+	engine := NewEngine(bus, capOneSafety, newTestRegistry(t), NewNaiveStrategy(),
+		&rendezvousSlotStore{RedisJobStore: js, both: make(chan struct{})}, nil)
+	ids := []string{"step-a", "step-b"}
+	errs := make([]error, len(ids))
+	var wg sync.WaitGroup
+	for i, id := range ids {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = engine.handleJobRequest(&pb.JobRequest{JobId: id, Topic: "job.default", TenantId: "tenant-a"}, "trace-"+id)
+		}()
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("handleJobRequest(%s): %v", ids[i], err)
+		}
+	}
+	got := publishedJobIDs(bus)
+	if len(got) != 1 {
+		t.Fatalf("published job requests %v, want exactly one of %v dispatched at cap 1", got, ids)
+	}
+	queued := ids[0]
+	if got[0] == ids[0] {
+		queued = ids[1]
+	}
+	if state, err := js.GetState(context.Background(), queued); err != nil || state != JobStatePending {
+		t.Fatalf("queued job state = %q, %v; want PENDING", state, err)
+	}
+	if active, err := js.CountActiveByTenant(context.Background(), "tenant-a"); err != nil || active != 1 {
+		t.Fatalf("CountActiveByTenant = %d, %v; want 1 (the dispatched job)", active, err)
+	}
+}
+
+func TestProcessJobReservedSlotReleasedWhenDispatchRollsBack(t *testing.T) {
+	tests := []struct {
+		name      string
+		bus       *fakeBus
+		strategy  SchedulingStrategy
+		wantState JobState
+	}{
+		{"publish fails", &fakeBus{publishErr: errors.New("nats unavailable")}, NewNaiveStrategy(), JobStateScheduled},
+		{"no worker", &fakeBus{}, &errStrategy{err: ErrNoWorkers}, JobStatePending},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			js := newTenantSlotTestStore(t)
+			engine := NewEngine(tt.bus, capOneSafety, newTestRegistry(t), tt.strategy, js, nil)
+			req := submitTenantJob(t, js, "job-a")
+			err := engine.processJob(testCtx(t), req, "trace-job-a")
+			var retryErr *retryableError
+			if !errors.As(err, &retryErr) {
+				t.Fatalf("processJob = %v, want a retryable requeue", err)
+			}
+			if state, err := js.GetState(context.Background(), "job-a"); err != nil || state != tt.wantState {
+				t.Fatalf("job state = %q, %v; want %s", state, err, tt.wantState)
+			}
+			if active, err := js.CountActiveByTenant(context.Background(), "tenant-a"); err != nil || active != 0 {
+				t.Fatalf("the undispatched job still holds a slot: active = %d, %v; want 0", active, err)
+			}
+		})
+	}
+}
+
+// fenceLossSlotStore reserves for the old attempt, then drops that attempt's
+// lock fence and lets a successor reserve the same job and run it, as happens
+// after the old attempt's lock renewal is abandoned. It records its own errors
+// for the test to check after processJob returns.
+type fenceLossSlotStore struct {
+	*infraStore.RedisJobStore
+	abandon context.CancelCauseFunc
+	errs    []error
+}
+
+func (s *fenceLossSlotStore) ReserveTenantSlot(ctx context.Context, tenant, jobID string, limit int64) (bool, int, error) {
+	reserved, others, err := s.RedisJobStore.ReserveTenantSlot(ctx, tenant, jobID, limit)
+	if err != nil || !reserved {
+		s.errs = append(s.errs, fmt.Errorf("old attempt reservation = %v, %v; want admitted", reserved, err))
+	}
+	s.abandon(errLockAbandoned)
+	if ok, _, err := s.RedisJobStore.ReserveTenantSlot(context.Background(), tenant, jobID, limit); err != nil || !ok {
+		s.errs = append(s.errs, fmt.Errorf("successor reservation = %v, %v; want admitted", ok, err))
+	}
+	if err := s.SetState(context.Background(), jobID, JobStateRunning); err != nil {
+		s.errs = append(s.errs, fmt.Errorf("successor SetState(RUNNING): %w", err))
+	}
+	return reserved, others, err
+}
+
+// Once the lock fence is lost a successor may hold the job's slot, so the old
+// attempt's deferred release must write nothing (CRD-14): the running job
+// keeps its slot and another job of the tenant stays out at cap 1.
+func TestProcessJobReservedSlotKeptWhenLockFenceIsLost(t *testing.T) {
+	js := newTenantSlotTestStore(t)
+	lockCtx, abandon := context.WithCancelCause(testCtx(t))
+	defer abandon(nil)
+	store := &fenceLossSlotStore{RedisJobStore: js, abandon: abandon}
+	engine := NewEngine(&fakeBus{}, capOneSafety, newTestRegistry(t), &errStrategy{err: ErrNoWorkers}, store, nil)
+	req := submitTenantJob(t, js, "job-a")
+	if err := engine.processJob(lockCtx, req, "trace-job-a"); err == nil {
+		t.Fatal("processJob = nil, want a requeue after the fence was lost")
+	}
+	if err := errors.Join(store.errs...); err != nil {
+		t.Fatalf("successor setup: %v", err)
+	}
+	if active, err := js.CountActiveByTenant(context.Background(), "tenant-a"); err != nil || active != 1 {
+		t.Fatalf("CountActiveByTenant = %d, %v; want 1 (the successor's running job-a)", active, err)
+	}
+	submitTenantJob(t, js, "job-b")
+	if ok, _, err := js.ReserveTenantSlot(context.Background(), "tenant-a", "job-b", 1); err != nil || ok {
+		t.Fatalf("ReserveTenantSlot(job-b, cap 1) = %v, %v; want refused while job-a runs", ok, err)
 	}
 }

@@ -10,6 +10,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - MCP: JSON-RPC errors no longer expose execution ids. Errors caused by
   Cordum's own stores carry a fixed message, such as `internal error`, and
   the detail is in the gateway log (#492, task-e489e0c5).
+- Scheduler: the tenant concurrency cap (`max_concurrent_jobs`) and the
+  license tier's concurrent-job limit now hold when jobs of one tenant are
+  admitted at the same time, on one scheduler or several. The check and the
+  claim on a slot are one atomic Redis operation, and a slot goes back when
+  the dispatch fails. A job no longer counts against itself and holds no slot
+  once refused, which had kept workflow steps and DLQ retries from starting at
+  a cap of 1 (task-8bab7c41).
+
 - Python SDK: normalize PATH-discovered generator paths in Git Bash (task-33ed4117)
   when `MSYS_NO_PATHCONV=1`, preserving local-venv selection and WSL behavior.
 
