@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
@@ -305,6 +306,16 @@ func TestRuntimeAudit_SideEffectFirstReportsLostEntry(t *testing.T) {
 				require.NoError(t, err)
 			},
 		},
+		{
+			name: "create eval dataset", want: "eval dataset created but its audit entry was not stored",
+			call: func(t *testing.T, s *server) *httptest.ResponseRecorder {
+				return evalPostCreate(t, bindEvalDatasetRoutes(t, s), evalCreateBody("audit-pack", 1, 1), "admin")
+			},
+			applied: func(t *testing.T, s *server) {
+				_, err := s.evalDatasetStore.GetEvalDatasetByNameVersion(context.Background(), testEvalTenant, "audit-pack", 1)
+				require.NoError(t, err)
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -318,4 +329,22 @@ func TestRuntimeAudit_SideEffectFirstReportsLostEntry(t *testing.T) {
 			tc.applied(t, s)
 		})
 	}
+}
+
+func TestRuntimeAudit_PolicyCheckAuditFailureStillAnswers(t *testing.T) {
+	s, _, hooked, _ := auditPersistServer(t)
+	s.auth = newBasicAuthForTest(t, nil)
+	hooked.AddHook(auditPersistHook{failKey: auditPersistLogKey})
+	logs := storeWriterLogs(t)
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/policy/evaluate", strings.NewReader(`{"topic": "job.default"}`))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("X-Tenant-ID", "default")
+	r.Header.Set("X-API-Key", "test-api-key")
+	r = withAuth(r, &auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin-user"})
+
+	rr := httptest.NewRecorder()
+	s.handlePolicyEvaluate(rr, r)
+
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+	require.Len(t, auditPersistErrors(logs, "policy.evaluate"), 1)
 }
