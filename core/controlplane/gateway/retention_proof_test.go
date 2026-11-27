@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -11,10 +12,13 @@ import (
 	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
+	"github.com/cordum/cordum/core/auth/delegation"
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
+	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/tracescan"
 	"github.com/cordum/cordum/core/internal/testredis"
+	"github.com/cordum/cordum/core/model"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -102,5 +106,82 @@ func TestRetentionProofDIC05(t *testing.T) {
 	servicesRetentionGone(t, client, marker)
 	if n, err := client.Exists(ctx, "cfg:system:policy_audit").Result(); err != nil || n != 1 {
 		t.Fatalf("cfg:system:policy_audit should remain: n=%d err=%v", n, err)
+	}
+}
+
+// TestRetentionProofDIC46 is cited by docs/contract/deletion-proofs.md. An MCP
+// approval record mcp:approvals:<id> and its tuple index
+// mcp:approvals:idx:<tenant>:<agent>:<tool>:<hash> both expire after the
+// request TTL plus 1m; Resolve keeps the record's remaining TTL. No audit hook
+// is installed, so the writer reaches no export.
+func TestRetentionProofDIC46(t *testing.T) {
+	mr, client, marker := servicesRetentionFixture(t)
+	ctx := context.Background()
+	approvals := NewMCPApprovalStore(client)
+	rec, err := approvals.EnqueueMCPApproval(ctx, &MCPApprovalRequest{
+		Tenant: marker + "-tenant", AgentID: marker + "-agent", Principal: marker + "-principal",
+		ToolName: marker + "-tool", ArgsHash: marker + "-hash", ArgsJSON: json.RawMessage(`{"proof":"` + marker + `"}`),
+		Requester: marker + "-requester", Reason: marker + "-reason",
+	})
+	if err != nil {
+		t.Fatalf("EnqueueMCPApproval: %v", err)
+	}
+	if _, err := approvals.Resolve(ctx, rec.ID, model.ApprovalDecisionApprove, marker+"-resolver", marker+"-resolution"); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	servicesRetentionRequire(t, servicesRetentionTrace(t, client, marker), "mcp:approvals:"+rec.ID,
+		"mcp:approvals:idx:"+marker+"-tenant:"+marker+"-agent:"+marker+"-tool:"+marker+"-hash")
+	mr.FastForward(mcpApprovalDefaultTTL + time.Minute + time.Second)
+	servicesRetentionGone(t, client, marker)
+}
+
+// TestRetentionProofDIC44 is cited by docs/contract/deletion-proofs.md, with
+// TestRetentionProofDIC44Cascade. The issue counter
+// delegation:issue:<tenant>:<agent>:<minute> expires after 2m and a direct
+// revocation delegation:revoked:<jti> at the token's expiry. The writers reach
+// no export.
+func TestRetentionProofDIC44(t *testing.T) {
+	mr, client, marker := servicesRetentionFixture(t)
+	ctx := context.Background()
+	s := &server{jobStore: store.NewRedisJobStoreFromClient(client)}
+	if ok, err := s.allowDelegationIssue(ctx, marker+"-tenant", marker+"-agent"); err != nil || !ok {
+		t.Fatalf("allowDelegationIssue: ok=%v err=%v", ok, err)
+	}
+	if err := delegation.NewRedisRevocationStoreFromClient(client).Revoke(ctx, marker+"-jti", time.Now().Add(time.Minute)); err != nil {
+		t.Fatalf("Revoke: %v", err)
+	}
+	servicesRetentionRequire(t, servicesRetentionTrace(t, client, marker),
+		"delegation:issue:"+marker+"-tenant:"+marker+"-agent:", "delegation:revoked:"+marker+"-jti")
+	mr.FastForward(2*time.Minute + time.Second)
+	servicesRetentionGone(t, client, marker)
+}
+
+// TestRetentionProofDIC44Cascade is cited by docs/contract/deletion-proofs.md.
+// The revoke API (handlers_delegation.go) revokes through CascadeRevoke, which
+// writes delegation:revoked:<jti> for the fixed 24h delegationRevocationTTL and
+// also rewrites DI-C43's token records. DI-C43 has no cleanup path, so after
+// the TTL the marker may remain only in DI-C43's families.
+func TestRetentionProofDIC44Cascade(t *testing.T) {
+	mr, client, marker := servicesRetentionFixture(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	jti := marker + "-jti"
+	if err := delegation.NewRedisListStoreFromClient(client).RecordIssuedToken(ctx, delegation.DelegationView{
+		JTI: jti, Tenant: marker + "-tenant", Subject: marker + "-agent", Issuer: marker + "-issuer",
+		IssuedAt: now, ExpiresAt: now.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("RecordIssuedToken: %v", err)
+	}
+	if _, err := delegation.NewRedisRevocationStoreFromClient(client).CascadeRevoke(ctx, jti, marker+"-reason", now, true); err != nil {
+		t.Fatalf("CascadeRevoke: %v", err)
+	}
+	servicesRetentionRequire(t, servicesRetentionTrace(t, client, marker), "delegation:revoked:"+jti)
+	mr.FastForward(24*time.Hour + time.Second)
+	dic43 := []string{"delegation:token:", "delegation:by-agent:", "delegation:active:", "delegation:all:", "delegation:children:"}
+	hits := servicesRetentionTrace(t, client, marker)
+	for _, hit := range hits {
+		if !slices.ContainsFunc(dic43, func(family string) bool { return strings.HasPrefix(hit, family) }) {
+			t.Fatalf("trace outside DI-C43's families after cleanup: %v", hits)
+		}
 	}
 }
