@@ -47,9 +47,11 @@ const shadowEvalDefaultRefresh = 15 * time.Second
 // absent} falls back to a no-op evaluator — the kernel still boots
 // and serves the active policy. Logs emitted at INFO describe the
 // final state so operators can grep for "safety-kernel: shadow
-// evaluation" and see whether it's live. The error is the audit sender's:
-// it is returned before SetShadowEvaluator, so a refused kernel serves nothing.
-func setupShadowEvaluation(srv *server, loader *policyLoader, natsBus *bus.NatsBus) (*ShadowLoader, *ShadowEvaluator, error) {
+// evaluation" and see whether it's live. auditSender and auditSenderErr are
+// chooseShadowAuditSender's result, built once by the caller. The error is
+// returned only once shadow evaluation is on and configsvc is present, before
+// SetShadowEvaluator, so a refused kernel serves nothing.
+func setupShadowEvaluation(srv *server, loader *policyLoader, auditSender audit.AuditSender, auditSenderErr error) (*ShadowLoader, *ShadowEvaluator, error) {
 	if srv == nil {
 		return nil, nil, nil
 	}
@@ -61,9 +63,8 @@ func setupShadowEvaluation(srv *server, loader *policyLoader, natsBus *bus.NatsB
 		slog.Info("safety-kernel: shadow evaluation disabled — configsvc unavailable")
 		return nil, nil, nil
 	}
-	auditSender, err := chooseShadowAuditSender(natsBus)
-	if err != nil {
-		return nil, nil, err
+	if auditSenderErr != nil {
+		return nil, nil, auditSenderErr
 	}
 	store := policyshadow.NewStore(loader.configSvc)
 	tenantsFn := func() []string {
@@ -119,9 +120,11 @@ func envTruthy(v string) bool {
 }
 
 // chooseShadowAuditSender picks the audit sink for shadow_eval events.
-// Prefer the NATS publisher so shadow events ride the same chain as
-// safety.decision events — downstream consumers (gateway's
-// NATSAuditConsumer + Chainer) treat them uniformly. When NATS is
+// RunWithEntitlements calls it once and shares the sender with the
+// action-gate sink (actionGateAuditSender). Prefer the NATS publisher so
+// shadow events ride the same chain as safety.decision events —
+// downstream consumers (gateway's NATSAuditConsumer + Chainer) treat
+// them uniformly. When NATS is
 // unavailable the sender is nil: the evaluator still evaluates and counts
 // cordum_shadow_eval_total, but emits no shadow_eval audit events and counts
 // no drop for them (audit is disabled, nothing failed to publish). Events that
@@ -155,7 +158,7 @@ func newShadowAuditSender(b audit.AuditBus) (audit.AuditSender, error) {
 		return nil, fmt.Errorf("safety-kernel: production shadow audit publishing requires %s or %s: %w",
 			audit.EnvPublisherSigningKey, audit.EnvPublisherSigningKeyPath, err)
 	}
-	slog.Warn("safety-kernel: shadow audit events are published without a service token",
+	slog.Warn("safety-kernel: kernel audit events (shadow evaluation and action-gate decisions) are published without a service token",
 		"variable", audit.EnvPublisherSigningKey)
 	return audit.NewNATSAuditPublisher(b, nil), nil
 }

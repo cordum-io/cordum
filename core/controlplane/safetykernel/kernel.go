@@ -128,9 +128,9 @@ type server struct {
 	// gateway never trigger action gates.
 	actionExtractor ActionDescriptorExtractor
 	// actionGateAuditSink is invoked when the action-gate pipeline fires
-	// a non-allow decision. Production wires this to a function that
-	// records the SIEMEvent into the BufferedExporter and appends to the
-	// audit Chainer. Nil = log-only.
+	// a non-allow decision. RunWithEntitlements wires it to the kernel's
+	// NATS audit publisher (sys.audit.export), or to a log-only sink when
+	// no publisher can be built. Nil = no record at all.
 	actionGateAuditSink func(ctx context.Context, event audit.SIEMEvent)
 
 	// governanceEvaluator runs deterministic multi-agent governance
@@ -203,8 +203,8 @@ func (s *server) SetActionDescriptorExtractor(fn ActionDescriptorExtractor) {
 
 // SetActionGateAuditSink installs the audit emission hook. Invoked
 // synchronously when an action-gate pipeline fires a non-allow decision.
-// Production wires this to a function that fans out to the SIEM
-// BufferedExporter and the per-tenant audit Chainer.
+// RunWithEntitlements installs newKernelActionGateAuditSink, which publishes
+// through the kernel's NATS audit publisher when one exists, else only logs.
 func (s *server) SetActionGateAuditSink(fn func(ctx context.Context, event audit.SIEMEvent)) {
 	s.mu.Lock()
 	s.actionGateAuditSink = fn
@@ -469,7 +469,10 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	// pipeline silently disabled. The kernel's pipeline runs defensive
 	// gates with no backend dependencies; the gateway path holds the
 	// primary enforcement surface with full approval+chain lookups.
-	if err := wireActionGatePipeline(srv, nil); err != nil {
+	// Gate denials share the shadow audit publisher; without one they are
+	// only logged, and boot does not fail on that.
+	auditSender, auditSenderErr := chooseShadowAuditSender(natsBus)
+	if err := wireActionGatePipeline(srv, actionGateAuditSender(auditSender, auditSenderErr)); err != nil {
 		return fmt.Errorf("wire action gate pipeline: %w", err)
 	}
 	srv.SetGovernanceEvaluator(evaluator.New(), config.DefaultGovernancePolicy())
@@ -482,7 +485,7 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	// a malformed audit publisher key, or none under the production
 	// profile, is an error and the kernel refuses to start — see
 	// shadow_eval.go for the fallback chain.
-	shadowLoader, shadowEvaluator, err := setupShadowEvaluation(srv, loader, natsBus)
+	shadowLoader, shadowEvaluator, err := setupShadowEvaluation(srv, loader, auditSender, auditSenderErr)
 	if err != nil {
 		return fmt.Errorf("safety-kernel: shadow evaluation: %w", err)
 	}
