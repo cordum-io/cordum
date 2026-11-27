@@ -49,14 +49,19 @@ func (h *mcpIndexSlotGuard) ProcessHook(next redis.ProcessHook) redis.ProcessHoo
 
 func (h *mcpIndexSlotGuard) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
 	return func(ctx context.Context, cmds []redis.Cmder) error {
-		if len(cmds) == 0 || cmds[0].Name() != "multi" {
+		if len(cmds) == 0 {
 			return next(ctx, cmds)
 		}
 		h.mu.Lock()
 		key := h.watched
 		h.mu.Unlock()
+		multi := cmds[0].Name() == "multi"
+		if !multi && key == "" {
+			return next(ctx, cmds)
+		}
 		for _, cmd := range cmds {
-			if cmd.Name() == "multi" || cmd.Name() == "exec" {
+			switch cmd.Name() {
+			case "multi", "exec", "cluster", "hello", "client", "ping", "command":
 				continue
 			}
 			if key == "" && len(cmd.Args()) > 1 {
@@ -71,9 +76,11 @@ func (h *mcpIndexSlotGuard) ProcessPipelineHook(next redis.ProcessPipelineHook) 
 			}
 		}
 		err := next(ctx, cmds)
-		h.mu.Lock()
-		h.watched = "" // EXEC releases WATCH; go-redis need not send UNWATCH.
-		h.mu.Unlock()
+		if multi {
+			h.mu.Lock()
+			h.watched = "" // EXEC releases WATCH; go-redis need not send UNWATCH.
+			h.mu.Unlock()
+		}
 		return err
 	}
 }
