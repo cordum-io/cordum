@@ -416,8 +416,9 @@ func licenseBehaviorConfigWritten(t *testing.T, s *server) bool {
 func TestLicenseBehaviorGateway_RBACLoss(t *testing.T) {
 	// license-reader holds only jobs.read and the built-in operator role holds
 	// no roles.write, so RBAC denies each its permission here; losing the RBAC
-	// entitlement must not grant any of them.
-	for _, name := range []string{"valid", "degraded", "invalid", "missing"} {
+	// entitlement must not grant any of them. grace keeps RBAC, so there the
+	// permission check refuses before the license gate.
+	for _, name := range []string{"valid", "grace", "degraded", "invalid", "missing"} {
 		st := licenseBehaviorStateNamed(t, name)
 		t.Run(name, func(t *testing.T) {
 			t.Run("jobs.write", func(t *testing.T) {
@@ -443,19 +444,91 @@ func TestLicenseBehaviorGateway_RBACLoss(t *testing.T) {
 				}
 			})
 			t.Run("roles.write", func(t *testing.T) {
+				// Without the entitlement the permission check binds the
+				// built-in operator role, so it refuses before the RBAC tier gate.
 				s, _, _ := licenseBehaviorGateway(t, st)
 				rec := licenseBehaviorPutRole(s, "operator")
-				if st.rbac {
-					if rec.Code != http.StatusForbidden {
-						t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
-					}
+				if !st.rbac && st.refusal != "" {
+					licenseBehaviorBreakGlass(t, rec, st)
 				} else {
-					licenseBehaviorGated(t, rec, st, "rbac")
+					licenseBehaviorAccessDenied(t, rec)
 				}
 				licenseBehaviorNoRole(t, s)
 			})
 		})
 	}
+}
+
+func licenseBehaviorAccessDenied(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	var body struct {
+		Code string `json:"code"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if rec.Code != http.StatusForbidden || body.Code != "access_denied" {
+		t.Fatalf("status = %d body = %s, want 403 access_denied", rec.Code, rec.Body.String())
+	}
+}
+
+// An operator, whom RBAC denies config.write, after the RBAC entitlement is lost.
+func TestLicenseBehaviorGateway_RBACLossConfigWrite(t *testing.T) {
+	for _, name := range []string{"valid", "degraded", "invalid", "missing"} {
+		st := licenseBehaviorStateNamed(t, name)
+		t.Run(name, func(t *testing.T) {
+			s, bus, _ := licenseBehaviorGateway(t, st)
+			rec := licenseBehaviorSetConfig(s, "operator")
+			written := licenseBehaviorConfigWritten(t, s)
+			if rec.Code == http.StatusOK || written {
+				t.Fatalf("operator config write status = %d written = %t, want refused and unwritten: %s", rec.Code, written, rec.Body.String())
+			}
+			if subjects := licenseBehaviorSubjects(bus); len(subjects) != 0 {
+				t.Fatalf("refused write published %v", subjects)
+			}
+		})
+	}
+}
+
+// A custom role that RBAC denies jobs.read, on a route that names no legacy roles.
+func TestLicenseBehaviorGateway_RBACLossCustomRoleRead(t *testing.T) {
+	for _, name := range []string{"valid", "missing"} {
+		st := licenseBehaviorStateNamed(t, name)
+		t.Run(name, func(t *testing.T) {
+			s, _, _ := licenseBehaviorGateway(t, st)
+			putTestRole(t, s, "license-writer-only", auth.PermJobsWrite)
+			rec := httptest.NewRecorder()
+			s.handleListJobs(rec, licenseBehaviorRequest(http.MethodGet, "/api/v1/jobs", "", "license-writer-only"))
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("custom role jobs list status = %d, want 403: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// The in-memory API limiter (REDIS_RATE_LIMIT=false) under Community, with the
+// env limit above the Community tier.
+func TestLicenseBehaviorGateway_MemoryRateLimit(t *testing.T) {
+	s, _, _ := licenseBehaviorGateway(t, licenseBehaviorStateNamed(t, "missing"))
+	t.Setenv("API_RATE_LIMIT_RPS", "10000")
+	t.Setenv("API_RATE_LIMIT_BURST", "20000")
+	t.Run("redis_branch_control", func(t *testing.T) {
+		rps, burst := s.tierRateLimitDefaults()
+		rps, burst = rateLimitFromEnv("API_RATE_LIMIT_RPS", "API_RATE_LIMIT_BURST", rps, burst)
+		if rps, burst = clampRateLimitToEntitlements(rps, burst, s.currentEntitlements()); rps != 500 || burst != 1000 {
+			t.Fatalf("redis branch limit = %d/%d, want 500/1000", rps, burst)
+		}
+	})
+	t.Run("memory_branch", func(t *testing.T) {
+		limiter := newKeyedRateLimiterFromEnvWithDefaults(s.tierRateLimitDefaults())
+		allowed := 0
+		for i := 0; i < 1500; i++ {
+			if limiter.Allow("tenant:default") {
+				allowed++
+			}
+		}
+		if allowed > 1010 {
+			t.Fatalf("memory limiter allowed %d of 1500 back-to-back requests, want at most the Community burst 1000 (+refill)", allowed)
+		}
+	})
 }
 
 func licenseBehaviorPutRole(s *server, role string) *httptest.ResponseRecorder {
