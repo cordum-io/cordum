@@ -46,6 +46,10 @@ type GlobalPolicy struct {
 	SnapshotHash             string
 	WorkflowSnapshot         string
 	JobSnapshot              string
+
+	// jobRules is InputRules and MCPToolRules together, in the order the policy
+	// lists them: every global rule a Cordum job is checked against.
+	jobRules []config.PolicyRule
 }
 
 // FromSafetyPolicy projects a merged *config.SafetyPolicy plus a separately-
@@ -169,6 +173,20 @@ func (g *GlobalPolicy) DefaultDecisionForJobWorkflowTier(workflowID, jobID strin
 		return g.GlobalDefaultDecision, config.PolicyTierGlobal
 	}
 	return "deny", config.PolicyTierGlobal
+}
+
+// RulesForJob returns the rules a Cordum job is checked against: Invariant
+// denies, then the Job, Workflow and Global rules in authored order, then
+// Invariant allows. Rules with match.mcp lists are part of it. They match only
+// a job that declares an MCP call, and a job that declares one is still
+// checked against every other rule: the declaration is a client label, so it
+// must not choose which rules apply. Edge-action rules are left out.
+func (g *GlobalPolicy) RulesForJob(workflowID, jobID string) []config.PolicyRule {
+	if g == nil {
+		return nil
+	}
+	isJobRule := func(rule config.PolicyRule) bool { return !isEdgeActionRule(rule) }
+	return g.rulesForScopedSection(workflowID, jobID, isJobRule, g.jobRules)
 }
 
 // RulesForEdgeAction returns the rules an Edge evaluator must consider:
