@@ -13,6 +13,7 @@ import (
 	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
+	"github.com/cordum/cordum/core/evals/runner"
 	"github.com/cordum/cordum/core/infra/locks"
 	"github.com/cordum/cordum/core/infra/tracescan"
 	"github.com/cordum/cordum/core/internal/testredis"
@@ -182,6 +183,24 @@ func TestRetentionProofDIC28(t *testing.T) {
 	if removed, err := s.CleanupStaleEntries(ctx); err != nil || removed != 1 {
 		t.Fatalf("CleanupStaleEntries = %d, %v; want 1 stale id removed", removed, err)
 	}
+	requireNoTrace(t, client, marker)
+}
+
+// TestRetentionProofDIC37 relies on key expiry of the run record and its idx:t
+// and idx:ds keys, which CreateRun gives the run TTL; it calls no cleanup by
+// name.
+func TestRetentionProofDIC37(t *testing.T) {
+	t.Setenv("CORDUM_EVAL_RUN_TTL_SECONDS", "1")
+	mr, client, marker := newProofRedis(t)
+	s := NewEvalRunStoreFromClient(client)
+	if err := s.CreateRun(context.Background(), runner.RunResult{
+		RunID: marker + "-run", DatasetID: marker + "-ds", Tenant: "tenant-dic37", StartedAt: time.Now().UTC(),
+		Entries: []runner.EntryResult{{EntryID: "entry-1", Reason: "output " + marker}},
+	}); err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+	expireJustPast(t, mr, client, time.Second, marker,
+		"eval:run:tenant-dic37:rec:", "eval:run:tenant-dic37:idx:t:", "eval:run:tenant-dic37:idx:ds:")
 	requireNoTrace(t, client, marker)
 }
 
