@@ -109,6 +109,22 @@ func (s *server) busTapResultFromDispatchedWorker(ctx context.Context, p *pb.Bus
 	return dispatchWorker == worker && dispatchTenant == tenant
 }
 
+// busTapPacketInWorkerTenant reports whether the taps may relay p's job
+// request, progress or cancel. A worker session's packet counts only when the
+// relay's own resolver gives it the session's tenant: a request's tenant, or
+// the recorded tenant of the job a progress or cancel names. Claims-less
+// packets, other payloads and reserved service identities are not checked here.
+func (s *server) busTapPacketInWorkerTenant(ctx context.Context, p *pb.BusPacket, c *scheduler.SessionTokenClaims) bool {
+	if c == nil || servicetoken.IsReservedIdentity(c.Subject) {
+		return true
+	}
+	if p.GetJobRequest() == nil && p.GetJobProgress() == nil && p.GetJobCancel() == nil {
+		return true
+	}
+	tenant, ok := s.tenantForBusPacket(ctx, p)
+	return ok && tenant == strings.TrimSpace(c.Tenant)
+}
+
 // busTapIdentityMatches applies the tap's credential rule to verified claims.
 // A heartbeat needs the sender's own bound worker session, the scheduler's
 // rule in engine_session_boundary.go verifiedIdentityMatches. A DLQ packet

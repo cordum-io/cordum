@@ -17,6 +17,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   Results under a control-plane service token, and token-less packets in `warn` mode, are
   outside this check (task-68c9eb16).
 
+- Gateway: the `sys.job.>` and `sys.audit.>` stream subscriptions relay a job request,
+  job progress or job cancel sent under a worker session (handshake `warn` or `enforce`,
+  or the production profile) only when it belongs to the session's tenant: a request
+  must name the session's tenant, and a progress or cancel must name a job recorded under
+  that tenant. A request without a tenant, or a progress or cancel for a job stored
+  without one, matches no worker session. A packet that fails the check is acknowledged,
+  is not relayed to stream clients, and is logged as `bus tap packet refused` with
+  `reason=tenant`. Packets under a control-plane service token, and token-less packets in
+  `warn` mode, are outside this check. The scheduler's own handling of these packets is
+  unchanged (task-b0d537bc).
+
 - Approvals: an approve that fails after a policy-drift refresh, on a workflow-run lookup error
   or a failed resolution write, leaves the stored safety decision unchanged, so the same approve
   can be retried once the store recovers instead of answering 409 "job not awaiting approval"
