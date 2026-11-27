@@ -304,6 +304,7 @@ func TestGatewayEdgeApprovalListDetailRejectAndTenantIsolation(t *testing.T) {
 
 func TestGatewayEdgeApprovalListPrincipalBinding(t *testing.T) {
 	s, _ := newEdgeRouteTestServer(t)
+	permBindingRBACUserRole(t, s, auth.PermJobsRead)
 	ownOld := seedGatewayEdgeApproval(t, s, edgeRouteTenant, "principal-edge-user", "list-principal-own-old")
 	otherPrincipal := seedGatewayEdgeApproval(t, s, edgeRouteTenant, "principal-other-member", "list-principal-other")
 	ownNew := seedGatewayEdgeApproval(t, s, edgeRouteTenant, "principal-edge-user", "list-principal-own-new")
@@ -341,6 +342,7 @@ func TestGatewayEdgeApprovalListPrincipalBinding(t *testing.T) {
 
 func TestGatewayEdgeApprovalGetPrincipalBinding(t *testing.T) {
 	s, handler := newEdgeRouteTestServer(t)
+	permBindingRBACUserRole(t, s, auth.PermJobsRead)
 	approval := seedGatewayEdgeApproval(t, s, edgeRouteTenant, "principal-edge-user", "get-principal")
 	path := "/api/v1/edge/approvals/" + approval.ApprovalRef
 
@@ -369,6 +371,7 @@ func TestGatewayEdgeApprovalGetPrincipalBinding(t *testing.T) {
 
 func TestGatewayEdgeApprovalWaitPrincipalBinding(t *testing.T) {
 	s, handler := newEdgeRouteTestServer(t)
+	permBindingRBACUserRole(t, s, auth.PermJobsRead)
 	approval := seedGatewayEdgeApproval(t, s, edgeRouteTenant, "principal-edge-user", "wait-principal")
 	path := "/api/v1/edge/approvals/" + approval.ApprovalRef + "/wait"
 	waitBody := `{"timeout_ms":1}`

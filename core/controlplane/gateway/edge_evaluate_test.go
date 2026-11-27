@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	edgecore "github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/infra/config"
@@ -119,9 +120,10 @@ func TestEdgeEvaluateActionHashIsRiskTagOrderInvariant(t *testing.T) {
 }
 
 func TestGatewayEdgeEvaluateAllowsTenantUserWithJobsWriteAndRejectsViewer(t *testing.T) {
-	_, handler := newEdgeEvaluateTestServer(t, &edgeEvaluateStubSafetyClient{
+	s, handler := newEdgeEvaluateTestServer(t, &edgeEvaluateStubSafetyClient{
 		response: &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW, Reason: "user allowed"},
 	})
+	permBindingRBACUserRole(t, s, auth.PermJobsWrite)
 	session := createEdgeEvaluateSessionWithAPIKey(t, handler, edgeRouteUserAPIKey)
 	userBody := strings.Replace(
 		edgeEvaluateBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", map[string]any{"command": "npm test"}),

@@ -317,7 +317,7 @@ type edgeEvaluateContext struct {
 }
 
 func (s *server) prepareEdgeEvaluateContext(w http.ResponseWriter, r *http.Request) (edgeEvaluateContext, bool) {
-	if !s.requireEdgePermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
+	if !s.requireEdgeDecisionPermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
 		return edgeEvaluateContext{}, false
 	}
 	store := s.edgeStoreOrUnavailable(w, r)

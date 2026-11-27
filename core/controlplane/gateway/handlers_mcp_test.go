@@ -553,6 +553,11 @@ func TestHandleSetConfigStartsMCPRuntimeWhenEnabled(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-API-Key", "test-key")
 	req.Header.Set("X-Tenant-ID", "default")
+	authCtx, err := s.auth.AuthenticateHTTP(req)
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+	req = withAuth(req, authCtx)
 	rr := httptest.NewRecorder()
 	s.handleSetConfig(rr, req)
 	if rr.Code != http.StatusNoContent {
@@ -619,6 +624,11 @@ func TestHandleSetConfigStopsMCPRuntimeWhenDisabled(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-API-Key", "test-key")
 	req.Header.Set("X-Tenant-ID", "default")
+	authCtx, err := s.auth.AuthenticateHTTP(req)
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+	req = withAuth(req, authCtx)
 	rr := httptest.NewRecorder()
 	s.handleSetConfig(rr, req)
 	if rr.Code != http.StatusNoContent {

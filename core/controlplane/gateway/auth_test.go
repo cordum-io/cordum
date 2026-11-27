@@ -99,11 +99,11 @@ func requestWithAuthContext(authCtx *auth.AuthContext) *http.Request {
 
 func TestNormalizeRole(t *testing.T) {
 	cases := map[string]string{
-		"secops":   "admin",
-		"operator": "admin",
-		"ADMIN":    "admin",
-		"viewer":   "viewer",
-		"":         "",
+		"secops":      "secops",
+		" Operator\t": "operator",
+		"ADMIN":       "admin",
+		"viewer":      "viewer",
+		"":            "",
 	}
 	for raw, expect := range cases {
 		if got := auth.NormalizeRole(raw); got != expect {

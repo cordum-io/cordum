@@ -161,25 +161,27 @@ func TestSubmitJobGRPCUserAllowed(t *testing.T) {
 	}
 }
 
-func TestSubmitJobGRPCSecopsNormalizedToAdmin(t *testing.T) {
-	s, _, _ := newTestGateway(t)
+func TestSubmitJobGRPCSecopsDenied(t *testing.T) {
+	s, bus, _ := newTestGateway(t)
 	s.auth = &publicPathAuth{}
-	// secops normalizes to admin, which is allowed.
+	// secops is not on SubmitJob's role list.
 	ctx := context.WithValue(context.Background(), auth.ContextKey{}, &auth.AuthContext{
 		Role:   "secops",
 		Tenant: "org-1",
 	})
 
-	resp, err := s.SubmitJob(ctx, &pb.SubmitJobRequest{
+	_, err := s.SubmitJob(ctx, &pb.SubmitJobRequest{
 		Prompt: "hello",
 		Topic:  "job.default",
 		OrgId:  "org-1",
 	})
-	if err != nil {
-		t.Fatalf("expected secops (admin alias) to be allowed, got %v", err)
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("expected PermissionDenied for secops, got %v", err)
 	}
-	if resp.JobId == "" {
-		t.Fatalf("expected job_id")
+	bus.mu.Lock()
+	defer bus.mu.Unlock()
+	if len(bus.published) != 0 {
+		t.Fatalf("secops submit published %d packets, want none", len(bus.published))
 	}
 }
 
@@ -217,10 +219,10 @@ func TestSubmitJobGRPCEmptyRoleDenied(t *testing.T) {
 	}
 }
 
-func TestSubmitJobGRPCOperatorNormalizedToAdmin(t *testing.T) {
+func TestSubmitJobGRPCOperatorAllowed(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	s.auth = &publicPathAuth{} // Enable RBAC enforcement.
-	// operator normalizes to admin, which is allowed.
+	// operator is on SubmitJob's role list.
 	ctx := context.WithValue(context.Background(), auth.ContextKey{}, &auth.AuthContext{
 		Role:   "operator",
 		Tenant: "org-1",
@@ -232,7 +234,7 @@ func TestSubmitJobGRPCOperatorNormalizedToAdmin(t *testing.T) {
 		OrgId:  "org-1",
 	})
 	if err != nil {
-		t.Fatalf("expected operator (admin alias) to be allowed, got %v", err)
+		t.Fatalf("expected operator to be allowed, got %v", err)
 	}
 	if resp.JobId == "" {
 		t.Fatalf("expected job_id")

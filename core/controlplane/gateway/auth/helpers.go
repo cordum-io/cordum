@@ -24,13 +24,9 @@ func HeaderValue(r *http.Request, name string) string {
 	return strings.TrimSpace(r.Header.Get(name))
 }
 
-// NormalizeRole normalizes a role string to lowercase and maps known aliases.
+// NormalizeRole lowercases and trims a role name. It maps no role name to another.
 func NormalizeRole(role string) string {
-	role = strings.ToLower(strings.TrimSpace(role))
-	if role == "secops" || role == "operator" {
-		return "admin"
-	}
-	return role
+	return strings.ToLower(strings.TrimSpace(role))
 }
 
 // NormalizeAPIKey cleans an API key string of surrounding whitespace and quotes.

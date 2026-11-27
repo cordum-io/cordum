@@ -87,7 +87,7 @@ func (e edgeEventRequestError) Error() string {
 }
 
 func (s *server) handleCreateEdgeEvent(w http.ResponseWriter, r *http.Request) {
-	if !s.requireEdgePermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
+	if !s.requireEdgeDecisionPermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
 		return
 	}
 	store := s.edgeStoreOrUnavailable(w, r)
@@ -146,7 +146,7 @@ func (s *server) handleCreateEdgeEvent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleCreateEdgeEventsBatch(w http.ResponseWriter, r *http.Request) {
-	if !s.requireEdgePermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
+	if !s.requireEdgeDecisionPermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
 		return
 	}
 	store := s.edgeStoreOrUnavailable(w, r)

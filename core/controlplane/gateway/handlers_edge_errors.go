@@ -175,9 +175,28 @@ func writeEdgeJSONDecodeError(w http.ResponseWriter, r *http.Request, err error,
 }
 
 // requireEdgePermissionOrRole is the Edge analogue of requirePermissionOrRole.
-// On allow, returns true. On deny, emits the Edge access_denied envelope and
-// returns false; callers should bail immediately.
+// On allow, returns true. On deny, emits the Edge access_denied envelope, or
+// the break-glass 503 when the license state does not allow the permission,
+// and returns false; callers should bail immediately. Without the RBAC
+// entitlement, the legacy role gate runs, then the permission resolves from
+// the built-in role map. Once authorization allows, the license break-glass
+// decision runs in every license state.
 func (s *server) requireEdgePermissionOrRole(w http.ResponseWriter, r *http.Request, permission string, legacyRoles ...string) bool {
+	return s.authorizeEdgePermissionOrRole(w, r, true, permission, legacyRoles...)
+}
+
+// requireEdgeDecisionPermissionOrRole gates the agent decision path (session,
+// execution and event writes, and evaluate) with the authorization of
+// requireEdgePermissionOrRole, and makes no license call in any state. So
+// agents get policy decisions, and decision evidence is written, in every
+// license state (Rule in docs/contract/license-behavior.md).
+func (s *server) requireEdgeDecisionPermissionOrRole(w http.ResponseWriter, r *http.Request, permission string, legacyRoles ...string) bool {
+	return s.authorizeEdgePermissionOrRole(w, r, false, permission, legacyRoles...)
+}
+
+// authorizeEdgePermissionOrRole runs the Edge authorization, then the license
+// break-glass decision when licenseGate is set.
+func (s *server) authorizeEdgePermissionOrRole(w http.ResponseWriter, r *http.Request, licenseGate bool, permission string, legacyRoles ...string) bool {
 	if strings.TrimSpace(permission) == "" {
 		if len(legacyRoles) == 0 {
 			return true
@@ -193,17 +212,25 @@ func (s *server) requireEdgePermissionOrRole(w http.ResponseWriter, r *http.Requ
 			writeEdgeForbidden(w, r, err)
 			return false
 		}
-		if !s.requireLicensePermission(w, r, permission) {
-			return false
+		if licenseGate {
+			return s.requireLicensePermission(w, r, permission)
 		}
 		return true
 	}
-	if len(legacyRoles) == 0 {
-		return true
+	if len(legacyRoles) > 0 {
+		if err := s.requireRole(r, s.permissionLegacyRoles(legacyRoles)...); err != nil {
+			writeEdgeForbidden(w, r, err)
+			return false
+		}
 	}
-	if err := s.requireRole(r, legacyRoles...); err != nil {
-		writeEdgeForbidden(w, r, err)
-		return false
+	if s != nil && s.auth != nil && s.permChecker != nil {
+		if err := s.permChecker.RequirePermission(r, permission); err != nil {
+			writeEdgeForbidden(w, r, err)
+			return false
+		}
+	}
+	if licenseGate {
+		return s.requireLicensePermission(w, r, permission)
 	}
 	return true
 }

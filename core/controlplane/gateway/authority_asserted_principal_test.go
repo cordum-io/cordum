@@ -254,6 +254,7 @@ func (f assertedAuthorityEdge) request(t *testing.T, method, path, body, apiKey,
 func TestAuthorityAssertedPrincipal_EdgeApprovalAccessIgnoresAssertedPrincipal(t *testing.T) {
 	assertedAuthorityProfiles(t, func(t *testing.T, env map[string]string) {
 		f := assertedAuthorityEdgeFixture(t, env)
+		permBindingRBACUserRole(t, f.s, auth.PermJobsRead)
 		own := seedGatewayEdgeApproval(t, f.s, edgeRouteTenant, "principal-edge-user", "own")
 		other := seedGatewayEdgeApproval(t, f.s, edgeRouteTenant, "principal-other-member", "other")
 		list := "/api/v1/edge/approvals?status=pending&limit=10"

@@ -586,7 +586,7 @@ func TestOIDCFlowCallbackHonorsCustomClaimMapping(t *testing.T) {
 	if authCtx.Tenant != "ops" {
 		t.Fatalf("tenant = %q", authCtx.Tenant)
 	}
-	if authCtx.Role != "admin" {
+	if authCtx.Role != "operator" {
 		t.Fatalf("role = %q", authCtx.Role)
 	}
 }

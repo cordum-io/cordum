@@ -7,6 +7,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Gateway: the in-memory API rate limiter (`REDIS_RATE_LIMIT=false`, or no Redis) applies the same license-tier clamp as the Redis limiter. `API_RATE_LIMIT_RPS` and `API_RATE_LIMIT_BURST` can lower the tier's requests per second and burst, not raise them (task-91836669).
+- License break-glass: `GET /api/v1/governance/health` takes the break-glass decision
+  for `governance.read`, so it answers in grace and answers 503 with code
+  `license.degraded` in degraded and invalid. `POST /api/v1/policy/bundles/{id}/resign`
+  takes the decision for `policy.write`, so it answers 503 with code
+  `license.grace_restricted` in grace and `license.degraded` in degraded and invalid,
+  and stores nothing; `cordumctl policy resign` then exits 1. The valid, warning and
+  missing license states are unchanged (task-e8b0d09e).
+- Auth: role names are matched exactly. Routes and checks that require the admin role
+  admit only `admin`. A principal keeps the role it was given, whether it authenticates
+  with a static API key, a session, or a JWT, OIDC or SAML role claim. A role list that
+  names `admin` on a permission-checked route also admits `operator`, which holds the
+  built-in operator permissions. `secops` holds no built-in permissions. Upgrading: give
+  `role: admin` to any key, user or claim mapping that needs admin access
+  (task-b355b21d).
+- Edge routes take the license break-glass decision in every license state and on every
+  plan, as other API routes do. A request that break-glass does not allow answers 503,
+  with code `license.grace_restricted` in grace (for example an MCP upstream change or
+  an Edge approval decision) and `license.degraded` in degraded and invalid. The agent
+  decision path (session, execution and event writes, and `POST /api/v1/edge/evaluate`)
+  answers in every license state. In degraded and invalid, `cordumctl edge doctor`
+  reports its Edge routes check as failed with status 503, and an agent's inline
+  approval wait denies the action (task-e122b1f4).
+- Gateway authorization: when the RBAC entitlement is not active, permission checks use
+  the built-in role permissions. admin holds every permission, and operator, viewer,
+  runtime_collector and llm_proxy hold the ones listed for them; other roles, including
+  user, secops and custom roles, hold none, as when the entitlement is active. Give each
+  principal a built-in role, or activate RBAC to use custom roles (task-7c27a807).
 - Edge approvals: an approval of a Bash command now also covers the files the command
   names, the git HEAD of its working directory and, for kubectl, the target context and
   namespace. cordum-hook adds a keyed digest of them to the approval's action identity
