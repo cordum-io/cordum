@@ -500,6 +500,61 @@ func TestPolicyMapper_SystemLabelsCannotBeSetByRequest(t *testing.T) {
 	}
 }
 
+// The Safety Kernel reads some labels by plain name: agent_id is the agent
+// identity of the caller, secrets_present is the secret check of the gateway,
+// the mcp names describe an MCP call, and the workflow and job labels pick the
+// policy scope. Edge has no verified source for any of them in a request or
+// session label, so the mapper drops them. The trusted values it adds itself
+// stay.
+func TestPolicyMapper_KernelReadLabelsCannotBeSetByRequest(t *testing.T) {
+	event := newBaseHookEvent("Bash", map[string]any{"command": "npm test"})
+	// label key -> namespace of the strip counter
+	clientLabels := map[string]string{
+		"agent_id": "agent_id", "secrets_present": "secrets_present",
+		"mcp_server": "mcp", "mcpServer": "mcp", "mcp_tool": "mcp", "mcpTool": "mcp",
+		"mcp_resource": "mcp", "mcpResource": "mcp", "mcp_action": "mcp", "mcpAction": "mcp",
+		"workflow_id": "workflow", "workflow.id": "workflow", "workflow": "workflow",
+		"workflow_run_id": "workflow", "workflow.run_id": "workflow", "run_id": "workflow", "step_id": "workflow",
+		"job_id": "job", "job.id": "job", "session_id": "job",
+	}
+	event.Labels = Labels{"benign_label": "kept"}
+	before := map[string]float64{}
+	for key, namespace := range clientLabels {
+		event.Labels[key] = "client-value"
+		before[namespace] = readStripCounter(t, namespace)
+	}
+	classification, err := ClassifyEvent(event)
+	if err != nil {
+		t.Fatalf("ClassifyEvent: %v", err)
+	}
+	req, err := MapEventToPolicyCheckRequest(event, classification, PolicyMappingOptions{})
+	if err != nil {
+		t.Fatalf("MapEventToPolicyCheckRequest: %v", err)
+	}
+
+	for name, labels := range map[string]map[string]string{
+		"labels":      req.GetLabels(),
+		"meta.labels": req.GetMeta().GetLabels(),
+	} {
+		for key := range clientLabels {
+			if value, ok := labels[key]; ok {
+				t.Errorf("client label reached policy %s: %s=%q", name, key, value)
+			}
+		}
+		if labels["benign_label"] != "kept" {
+			t.Errorf("benign label dropped from policy %s: %#v", name, labels)
+		}
+		if labels["edge.session_id"] != event.SessionID {
+			t.Errorf("trusted edge.session_id missing from policy %s: %#v", name, labels)
+		}
+	}
+	for namespace, was := range before {
+		if got := readStripCounter(t, namespace); got <= was {
+			t.Errorf("namespace=%q strip counter did not increment: before=%v after=%v", namespace, was, got)
+		}
+	}
+}
+
 // readStripCounter reads the Prometheus counter value for a single
 // namespace label so tests can assert the metric increments.
 func readStripCounter(t *testing.T, namespace string) float64 {

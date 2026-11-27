@@ -594,9 +594,13 @@ type DirectServiceBridgeConfig struct {
 	SetAgentScopeFunc       func(ctx context.Context, req SetAgentScopeInput) (*SetAgentScopeOutput, error)
 
 	// Read hooks. A nil hook, and every read method without one, answers
-	// 501 read_only_unsupported.
+	// 501 read_only_unsupported. GetJSONFunc serves the gateway read routes
+	// that HTTPServiceBridge calls over HTTP (jobs and workflow-runs lists,
+	// runs, timelines, workflows, topics, agents, approvals, audit verify):
+	// it fetches path with query and decodes the JSON answer into out.
 	GetJobFunc    func(ctx context.Context, jobID string) (*ResourceItem, error)
 	GetStatusFunc func(ctx context.Context) (*ResourceItem, error)
+	GetJSONFunc   func(ctx context.Context, path string, query url.Values, out any) error
 }
 
 // DirectServiceBridge is an in-process ServiceBridge based on function hooks.
@@ -620,6 +624,7 @@ type DirectServiceBridge struct {
 	// Read hooks
 	getJob    func(ctx context.Context, jobID string) (*ResourceItem, error)
 	getStatus func(ctx context.Context) (*ResourceItem, error)
+	getJSON   func(ctx context.Context, path string, query url.Values, out any) error
 }
 
 // NewDirectServiceBridge creates a direct bridge.
@@ -640,6 +645,7 @@ func NewDirectServiceBridge(cfg DirectServiceBridgeConfig) *DirectServiceBridge 
 		setAgentScope:       cfg.SetAgentScopeFunc,
 		getJob:              cfg.GetJobFunc,
 		getStatus:           cfg.GetStatusFunc,
+		getJSON:             cfg.GetJSONFunc,
 	}
 }
 

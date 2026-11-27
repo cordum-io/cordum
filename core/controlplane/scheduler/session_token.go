@@ -35,7 +35,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -52,7 +51,6 @@ import (
 const (
 	DefaultSessionTokenLifetime = time.Hour
 	DefaultSessionTokenSkew     = 60 * time.Second
-	sessionTokenAlgorithm       = policysign.AlgorithmEd25519
 	sessionWorkerKeyPrefix      = "session:worker:"
 	sessionRevokedKeyPrefix     = "session:revoked:"
 )
@@ -377,77 +375,22 @@ func (i *SessionTokenIssuer) signClaims(claims SessionTokenClaims) (string, erro
 // check time bounds — those are separate steps so callers can compose
 // (e.g. Renew tolerates a slightly expired token).
 func (i *SessionTokenIssuer) parseAndVerifySignature(token string) (SessionTokenClaims, string, error) {
-	token = strings.TrimSpace(token)
-	if token == "" {
-		return SessionTokenClaims{}, "", ErrSessionTokenMalformed
-	}
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		return SessionTokenClaims{}, "", fmt.Errorf("%w: expected 3 segments, got %d", ErrSessionTokenMalformed, len(parts))
-	}
-	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	shared, typ, err := servicetoken.VerifySignature(token, i.trust.Lookup)
 	if err != nil {
-		return SessionTokenClaims{}, "", fmt.Errorf("%w: header: %v", ErrSessionTokenMalformed, err)
-	}
-	var header struct {
-		Alg string `json:"alg"`
-		KID string `json:"kid"`
-		Typ string `json:"typ"`
-	}
-	if err := json.Unmarshal(headerBytes, &header); err != nil {
-		return SessionTokenClaims{}, "", fmt.Errorf("%w: header parse: %v", ErrSessionTokenMalformed, err)
-	}
-	if !strings.EqualFold(header.Alg, sessionTokenAlgorithm) {
-		return SessionTokenClaims{}, "", fmt.Errorf("%w: alg=%q", ErrSessionTokenSignature, header.Alg)
-	}
-	// Assert the token kind up front. Verify/VerifyService each additionally
-	// require their specific typ, so a worker (cordum-session) token cannot
-	// ride the stateless service path (revocation bypass) and a service token
-	// cannot be presented as a worker token. The typ is part of the signed
-	// header, so it cannot be flipped without invalidating the signature.
-	if header.Typ != servicetoken.TypSession && header.Typ != servicetoken.TypService {
-		return SessionTokenClaims{}, "", fmt.Errorf("%w: unrecognized typ %q", ErrSessionTokenMalformed, header.Typ)
-	}
-	if strings.TrimSpace(header.KID) == "" {
-		return SessionTokenClaims{}, "", fmt.Errorf("%w: kid missing", ErrSessionTokenSignature)
-	}
-	pub, ok := i.trust.Lookup(header.KID)
-	if !ok {
-		return SessionTokenClaims{}, "", fmt.Errorf("%w: %s", ErrSessionTokenUnknownKey, header.KID)
-	}
-	rawSig, err := base64.RawURLEncoding.DecodeString(parts[2])
-	if err != nil {
-		return SessionTokenClaims{}, "", fmt.Errorf("%w: signature: %v", ErrSessionTokenMalformed, err)
-	}
-	if len(rawSig) != ed25519.SignatureSize {
-		return SessionTokenClaims{}, "", fmt.Errorf("%w: signature length %d", ErrSessionTokenMalformed, len(rawSig))
-	}
-	signingInput := []byte(parts[0] + "." + parts[1])
-	sig := policysign.Signature{
-		Algorithm:   sessionTokenAlgorithm,
-		KeyID:       header.KID,
-		Value:       base64.StdEncoding.EncodeToString(rawSig),
-		Hash:        policysign.HashPayload(signingInput),
-		SignedBytes: len(signingInput),
-	}
-	if err := policysign.Verify(pub, signingInput, sig); err != nil {
-		if errors.Is(err, policysign.ErrVerifyFailed) {
-			return SessionTokenClaims{}, "", ErrSessionTokenSignature
+		mapped := ErrSessionTokenMalformed
+		switch {
+		case errors.Is(err, servicetoken.ErrSignature):
+			mapped = ErrSessionTokenSignature
+		case errors.Is(err, servicetoken.ErrUnknownKey):
+			mapped = ErrSessionTokenUnknownKey
 		}
-		return SessionTokenClaims{}, "", fmt.Errorf("%w: %v", ErrSessionTokenSignature, err)
+		return SessionTokenClaims{}, "", fmt.Errorf("%w: %v", mapped, err)
 	}
-	claimsBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return SessionTokenClaims{}, "", fmt.Errorf("%w: claims: %v", ErrSessionTokenMalformed, err)
-	}
-	var claims SessionTokenClaims
-	if err := json.Unmarshal(claimsBytes, &claims); err != nil {
-		return SessionTokenClaims{}, "", fmt.Errorf("%w: claims parse: %v", ErrSessionTokenMalformed, err)
-	}
+	claims := SessionTokenClaims(shared)
 	if err := claims.Validate(); err != nil {
 		return SessionTokenClaims{}, "", err
 	}
-	return claims, header.Typ, nil
+	return claims, typ, nil
 }
 
 func (i *SessionTokenIssuer) verifyClaimsTime(claims SessionTokenClaims) error {

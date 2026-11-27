@@ -170,7 +170,10 @@ func (s *server) handleCreateTopic(w http.ResponseWriter, r *http.Request) {
 		"role", policybundles.PolicyRole(r),
 		"replaced", existing != nil,
 	)
-	s.appendAuditEntryNamed(r.Context(), "create", "topic", req.Name, req.Name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "register topic "+req.Name)
+	if err := s.appendNamedAuditEntry(r.Context(), "create", "topic", req.Name, req.Name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "register topic "+req.Name); err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "topic registered but its audit entry was not stored")
+		return
+	}
 
 	status := http.StatusCreated
 	if existing != nil {
@@ -230,6 +233,7 @@ func (s *server) handleDeleteTopic(w http.ResponseWriter, r *http.Request) {
 		"actor", policybundles.PolicyActorID(r),
 		"role", policybundles.PolicyRole(r),
 	)
+	// Must complete: the delete stops routing to the topic, so a lost entry is only logged (ERROR).
 	s.appendAuditEntryNamed(r.Context(), "delete", "topic", name, name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "delete topic "+name)
 	w.WriteHeader(http.StatusNoContent)
 }

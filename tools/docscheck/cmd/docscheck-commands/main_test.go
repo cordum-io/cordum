@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -131,6 +132,50 @@ func TestRunCopies(t *testing.T) {
 	var out bytes.Buffer
 	if code := run([]string{"-doc", fixture(t, doc), "-root", root, "-copy", ".env", "-copy", "config/value"}, &out); code != 0 {
 		t.Fatalf("code=%d output=%s", code, &out)
+	}
+}
+
+func TestRunDotenv(t *testing.T) {
+	const sentinel = "dotenv-sentinel-7f3a"
+	t.Setenv("DOCSCHECK_DOTENV", sentinel)
+	cases := []struct {
+		name, before string
+		env          []string
+	}{
+		{"file only", `test -z "${DOCSCHECK_DOTENV:-}"`, nil},
+		{"file and env", `test "$DOCSCHECK_DOTENV" = ` + sentinel, []string{"-env", "DOCSCHECK_DOTENV"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			script := tc.before + "\nsource .env && test \"$DOCSCHECK_DOTENV\" = " + sentinel
+			if runtime.GOOS != "windows" {
+				script += "\ntest \"$(find .env -perm 0600)\" = .env"
+			}
+			args := append([]string{"-doc", fixture(t, command(`exit="0"`, script)), "-dotenv", "DOCSCHECK_DOTENV"}, tc.env...)
+			var out bytes.Buffer
+			if code := run(args, &out); code != 0 || strings.Contains(out.String(), sentinel) {
+				t.Fatalf("code=%d output=%s", code, &out)
+			}
+		})
+	}
+}
+
+func TestRunDotenvRefuses(t *testing.T) {
+	t.Setenv("DOCSCHECK_DOTENV_NEWLINE", "dotenv-sentinel\nINJECTED=1")
+	for _, name := range []string{"DOCSCHECK_DOTENV_UNSET", "DOCSCHECK_DOTENV_NEWLINE"} {
+		t.Run(name, func(t *testing.T) {
+			ran := filepath.Join(t.TempDir(), "must-not-exist")
+			t.Setenv("SENTINEL", filepath.ToSlash(ran))
+			path := fixture(t, command(`exit="0"`, `touch "$SENTINEL"`))
+			var out bytes.Buffer
+			if code := run([]string{"-doc", path, "-env", "SENTINEL", "-dotenv", name}, &out); code != 1 ||
+				!strings.Contains(out.String(), `-dotenv "`+name+`"`) || strings.Contains(out.String(), "dotenv-sentinel") {
+				t.Fatalf("code=%d output=%s", code, &out)
+			}
+			if _, err := os.Stat(ran); !os.IsNotExist(err) {
+				t.Fatalf("command ran: %v", err)
+			}
+		})
 	}
 }
 

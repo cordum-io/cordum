@@ -238,6 +238,10 @@ type ApprovalResolutionParams struct {
 	PolicySnapshot string
 	LabelUpdates   map[string]string
 	PublishTarget  model.ApprovalPublishTarget
+	// RefreshedSafety, when set, is stored with the resolution in the same
+	// transaction, as SetSafetyDecision would store it, so a failed resolution
+	// leaves the earlier safety record in place.
+	RefreshedSafety *model.SafetyDecisionRecord
 }
 
 type ApprovalResolutionResult struct {
@@ -1717,8 +1721,8 @@ func (s *RedisJobStore) TrySetIdempotencyKeyScoped(ctx context.Context, tenant, 
 			if tErr != nil && tErr != redis.Nil {
 				return false, "", fmt.Errorf("job store idempotency tenant check %s: %w", jobID, tErr)
 			}
-			// Match if: no tenant in meta, empty tenant, or same tenant.
-			if metaTenant == "" || metaTenant == tenant {
+			// Match only when the legacy job's stored tenant is the caller's.
+			if metaTenant == tenant {
 				return false, legacyID, nil
 			}
 		}
@@ -1788,7 +1792,7 @@ func (s *RedisJobStore) GetJobByIdempotencyKeyScoped(ctx context.Context, tenant
 	if terr != nil && terr != redis.Nil {
 		return "", fmt.Errorf("job store get job by idempotency key scoped: %w", terr)
 	}
-	if legacyTenant != "" && legacyTenant != tenant {
+	if legacyTenant != tenant {
 		return "", redis.Nil
 	}
 	_ = s.SetIdempotencyKeyScoped(ctx, tenant, key, legacyID)
@@ -1807,6 +1811,24 @@ func (s *RedisJobStore) SetSafetyDecision(ctx context.Context, jobID string, rec
 	if jobID == "" {
 		return fmt.Errorf("jobID required")
 	}
+	fields, entry := safetyDecisionWrite(record)
+	pipe := s.client.TxPipeline()
+	pipe.HSet(ctx, jobMetaKey(jobID), fields)
+	pipe.RPush(ctx, jobDecisionKey(jobID), entry)
+	if s.metaTTL > 0 {
+		pipe.Expire(ctx, jobMetaKey(jobID), s.metaTTL)
+		pipe.Expire(ctx, jobDecisionKey(jobID), s.metaTTL)
+	}
+	_, err := pipe.Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("job store set safety decision %s: %w", jobID, err)
+	}
+	return nil
+}
+
+// safetyDecisionWrite returns the job meta fields and the decision-history
+// entry that store record.
+func safetyDecisionWrite(record model.SafetyDecisionRecord) (map[string]any, string) {
 	if record.CheckedAt == 0 {
 		record.CheckedAt = nowUnixMicros()
 	}
@@ -1897,19 +1919,7 @@ func (s *RedisJobStore) SetSafetyDecision(ctx context.Context, jobID string, rec
 		"approval_decision": record.ApprovalDecision,
 	}
 	encoded, _ := json.Marshal(entry)
-
-	pipe := s.client.TxPipeline()
-	pipe.HSet(ctx, jobMetaKey(jobID), fields)
-	pipe.RPush(ctx, jobDecisionKey(jobID), string(encoded))
-	if s.metaTTL > 0 {
-		pipe.Expire(ctx, jobMetaKey(jobID), s.metaTTL)
-		pipe.Expire(ctx, jobDecisionKey(jobID), s.metaTTL)
-	}
-	_, err := pipe.Exec(ctx)
-	if err != nil {
-		return fmt.Errorf("job store set safety decision %s: %w", jobID, err)
-	}
-	return nil
+	return fields, string(encoded)
 }
 
 // SetDelegationLineage stores the verified dispatch-time delegation lineage on
@@ -2735,6 +2745,16 @@ func (s *RedisJobStore) ResolveApproval(ctx context.Context, params ApprovalReso
 		if err != nil && err != redis.Nil {
 			return fmt.Errorf("job store resolve approval %s: %w", jobID, err)
 		}
+		// Read the refreshed record as if it were already stored, so every
+		// check below sees what a SetSafetyDecision before this call would.
+		var refreshedFields map[string]any
+		var refreshedEntry string
+		if params.RefreshedSafety != nil {
+			refreshedFields, refreshedEntry = safetyDecisionWrite(*params.RefreshedSafety)
+			for field, value := range refreshedFields {
+				meta[field] = fmt.Sprint(value)
+			}
+		}
 		stateValue := meta["state"]
 		if stateValue == "" {
 			stateValue, err = tx.Get(ctx, stateKey).Result()
@@ -2962,6 +2982,14 @@ func (s *RedisJobStore) ResolveApproval(ctx context.Context, params ApprovalReso
 		}
 
 		pipe := tx.TxPipeline()
+		if refreshedFields != nil {
+			// Written first, so the resolution's fields win where both set one.
+			pipe.HSet(ctx, metaKey, refreshedFields)
+			pipe.RPush(ctx, jobDecisionKey(jobID), refreshedEntry)
+			if s.metaTTL > 0 {
+				pipe.Expire(ctx, jobDecisionKey(jobID), s.metaTTL)
+			}
+		}
 		pipe.HSet(ctx, metaKey, fields)
 		if s.metaTTL > 0 {
 			pipe.Expire(ctx, metaKey, s.metaTTL)

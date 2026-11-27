@@ -148,10 +148,12 @@ func ActorIdentity(ac *auth.AuthContext) (identity, source, label string) {
 	if ac == nil {
 		return "", "", ""
 	}
-	if pid := strings.TrimSpace(ac.PrincipalID); pid != "" {
+	keyID := strings.TrimSpace(ac.KeyID)
+	// A managed key's own principal is its key id, so it reports as that key.
+	if pid := strings.TrimSpace(ac.PrincipalID); pid != "" && pid != keyID {
 		return pid, "principal", ""
 	}
-	if keyID := strings.TrimSpace(ac.KeyID); keyID != "" {
+	if keyID != "" {
 		return keyID, "api_key:" + keyID, strings.TrimSpace(ac.KeyName)
 	}
 	if apiKey := strings.TrimSpace(ac.APIKey); apiKey != "" {

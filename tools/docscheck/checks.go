@@ -23,6 +23,10 @@ type Config struct {
 	ContractGlob string   // contract docs, scanned whole for endpoint examples
 	OpenAPI      string
 	CodeRoots    []string // Go trees whose non-test string literals name the product
+	// HarnessRoots are trees inside CodeRoots that hold test harnesses: their
+	// string literals still name the product, but their Call("NAME",
+	// "default") defaults are not product defaults.
+	HarnessRoots []string
 	TextSources  []string // globs; directories are walked; names match whole words
 	Baseline     string   // known-mismatch list; empty means none
 }
@@ -235,7 +239,8 @@ func indexProduct(cfg Config) (codeIndex, error) {
 			}
 			f, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
 			if err == nil {
-				ast.Inspect(f, idx.visit)
+				defaults := !cfg.harness(path)
+				ast.Inspect(f, func(n ast.Node) bool { return idx.visit(n, defaults) })
 			}
 			return err
 		})
@@ -255,6 +260,17 @@ func indexProduct(cfg Config) (codeIndex, error) {
 		}
 	}
 	return idx, nil
+}
+
+// harness reports whether path lies under one of cfg.HarnessRoots, matching
+// whole directory names only.
+func (c Config) harness(path string) bool {
+	for _, h := range c.HarnessRoots {
+		if strings.HasPrefix(path, filepath.Clean(c.path(h))+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 // walkFiles calls fn for every file under root, skipping testdata
@@ -286,13 +302,17 @@ func (idx codeIndex) addText(path string) error {
 	return err
 }
 
-func (idx codeIndex) visit(n ast.Node) bool {
+// visit indexes the names of n, and its defaults when defaults is set.
+func (idx codeIndex) visit(n ast.Node, defaults bool) bool {
 	switch n := n.(type) {
 	case *ast.BasicLit:
 		if s, ok := strLit(n); ok {
 			idx.names[s] = true
 		}
 	case *ast.CallExpr:
+		if !defaults {
+			return true
+		}
 		for k := 0; k+1 < len(n.Args); k++ {
 			// A flag's default value followed by its usage text is not an env lookup.
 			if sel, ok := n.Fun.(*ast.SelectorExpr); ok &&

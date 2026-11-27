@@ -80,7 +80,7 @@ func TestHTTPBridge_GetRunTimeline_PathFormat(t *testing.T) {
 	if _, err := bridge.GetRunTimeline(context.Background(), "run-abc"); err != nil {
 		t.Fatalf("GetRunTimeline: %v", err)
 	}
-	if ms.lastPath != "/api/v1/runs/run-abc/timeline" {
+	if ms.lastPath != "/api/v1/workflow-runs/run-abc/timeline" {
 		t.Errorf("path = %q", ms.lastPath)
 	}
 }

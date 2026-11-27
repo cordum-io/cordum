@@ -85,8 +85,15 @@ func observe(id, repo string, labels edge.Labels) edge.EdgeSession {
 	return edge.EdgeSession{SessionID: id, TenantID: "t1", Repo: repo, PolicyMode: edge.PolicyModeObserve, Labels: labels, StartedAt: at(1, 10)}
 }
 
-func event(id, sessionID string, ts time.Time, d edge.EdgeDecision, rule, tool, action string) edge.AgentActionEvent {
-	return edge.AgentActionEvent{EventID: id, SessionID: sessionID, TenantID: "t1", Timestamp: ts, Decision: d, RuleID: rule, ToolName: tool, ActionName: action}
+// event builds an Edge event whose command.class label is class, with no
+// label when class is empty. Every event gets the action name the classifier
+// gives a shell command, so the action name cannot stand in for the class.
+func event(id, sessionID string, ts time.Time, d edge.EdgeDecision, rule, tool, class string) edge.AgentActionEvent {
+	ev := edge.AgentActionEvent{EventID: id, SessionID: sessionID, TenantID: "t1", Timestamp: ts, Decision: d, RuleID: rule, ToolName: tool, ActionName: "bash.exec"}
+	if class != "" {
+		ev.Labels = edge.Labels{"command.class": class}
+	}
+	return ev
 }
 
 func build(t *testing.T, src Source, req Request) Report {
@@ -99,17 +106,19 @@ func build(t *testing.T, src Source, req Request) Report {
 }
 
 func TestCalibrationBuildCountsSeededDataset(t *testing.T) {
+	agentd := event("e5", "s2", at(3, 11), edge.DecisionRequireApproval, "r.approve-push", "Bash", "deploy")
+	agentd.ActionName = "claude.pretooluse.decision" // agentd evidence names the decision
 	src := &fakeSource{
 		sessions: []edge.EdgeSession{observe("s1", "org/api", nil), observe("s2", "org/web", nil)},
 		events: []edge.AgentActionEvent{
-			event("e1", "s1", at(1, 13), edge.DecisionDeny, "r.deny-rm", "Bash", "rm"),
-			event("e2", "s1", at(1, 14), edge.DecisionRequireApproval, "r.approve-push", "Bash", "git push"),
-			event("e3", "s1", at(1, 15), edge.DecisionAllow, "r.allow-ls", "Bash", "ls"),
-			event("e1", "s1", at(1, 13), edge.DecisionDeny, "r.deny-rm", "Bash", "rm"), // duplicate delivery
-			event("e4", "s1", at(2, 9), edge.DecisionDeny, "", "Write", "write_file"),
-			event("e5", "s2", at(3, 11), edge.DecisionRequireApproval, "r.approve-push", "Bash", "git push"),
-			event("e6", "s2", until, edge.DecisionDeny, "r.deny-rm", "Bash", "rm"), // exactly Until
-			event("e7", "s2", at(2, 10), edge.DecisionDeny, "r.deny-rm", "Edit", "rm"),
+			event("e1", "s1", at(1, 13), edge.DecisionDeny, "r.deny-rm", "Bash", "destructive"),
+			event("e2", "s1", at(1, 14), edge.DecisionRequireApproval, "r.approve-push", "Bash", "deploy"),
+			event("e3", "s1", at(1, 15), edge.DecisionAllow, "r.allow-ls", "Bash", "safe"),
+			event("e1", "s1", at(1, 13), edge.DecisionDeny, "r.deny-rm", "Bash", "destructive"), // duplicate delivery
+			event("e4", "s1", at(2, 9), edge.DecisionDeny, "", "Write", ""),                     // no command class
+			agentd,
+			event("e6", "s2", until, edge.DecisionDeny, "r.deny-rm", "Bash", "destructive"), // exactly Until
+			event("e7", "s2", at(2, 10), edge.DecisionDeny, "r.deny-rm", "Edit", " "),       // blank command class
 		},
 	}
 	got := build(t, src, Request{TenantID: "t1", Since: since, Until: until})
@@ -124,7 +133,7 @@ func TestCalibrationBuildCountsSeededDataset(t *testing.T) {
 		},
 		NeverFired:        []string{},
 		TopTools:          []NameCount{{"Bash", 3}, {"Edit", 1}, {"Write", 1}},
-		TopCommandClasses: []NameCount{{"git push", 2}, {"rm", 2}, {"write_file", 1}},
+		TopCommandClasses: []NameCount{{"deploy", 2}, {"destructive", 1}},
 		ApprovalsPerDay:   []DayCount{{"2026-03-01", 1}, {"2026-03-02", 0}, {"2026-03-03", 1}},
 		ShadowRules:       []ShadowRuleCount{},
 		Assurance:         map[edge.AssuranceState]int{"compatibility": 0, "hook-mediated": 0, "executor-enforced": 0, "unsupported": 0, "stale": 2},

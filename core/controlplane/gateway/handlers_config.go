@@ -14,6 +14,7 @@ import (
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
+	"github.com/cordum/cordum/core/infra/schema"
 	"github.com/cordum/cordum/core/licensing"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -40,6 +41,16 @@ func managedConfigKey(scope configsvc.Scope, scopeID string) string {
 	}
 }
 
+// knownConfigScope reports whether scope is one the config API reads and writes.
+func knownConfigScope(scope configsvc.Scope) bool {
+	switch scope {
+	case configsvc.ScopeSystem, configsvc.ScopeOrg, configsvc.ScopeTeam, configsvc.ScopeWorkflow, configsvc.ScopeStep:
+		return true
+	default:
+		return false
+	}
+}
+
 func sameConfigJSON(a, b any) bool {
 	var canonical [2][]byte
 	for i, value := range []any{a, b} {
@@ -57,6 +68,21 @@ func sameConfigJSON(a, b any) bool {
 		}
 	}
 	return bytes.Equal(canonical[0], canonical[1])
+}
+
+func (s *server) configScopeID(r *http.Request, scope configsvc.Scope, scopeID string) (string, error) {
+	switch scope {
+	case configsvc.ScopeOrg:
+		return s.resolveTenant(r, scopeID)
+	case configsvc.ScopeTeam, configsvc.ScopeWorkflow, configsvc.ScopeStep:
+		tenant, err := s.resolveTenant(r, "")
+		if err != nil {
+			return "", err
+		}
+		return configsvc.TenantScopeID(scope, tenant, scopeID), nil
+	default:
+		return scopeID, nil
+	}
 }
 
 func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
@@ -77,6 +103,10 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 
 	// If body has "scope" as a string, treat as wrapped Document request (backward compat).
 	if sc, ok := raw["scope"].(string); ok && sc != "" {
+		if !knownConfigScope(configsvc.Scope(sc)) {
+			writeJSONError(w, http.StatusBadRequest, errorCodeConfigRequestInvalid, "invalid scope")
+			return
+		}
 		scopeStr = sc
 		if sid, ok := raw["scope_id"].(string); ok {
 			scopeID = sid
@@ -100,13 +130,10 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	scope := configsvc.Scope(scopeStr)
-	if scope == configsvc.ScopeOrg {
-		tenant, err := s.resolveTenant(r, scopeID)
-		if err != nil {
-			writeJSONError(w, http.StatusForbidden, errorCodeConfigKeyForbidden, "tenant access denied")
-			return
-		}
-		scopeID = tenant
+	scopeID, err := s.configScopeID(r, scope, scopeID)
+	if err != nil {
+		writeJSONError(w, http.StatusForbidden, errorCodeConfigKeyForbidden, "tenant access denied")
+		return
 	}
 	if scope == configsvc.ScopeSystem && (scopeID == "" || scopeID == "default") {
 		if _, hasBundles := data[packs.PolicyConfigKey]; hasBundles {
@@ -114,7 +141,7 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	err := s.configSvc.SetWithRetry(r.Context(), scope, scopeID, 3, func(doc *configsvc.Document) error {
+	err = s.configSvc.SetWithRetry(r.Context(), scope, scopeID, 3, func(doc *configsvc.Document) error {
 		// Compare against the revision being replaced, including on CAS retries.
 		if key := managedConfigKey(scope, scopeID); key != "" {
 			if value, present := data[key]; present && !sameConfigJSON(value, doc.Data[key]) {
@@ -139,8 +166,11 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 				msg = "system/packs installed is written only by the pack install and uninstall APIs"
 			}
 			slog.Warn("config managed key refused", "scope", scopeStr, "scope_id", scopeID, "key", managedConfigKey(scope, scopeID), "actor", policybundles.PolicyActorID(r))
+			// Refusal record: the answer is already non-2xx, so a lost entry is only logged (ERROR).
 			s.appendAuditEntryNamed(r.Context(), "config.set.rejected", "config", scopeStr+"/"+scopeID, scopeStr, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), msg)
 			writeJSONError(w, http.StatusBadRequest, errorCodeConfigKeyForbidden, "config.managed_key: "+msg)
+		} else if errors.Is(err, configsvc.ErrTenantMismatch) {
+			writeJSONError(w, http.StatusForbidden, errorCodeConfigKeyForbidden, "tenant access denied")
 		} else if errors.Is(err, configsvc.ErrRevisionConflict) {
 			writeJSONError(w, http.StatusConflict, errorCodeConfigVersionConflict, "config update conflict — retry")
 		} else {
@@ -156,7 +186,10 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	if mcpConfigTouched(data) {
 		s.reloadMCPConfig(r.Context())
 	}
-	s.appendAuditEntryNamed(r.Context(), "set", "config", scopeStr+"/"+scopeID, scopeStr, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "set config "+scopeStr+"/"+scopeID)
+	if err := s.appendNamedAuditEntry(r.Context(), "set", "config", scopeStr+"/"+scopeID, scopeStr, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "set config "+scopeStr+"/"+scopeID); err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "config set but its audit entry was not stored")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -169,10 +202,7 @@ func (s *server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		scope = string(configsvc.ScopeSystem)
 	}
 	// Reject unknown scopes before any data access.
-	switch configsvc.Scope(scope) {
-	case configsvc.ScopeSystem, configsvc.ScopeOrg, configsvc.ScopeTeam, configsvc.ScopeWorkflow, configsvc.ScopeStep:
-		// valid
-	default:
+	if !knownConfigScope(configsvc.Scope(scope)) {
 		writeJSONError(w, http.StatusBadRequest, errorCodeConfigRequestInvalid, "invalid scope")
 		return
 	}
@@ -190,13 +220,10 @@ func (s *server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if configsvc.Scope(scope) == configsvc.ScopeOrg {
-		tenant, err := s.resolveTenant(r, scopeID)
-		if err != nil {
-			writeJSONError(w, http.StatusForbidden, errorCodeConfigKeyForbidden, "tenant access denied")
-			return
-		}
-		scopeID = tenant
+	scopeID, err := s.configScopeID(r, configsvc.Scope(scope), scopeID)
+	if err != nil {
+		writeJSONError(w, http.StatusForbidden, errorCodeConfigKeyForbidden, "tenant access denied")
+		return
 	}
 	doc, err := s.configSvc.Get(r.Context(), configsvc.Scope(scope), scopeID)
 	if err != nil {
@@ -322,22 +349,29 @@ func (s *server) handleRegisterSchema(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(w, r, "schema lookup", err)
 		return
 	}
-	if !schemaExists {
-		count, err := s.schemaCount(r.Context())
-		if err != nil {
-			writeInternalError(w, r, "schema count", err)
-			return
-		}
-		if limitErr := licensing.CheckSchemaCount(int64(count+1), s.currentEntitlements()); limitErr != nil {
-			writeTierLimitJSON(w, limitErr)
-			return
-		}
+	if !s.schemaRegisterScope(w, r, req.ID, schemaExists) {
+		return
 	}
-	if err := s.schemaRegistry.Register(r.Context(), req.ID, data); err != nil {
+	if !schemaExists && !s.schemaCountAllows(w, r) {
+		return
+	}
+	if tenant, bound := s.schemaTenantScope(r); bound {
+		err = s.schemaRegistry.RegisterOwned(r.Context(), req.ID, tenant, data)
+	} else {
+		err = s.schemaRegistry.Register(r.Context(), req.ID, data)
+	}
+	if err != nil {
+		if errors.Is(err, schema.ErrIDNotAvailable) {
+			writeJSONError(w, http.StatusForbidden, errorCodeConfigSchemaViolation, "schema id not available")
+			return
+		}
 		writeJSONError(w, http.StatusBadRequest, errorCodeConfigSchemaViolation, err.Error())
 		return
 	}
-	s.appendAuditEntryNamed(r.Context(), "register", "schema", req.ID, req.ID, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "register schema "+req.ID)
+	if err := s.appendNamedAuditEntry(r.Context(), "register", "schema", req.ID, req.ID, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "register schema "+req.ID); err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "schema registered but its audit entry was not stored")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -346,11 +380,22 @@ func (s *server) handleListSchemas(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit, _ := parsePagination(r, 100)
-	ids, err := s.schemaRegistry.List(r.Context(), limit)
+	tenant, bound := s.schemaTenantScope(r)
+	fetch := limit
+	if bound {
+		fetch = schemaIndexCap
+	}
+	ids, err := s.schemaRegistry.List(r.Context(), fetch)
 	if err != nil {
 		slog.Error("schema list failed", "error", err)
 		writeErrorJSON(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	if bound {
+		if ids, err = s.visibleSchemaIDs(r, ids, tenant, limit); err != nil {
+			writeInternalError(w, r, "schema owner lookup", err)
+			return
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]any{"schemas": ids})
@@ -365,7 +410,25 @@ func (s *server) handleGetSchema(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, errorCodeConfigSchemaViolation, "schema id required")
 		return
 	}
-	data, err := s.schemaRegistry.Get(r.Context(), id)
+	tenant, bound := s.schemaTenantScope(r)
+	if bound {
+		owner, err := s.schemaRegistry.Owner(r.Context(), id)
+		if err != nil {
+			writeInternalError(w, r, "schema owner lookup", err)
+			return
+		}
+		if owner != "" && owner != tenant {
+			writeJSONError(w, http.StatusNotFound, errorCodeConfigSchemaNotFound, "schema not found")
+			return
+		}
+	}
+	var data []byte
+	var err error
+	if bound {
+		data, err = s.schemaRegistry.GetOwned(r.Context(), id, tenant)
+	} else {
+		data, err = s.schemaRegistry.Get(r.Context(), id)
+	}
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			writeJSONError(w, http.StatusNotFound, errorCodeConfigSchemaNotFound, "schema not found")
@@ -393,13 +456,123 @@ func (s *server) handleDeleteSchema(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, errorCodeConfigSchemaViolation, "schema id required")
 		return
 	}
-	if err := s.schemaRegistry.Delete(r.Context(), id); err != nil {
+	tenant, bound := s.schemaTenantScope(r)
+	if bound && !s.schemaDeleteAllowed(w, r, id, tenant) {
+		return
+	}
+	var err error
+	if bound {
+		err = s.schemaRegistry.DeleteOwned(r.Context(), id, tenant)
+	} else {
+		err = s.schemaRegistry.Delete(r.Context(), id)
+	}
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			writeJSONError(w, http.StatusNotFound, errorCodeConfigSchemaNotFound, "schema not found")
+			return
+		}
+		if errors.Is(err, schema.ErrIDNotAvailable) {
+			writeJSONError(w, http.StatusForbidden, errorCodeConfigSchemaViolation, "schema id not available")
+			return
+		}
 		slog.Error("schema delete failed", "error", err, "id", id) // #nosec -- id is validated and used for diagnostics.
 		writeErrorJSON(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	s.appendAuditEntryNamed(r.Context(), "delete", "schema", id, id, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "delete schema "+id)
+	if err := s.appendNamedAuditEntry(r.Context(), "delete", "schema", id, id, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "delete schema "+id); err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "schema deleted but its audit entry was not stored")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// schemaIndexCap matches the schema registry's index cap, so a bound list
+// filters every indexed id before the request limit applies.
+const schemaIndexCap = 500
+
+// schemaTenantScope returns the caller's tenant and whether schema owner
+// checks apply. Callers with cross-tenant access, and every request when auth
+// is off, are not bound. A bound caller with an empty tenant owns nothing.
+func (s *server) schemaTenantScope(r *http.Request) (string, bool) {
+	ac := auth.FromRequest(r)
+	if s.auth == nil || (ac != nil && ac.AllowCrossTenant) {
+		return "", false
+	}
+	if ac == nil {
+		return "", true
+	}
+	return strings.TrimSpace(ac.Tenant), true
+}
+
+// schemaRegisterScope decides a register before any write and returns false
+// after writing a refusal.
+func (s *server) schemaRegisterScope(w http.ResponseWriter, r *http.Request, id string, exists bool) bool {
+	tenant, bound := s.schemaTenantScope(r)
+	if !bound {
+		return true
+	}
+	owner, err := s.schemaRegistry.Owner(r.Context(), id)
+	if err != nil {
+		writeInternalError(w, r, "schema owner lookup", err)
+		return false
+	}
+	switch {
+	case owner != "" && owner == tenant:
+		return true
+	case owner == "" && !exists && tenant != "":
+		return true
+	}
+	writeJSONError(w, http.StatusForbidden, errorCodeConfigSchemaViolation, "schema id not available")
+	return false
+}
+
+// schemaCountAllows writes the refusal and returns false when one more schema
+// would pass the entitled schema count.
+func (s *server) schemaCountAllows(w http.ResponseWriter, r *http.Request) bool {
+	count, err := s.schemaCount(r.Context())
+	if err != nil {
+		writeInternalError(w, r, "schema count", err)
+		return false
+	}
+	if limitErr := licensing.CheckSchemaCount(int64(count+1), s.currentEntitlements()); limitErr != nil {
+		writeTierLimitJSON(w, limitErr)
+		return false
+	}
+	return true
+}
+
+// visibleSchemaIDs keeps platform ids and the tenant's own, up to limit.
+func (s *server) visibleSchemaIDs(r *http.Request, ids []string, tenant string, limit int64) ([]string, error) {
+	shown, err := s.schemaRegistry.VisibleTo(r.Context(), ids, tenant)
+	if err != nil {
+		return nil, err
+	}
+	visible := make([]string, 0, len(ids))
+	for i, id := range ids {
+		if int64(len(visible)) >= limit {
+			break
+		}
+		if shown[i] {
+			visible = append(visible, id)
+		}
+	}
+	return visible, nil
+}
+
+// schemaDeleteAllowed refuses another tenant's id with 404, as an absent id
+// answers. Every other answer comes from DeleteOwned's owner-checked step, so
+// it reflects the owner and document at one moment.
+func (s *server) schemaDeleteAllowed(w http.ResponseWriter, r *http.Request, id, tenant string) bool {
+	owner, err := s.schemaRegistry.Owner(r.Context(), id)
+	if err != nil {
+		writeInternalError(w, r, "schema owner lookup", err)
+		return false
+	}
+	if owner != "" && owner != tenant {
+		writeJSONError(w, http.StatusNotFound, errorCodeConfigSchemaNotFound, "schema not found")
+		return false
+	}
+	return true
 }
 
 // Resource lock handlers

@@ -42,6 +42,11 @@ message BuildWindowRequest {
   bytes logical_payload = 4;
   int32 max_input_tokens = 5;
   int32 max_output_tokens = 6;
+  // Server-owned tenant of the memory, set by the context-engine caller
+  // from the job's tenant (JobRequest.tenant_id). It MUST NOT be set by
+  // external clients. Stored memory (history, summary, chunks) is used
+  // only when it is set.
+  string tenant_id = 7;
 }
 
 message BuildWindowResponse {

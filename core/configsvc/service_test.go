@@ -2,9 +2,14 @@ package configsvc
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"reflect"
+	"strings"
 	"testing"
 
 	miniredis "github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 )
 
 func asInt(v any) (int, bool) {
@@ -61,7 +66,7 @@ func TestSetGetEffective(t *testing.T) {
 	// team override
 	_ = svc.Set(ctx, &Document{
 		Scope:   ScopeTeam,
-		ScopeID: "team-1",
+		ScopeID: TenantScopeID(ScopeTeam, "org-1", "team-1"),
 		Data:    map[string]any{"budget": 100},
 	})
 
@@ -77,6 +82,173 @@ func TestSetGetEffective(t *testing.T) {
 	}
 	if budget, ok := asInt(eff["budget"]); !ok || budget != 100 {
 		t.Fatalf("expected team budget, got %v", eff["budget"])
+	}
+}
+
+func TestEffectiveSnapshotTenantScopes(t *testing.T) {
+	svc, srv := newSvcWithServer(t)
+	defer srv.Close()
+	defer func() { _ = svc.Close() }()
+	ctx := context.Background()
+	for _, scope := range []Scope{ScopeTeam, ScopeWorkflow, ScopeStep} {
+		for i, tenant := range []string{"a", "b", ""} {
+			id := "shared"
+			if tenant != "" {
+				id = tenant + "/" + id
+			}
+			doc := &Document{Scope: scope, ScopeID: id, Revision: int64(i), Data: map[string]any{string(scope): tenant}}
+			if err := svc.Set(ctx, doc); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for i, tenant := range []string{"a", "b", ""} {
+		t.Run("tenant="+tenant, func(t *testing.T) {
+			want := map[string]any{}
+			revisions := map[Scope]int64{}
+			if tenant != "" {
+				for _, scope := range []Scope{ScopeTeam, ScopeWorkflow, ScopeStep} {
+					want[string(scope)] = tenant
+					revisions[scope] = int64(i + 1)
+				}
+			}
+			hash, err := snapshotHash(want)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := svc.EffectiveSnapshot(ctx, tenant, "shared", "shared", "shared")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got.Data, want) || got.Hash != hash || got.Version != snapshotVersion(revisions) {
+				t.Fatalf("snapshot = %+v, want data=%v hash=%s version=%s", got, want, hash, snapshotVersion(revisions))
+			}
+		})
+	}
+}
+
+func TestTenantScopeID(t *testing.T) {
+	for _, scope := range []Scope{ScopeTeam, ScopeWorkflow, ScopeStep} {
+		for _, tc := range []struct{ tenant, id, want string }{
+			{" a/b ", " c ", "a%2Fb/c"},
+			{"a", "b/c", "a/b/c"},
+			{"a%2Fb", "c", "a%252Fb/c"},
+			{" ", "c", ""},
+			{"a", " ", ""},
+		} {
+			if got := TenantScopeID(scope, tc.tenant, tc.id); got != tc.want {
+				t.Errorf("%s (%q, %q) = %q, want %q", scope, tc.tenant, tc.id, got, tc.want)
+			}
+		}
+	}
+	for _, scope := range []Scope{ScopeSystem, ScopeOrg, "other"} {
+		if got := TenantScopeID(scope, "a/b", " raw "); got != " raw " {
+			t.Errorf("%s id = %q, want unchanged id", scope, got)
+		}
+	}
+}
+
+func TestTenantScopedDocumentOwnership(t *testing.T) {
+	for _, scope := range []Scope{ScopeTeam, ScopeWorkflow, ScopeStep} {
+		for _, tc := range []struct {
+			name   string
+			stored Document
+		}{
+			{"no-tenant", Document{Scope: scope, ScopeID: "a/x", Meta: map[string]string{"tenant": "a"}}},
+			{"other-tenant", Document{Scope: scope, ScopeID: "a/x", Tenant: "b"}},
+			{"other-scope-id", Document{Scope: scope, ScopeID: "a/y", Tenant: "a"}},
+			{"other-scope", Document{Scope: ScopeOrg, ScopeID: "a/x", Tenant: "a"}},
+		} {
+			t.Run(string(scope)+"/"+tc.name, func(t *testing.T) { checkUnownedDocument(t, scope, tc.stored) })
+		}
+		t.Run(string(scope)+"/current", func(t *testing.T) { checkTenantDocument(t, scope) })
+	}
+	t.Run("org", func(t *testing.T) {
+		svc, srv := newSvcWithServer(t)
+		defer srv.Close()
+		defer func() { _ = svc.Close() }()
+		doc := &Document{Scope: ScopeOrg, ScopeID: "a/y", Tenant: "a", Data: map[string]any{"value": "org"}}
+		if err := svc.Set(context.Background(), doc); err != nil {
+			t.Fatal(err)
+		}
+		if raw, err := srv.Get(cfgKey(ScopeOrg, "a/y")); err != nil || strings.Contains(raw, `"tenant"`) {
+			t.Errorf("org document = %s, %v; want no tenant field", raw, err)
+		}
+	})
+	t.Run("id-forms", func(t *testing.T) {
+		for id, want := range map[string]string{
+			"a/x": "a", "a/x/y": "a", "a%2Fb/x": "a/b", "a%252Fb/x": "a%2Fb",
+			"a%2fb/x": "", "a%zz/x": "", "a b/x": "", " a/x": "", "a/ x": "", "/x": "", "a/": "", "x": "",
+		} {
+			for _, scope := range []Scope{ScopeTeam, ScopeWorkflow, ScopeStep} {
+				if got := scopeIDTenant(scope, id); got != want {
+					t.Errorf("%s %q tenant = %q, want %q", scope, id, got, want)
+				}
+			}
+			if got := scopeIDTenant(ScopeOrg, id) + scopeIDTenant(ScopeSystem, id); got != "" {
+				t.Errorf("org or system %q tenant = %q, want none", id, got)
+			}
+		}
+	})
+}
+
+// checkUnownedDocument stores stored at tenant a's key for id x, then checks
+// that Get, EffectiveSnapshot, Set and SetWithRetry neither use nor change it.
+func checkUnownedDocument(t *testing.T, scope Scope, stored Document) {
+	svc, srv := newSvcWithServer(t)
+	defer srv.Close()
+	defer func() { _ = svc.Close() }()
+	ctx := context.Background()
+	before, err := svc.EffectiveSnapshot(ctx, "a", "x", "x", "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored.Revision, stored.Data = 1, map[string]any{"value": "stored"}
+	raw, err := json.Marshal(stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := cfgKey(scope, "a/x")
+	if err := srv.Set(key, string(raw)); err != nil {
+		t.Fatal(err)
+	}
+	if doc, err := svc.Get(ctx, scope, "a/x"); !errors.Is(err, redis.Nil) {
+		t.Errorf("Get = %+v, %v; want redis.Nil", doc, err)
+	}
+	if after, err := svc.EffectiveSnapshot(ctx, "a", "x", "x", "x"); err != nil || !reflect.DeepEqual(after, before) {
+		t.Errorf("EffectiveSnapshot = %+v, %v; want %+v", after, err, before)
+	}
+	write := &Document{Scope: scope, ScopeID: "a/x", Revision: 1, Data: map[string]any{"value": "new"}}
+	if err := svc.Set(ctx, write); !errors.Is(err, ErrTenantMismatch) {
+		t.Errorf("Set at the stored revision = %v, want ErrTenantMismatch", err)
+	}
+	if err := svc.SetWithRetry(ctx, scope, "a/x", 3, func(*Document) error { return nil }); !errors.Is(err, ErrTenantMismatch) {
+		t.Errorf("SetWithRetry = %v, want ErrTenantMismatch", err)
+	}
+	if got, err := srv.Get(key); err != nil || got != string(raw) {
+		t.Errorf("stored = %s, %v; want %s", got, err, raw)
+	}
+}
+
+// checkTenantDocument writes tenant a's document y, then updates it.
+func checkTenantDocument(t *testing.T, scope Scope) {
+	svc, srv := newSvcWithServer(t)
+	defer srv.Close()
+	defer func() { _ = svc.Close() }()
+	ctx := context.Background()
+	id := TenantScopeID(scope, "a", "y")
+	// Set records the id's tenant, not the value the caller passes.
+	if err := svc.Set(ctx, &Document{Scope: scope, ScopeID: id, Tenant: "b", Data: map[string]any{"value": "one"}}); err != nil {
+		t.Fatal(err)
+	}
+	if raw, err := srv.Get(cfgKey(scope, id)); err != nil || !strings.Contains(raw, `"tenant":"a"`) {
+		t.Errorf("stored = %s, %v; want tenant a", raw, err)
+	}
+	if err := svc.SetWithRetry(ctx, scope, id, 3, func(doc *Document) error { doc.Data["value"] = "two"; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if doc, err := svc.Get(ctx, scope, id); err != nil || doc.Tenant != "a" || doc.Revision != 2 || doc.Data["value"] != "two" {
+		t.Errorf("Get = %+v, %v; want tenant a at revision 2 with value two", doc, err)
 	}
 }
 
