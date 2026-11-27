@@ -109,23 +109,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   namespace. cordum-hook adds a keyed digest of them to the approval's action identity
   and checks them again before an allowed command starts, so a change after the
   approval blocks the command until it is approved again. The hook labels a call
-  `artifact.binding=bound` only for one simple command of plain literal words whose
-  program and every argument it recognizes: `kubectl apply`, `create` (from files,
-  or a configmap or secret) or `get`
-  with only the `--context`, `--namespace`/`-n`, `--kubeconfig`, `-f`/`--filename`,
-  `--from-file`, `--from-env-file` and `-R`/`--recursive` flags, or `sh`, `bash`,
-  `zsh`, `dash`, `python`, `node`, `perl` or `ruby` running a script file from the
-  working directory. Any other call is labelled `artifact.binding=unbound` with an
-  `artifact.unbound_reason` (an unrecognized command, inline code, shell syntax, a URL
-  or network path, a Windows device or path that depends on the current drive, a
-  directory, an unreadable or oversized file, a name under /proc, /dev or /sys, by any
-  spelling or symlink, a Windows device or namespace link target, a read-size mismatch,
-  files that take over a second to read, an unknown
-  kube context, or a test or build command), so a policy can deny it. Where inputs can
-  be collected, the digest still covers the files it names. PowerShell, Monitor and
-  any other non-Bash tool carrying a command are labelled unbound without a digest.
-  Files a script or tool opens on its own are not covered
-  (task-14d105fb).
+  `artifact.binding=bound` only when every part of it is on an allowlist: every byte is
+  an ASCII letter or digit, a space, a tab or one of `- _ . / , : = @ +`; the program
+  is `kubectl` or `sh`, `bash`, `zsh`, `dash`, `python`, `node`, `perl` or `ruby`,
+  matched by its exact name; kubectl runs `apply`, `create` (from files, or a configmap
+  or secret) or `get` with only the `--context`, `--namespace`/`-n`, `--kubeconfig`,
+  `-f`/`--filename`, `--from-file`, `--from-env-file` and `-R`/`--recursive` flags, and
+  every file those flags name is a regular file the hook hashed; an interpreter runs a
+  script file the hook hashed, named without a `..` element. The kube target is read
+  from the one file `--kubeconfig` names, the `KUBECONFIG` list or `.kube/config` under
+  `HOME`: a missing or unreadable kubeconfig, and YAML with a repeated key, a merge key,
+  an alias or a tag, leave the target unknown, and so do an unset `HOME` and, inside a
+  pod, a context that names no namespace. On Windows, a name with a `:` after its
+  drive, a file named with a `.` at the end of a path element and a file with the
+  SYSTEM attribute are unreadable, because Git Bash opens them as other files. Any
+  other call is labelled `artifact.binding=unbound` with an `artifact.unbound_reason`
+  (an unrecognized command, inline code, shell syntax, a URL or network path, a Windows
+  device or path that depends on the current drive, a directory, an unreadable or
+  oversized file, a name under /proc, /dev or /sys, by any spelling or symlink, a
+  Windows device or namespace link target, a read-size mismatch, files that take over a
+  second to read, an unknown kube context, or a test or build command), so a policy can
+  deny it. Where inputs can be collected, the digest still covers the files it names.
+  Every tool other than Bash is labelled unbound without a digest, whatever its input
+  holds, except Claude Code's tools that cannot run code (Read, Write, Edit, MultiEdit,
+  NotebookEdit, Glob, Grep, LS, WebFetch, WebSearch and TodoWrite). Files a script or
+  tool opens on its own, environment variables other than `KUBECONFIG` and `HOME`, and
+  changes made while the hook reads are not covered (task-14d105fb).
 - Python SDK: remove template-unused imports during generation with the pinned Ruff
   cleanup hook before formatting, without changing API or version markers (task-90b8033a).
 - Edge hook: a CONSTRAIN decision that carries a constraint kind the hook cannot apply

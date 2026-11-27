@@ -3,8 +3,6 @@ package claude
 import (
 	"errors"
 	"io"
-	"io/fs"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -156,23 +154,29 @@ func artifactKubectlSubcommand(positionals []string) bool {
 // an empty context when it cannot tell. --kubeconfig, --context and
 // --namespace/-n on the command line win, as does a KUBECONFIG= assignment
 // before kubectl; otherwise the kubeconfig files decide, merged as kubectl
-// merges them.
+// merges them. --kubeconfig names one file and KUBECONFIG a list; with
+// neither, kubectl reads .kube/config under HOME, joined as client-go joins
+// it. Without HOME it reads .kube/config under its cwd, or on Windows under
+// another home, so the target is unknown.
 func artifactKubeTarget(fields []string, cwd string, env map[string]string) (string, string) {
-	kubeconfig := envValue(env, "KUBECONFIG")
+	paths := filepath.SplitList(envValue(env, "KUBECONFIG"))
 	at := slices.IndexFunc(fields, artifactIsKubectl)
 	for _, field := range fields[:at] {
 		if value, ok := strings.CutPrefix(field, "KUBECONFIG="); ok {
-			kubeconfig = value
+			paths = filepath.SplitList(value)
 		}
 	}
 	flags, _, _ := artifactKubectlArgs(fields[at+1:])
 	if flags["kubeconfig"] != "" {
-		kubeconfig = flags["kubeconfig"] // an empty --kubeconfig is not an explicit path
+		paths = []string{flags["kubeconfig"]} // an empty --kubeconfig is not an explicit path
+	}
+	if home := envValue(env, "HOME"); len(paths) == 0 && home != "" {
+		paths = []string{filepath.Join(home, ".kube", "config")}
 	}
 	kubeContext, namespace := flags["context"], flags["namespace"]
-	current, namespaces := artifactKubeconfigs(kubeconfig, cwd, env)
+	current, namespaces := artifactKubeconfigs(paths, cwd)
 	if namespaces == nil {
-		return "", "" // a special or undecodable file can change the target even with --context
+		return "", "" // no file, or one kubectl may read differently, can change the target even with --context
 	}
 	if kubeContext == "" {
 		kubeContext = current
@@ -180,29 +184,27 @@ func artifactKubeTarget(fields []string, cwd string, env map[string]string) (str
 	if namespace == "" {
 		namespace = namespaces[kubeContext]
 	}
+	if namespace == "" && envValue(env, "KUBERNETES_SERVICE_HOST") != "" {
+		return "", "" // in a pod kubectl takes POD_NAMESPACE or the service account's namespace
+	}
 	if namespace == "" {
 		namespace = "default"
 	}
 	return kubeContext, namespace
 }
 
-// artifactKubeconfigs reads the kubeconfig files kubectl would read: the
-// KUBECONFIG list, or ~/.kube/config. The first file that sets current-context
-// wins, and so does the first definition of each context. kubectl skips a
-// missing file and reads an empty one as an empty config, but fails on any
-// other file it cannot load, and it loads YAML that yaml.v3 rejects (a
-// repeated key keeps its last value). So any other file that cannot be read
-// or decoded returns no namespaces: the target is unknown.
-func artifactKubeconfigs(kubeconfig, cwd string, env map[string]string) (string, map[string]string) {
-	paths := filepath.SplitList(kubeconfig)
+// artifactKubeconfigs reads the kubeconfig files kubectl would read. The first
+// file that sets current-context wins, and so does the first definition of
+// each context. Each file must be a readable regular file holding plain YAML
+// that yaml.v3 decodes, or no YAML document (an empty config); otherwise it
+// returns no namespaces and the target is unknown. kubectl skips a missing
+// file, but client-go first copies an older .kube/.kubeconfig into a missing
+// .kube/config. kubectl's YAML reader (yaml v2) keeps the last value of a
+// repeated key, which yaml.v3 rejects, and applies a merge key after the keys
+// before it, where yaml.v3 keeps those keys.
+func artifactKubeconfigs(paths []string, cwd string) (string, map[string]string) {
 	if len(paths) == 0 {
-		home := envValue(env, "HOME")
-		if home == "" {
-			home = envValue(env, "USERPROFILE")
-		}
-		if home != "" {
-			paths = []string{artifactPath(home, ".kube/config")}
-		}
+		return "", nil
 	}
 	current, namespaces := "", map[string]string{}
 	for _, path := range paths {
@@ -213,20 +215,18 @@ func artifactKubeconfigs(kubeconfig, cwd string, env map[string]string) (string,
 		if artifactSpecialPath(path) {
 			return "", nil
 		}
-		if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
 		file, reason := artifactOpen(path)
 		if reason != "" {
 			return "", nil
 		}
-		var config artifactKubeconfig
-		err := yaml.NewDecoder(io.LimitReader(file, artifactMaxFileBytes)).Decode(&config)
+		var node yaml.Node
+		err := yaml.NewDecoder(io.LimitReader(file, artifactMaxFileBytes)).Decode(&node)
 		_ = file.Close()
 		if errors.Is(err, io.EOF) {
 			continue
 		}
-		if err != nil {
+		var config artifactKubeconfig
+		if err != nil || !artifactPlainYAML(&node) || node.Decode(&config) != nil {
 			return "", nil
 		}
 		if current == "" {
@@ -239,4 +239,13 @@ func artifactKubeconfigs(kubeconfig, cwd string, env map[string]string) (string,
 		}
 	}
 	return current, namespaces
+}
+
+// artifactPlainYAML reports YAML with no alias, merge key or explicit tag,
+// which yaml v2 and yaml.v3 can read differently.
+func artifactPlainYAML(node *yaml.Node) bool {
+	if node.Kind == yaml.AliasNode || node.Tag == "!!merge" || node.Style&yaml.TaggedStyle != 0 {
+		return false
+	}
+	return !slices.ContainsFunc(node.Content, func(child *yaml.Node) bool { return !artifactPlainYAML(child) })
 }

@@ -281,7 +281,6 @@ func TestArtifactBindingKubeTarget(t *testing.T) {
 			"KUBECONFIG": filepath.Join(cwd, "a.yaml") + string(os.PathListSeparator) + filepath.Join(cwd, "b.yaml"),
 		}, "x", "ns-a"},
 		{"HOME default, no namespace", "kubectl get pods", map[string]string{"HOME": home}, "home", "default"},
-		{"USERPROFILE fallback", "kubectl get pods", map[string]string{"USERPROFILE": home}, "home", "default"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -297,44 +296,68 @@ func TestArtifactBindingKubeTarget(t *testing.T) {
 	}
 }
 
+// TestArtifactBindingKubeconfigMustDecode pins the kubeconfigs the binding
+// reads as kubectl does, and leaves the target unknown for the rest: a
+// missing file client-go may first fill from .kube/.kubeconfig, YAML that
+// kubectl's yaml v2 reads differently from yaml.v3 (the last of a repeated
+// key, a merge key after the key it overrides, an alias, a tag), a home
+// kubectl may not pick, and a namespace kubectl takes from the pod it runs in.
 func TestArtifactBindingKubeconfigMustDecode(t *testing.T) {
-	cwd := t.TempDir()
+	cwd, home := t.TempDir(), t.TempDir()
 	kubeconfig := "current-context: dev\ncontexts:\n- name: dev\n  context:\n    namespace: dev-ns\n"
-	artifactWriteFiles(t, cwd, map[string]string{"a.yaml": kubeconfig, "b.yaml": kubeconfig, "empty.yaml": "", "dir/keep": "", "big.yaml": ""})
+	artifactWriteFiles(t, cwd, map[string]string{"a.yaml": kubeconfig, "b.yaml": kubeconfig, "empty.yaml": "", "dir/keep": "",
+		"big.yaml": "", "repeat.yaml": kubeconfig + "current-context: prod\n", "merge.yaml": kubeconfig + "<<: {current-context: prod}\n",
+		"alias.yaml": "current-context: &c dev\ncontexts:\n- name: *c\n  context:\n    namespace: dev-ns\n", "tag.yaml": "current-context: !!str dev\n",
+		"no-namespace.yaml": "current-context: dev\n"})
+	artifactWriteFiles(t, home, map[string]string{".kube/config": kubeconfig})
 	if err := os.Truncate(filepath.Join(cwd, "big.yaml"), artifactMaxFileBytes+1); err != nil {
 		t.Fatal(err)
 	}
-	target := func(names ...string) string {
-		t.Helper()
-		paths := make([]string, len(names))
+	list := func(names ...string) map[string]string {
 		for i, name := range names {
-			paths[i] = filepath.Join(cwd, name)
+			names[i] = filepath.Join(cwd, name)
 		}
-		env := map[string]string{"KUBECONFIG": strings.Join(paths, string(os.PathListSeparator))}
-		labels := artifactBindingLabels(context.Background(), artifactHookInput(cwd, "kubectl get pods"), env, "unknown")
-		if labels["artifact.binding"] == "bound" {
-			return labels["kube.context"] + "/" + labels["kube.namespace"]
-		}
-		return labels["artifact.unbound_reason"]
+		return map[string]string{"KUBECONFIG": strings.Join(names, string(os.PathListSeparator))}
 	}
-	for _, tc := range []struct {
-		names []string
-		want  string
-	}{
-		{[]string{"missing.yaml", "b.yaml"}, "dev/dev-ns"},
-		{[]string{"empty.yaml", "b.yaml"}, "dev/dev-ns"},
-		{[]string{"dir", "b.yaml"}, "kube-context"},
-		{[]string{"big.yaml", "b.yaml"}, "kube-context"},
-		{[]string{"a.yaml", "b.yaml"}, "dev/dev-ns"},
-	} {
-		if got := target(tc.names...); got != tc.want {
-			t.Fatalf("KUBECONFIG=%v: target = %q, want %q", tc.names, got, tc.want)
-		}
+	pod := func(name string) map[string]string {
+		env := list(name)
+		env["KUBERNETES_SERVICE_HOST"] = "10.96.0.1"
+		return env
 	}
-	// kubectl keeps the last value of a repeated key; yaml.v3 refuses the file.
-	artifactWriteFiles(t, cwd, map[string]string{"a.yaml": kubeconfig + "current-context: prod\n"})
-	if got := target("a.yaml", "b.yaml"); got != "kube-context" {
-		t.Fatalf("after a.yaml repeats current-context: target = %q, want kube-context", got)
+	type kubeCase struct {
+		name, command string
+		env           map[string]string
+		want          string
+	}
+	cases := []kubeCase{
+		{"decodable files", "kubectl get pods", list("a.yaml", "b.yaml"), "dev/dev-ns"},
+		{"an empty file", "kubectl get pods", list("empty.yaml", "b.yaml"), "dev/dev-ns"},
+		{"a missing file", "kubectl get pods", list("missing.yaml", "b.yaml"), "kube-context"},
+		{"a directory", "kubectl get pods", list("dir", "b.yaml"), "kube-context"},
+		{"an oversized file", "kubectl get pods", list("big.yaml", "b.yaml"), "kube-context"},
+		{"a repeated key", "kubectl get pods", list("repeat.yaml", "b.yaml"), "kube-context"},
+		{"a merge key", "kubectl get pods", list("merge.yaml"), "kube-context"},
+		{"an alias", "kubectl get pods", list("alias.yaml"), "kube-context"},
+		{"a tag", "kubectl get pods", list("tag.yaml"), "kube-context"},
+		{"HOME without a kubeconfig", "kubectl get pods --context dev", map[string]string{"HOME": cwd}, "kube-context"},
+		{"no HOME", "kubectl get pods", map[string]string{"USERPROFILE": home}, "kube-context"},
+		{"in a pod, a context with no namespace", "kubectl get pods", pod("no-namespace.yaml"), "kube-context"},
+		{"in a pod, a context with a namespace", "kubectl get pods", pod("a.yaml"), "dev/dev-ns"},
+	}
+	if runtime.GOOS != "windows" { // a Windows list separator is not a plain byte
+		cases = append(cases, kubeCase{"--kubeconfig names one file", "kubectl get pods --kubeconfig=a.yaml:b.yaml", map[string]string{}, "kube-context"})
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			labels := artifactBindingLabels(context.Background(), artifactHookInput(cwd, tc.command), tc.env, "unknown")
+			got := labels["artifact.unbound_reason"]
+			if labels["artifact.binding"] == "bound" {
+				got = labels["kube.context"] + "/" + labels["kube.namespace"]
+			}
+			if got != tc.want {
+				t.Fatalf("%s %v: target = %q, want %q", tc.command, tc.env, got, tc.want)
+			}
+		})
 	}
 }
 

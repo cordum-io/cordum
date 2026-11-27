@@ -8,10 +8,12 @@ import (
 	"maps"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	edgecore "github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/edge/agentd"
@@ -67,13 +69,15 @@ func artifactBindingWorkspace(t *testing.T) (string, string, map[string]string) 
 
 func artifactBindingHook(t *testing.T, evaluator *agentd.Evaluator, session edgeSessionCreateResponseJSON, command, cwd string, env map[string]string) claude.ClaudeHookOutput {
 	t.Helper()
-	return artifactBindingToolHook(t, evaluator, session, "Bash", command, cwd, env)
+	return artifactBindingToolHook(t, evaluator, session, "Bash", artifactBindingInput(command), cwd, env)
 }
 
-func artifactBindingToolHook(t *testing.T, evaluator *agentd.Evaluator, session edgeSessionCreateResponseJSON, tool, command, cwd string, env map[string]string) claude.ClaudeHookOutput {
+func artifactBindingInput(command string) map[string]any { return map[string]any{"command": command} }
+
+func artifactBindingToolHook(t *testing.T, evaluator *agentd.Evaluator, session edgeSessionCreateResponseJSON, tool string, input map[string]any, cwd string, env map[string]string) claude.ClaudeHookOutput {
 	t.Helper()
 	stdin, err := json.Marshal(map[string]any{"cwd": cwd, "hook_event_name": "PreToolUse", "tool_name": tool,
-		"tool_use_id": "tool-artifact", "tool_input": map[string]any{"command": command}})
+		"tool_use_id": "tool-artifact", "tool_input": input})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,18 +108,27 @@ func TestArtifactBindingApprovalFollowsManifestAndKubeTarget(t *testing.T) {
 	cases := []struct {
 		name, command string
 		change        func(t *testing.T, cwd, kubeconfig string)
+		listCopy      bool // KUBECONFIG lists the kubeconfig, then a copy of it
 	}{
-		{"unchanged_positive_control", artifactBindingCommand, nil},
-		{"manifest_edited", artifactBindingCommand, editManifest},
+		{"unchanged_positive_control", artifactBindingCommand, nil, false},
+		{"manifest_edited", artifactBindingCommand, editManifest, false},
 		{"kube_context_switched", artifactBindingCommand, func(t *testing.T, _, kubeconfig string) {
 			artifactBindingWrite(t, kubeconfig, artifactBindingKubeconfig("prod", "dev-ns"))
-		}},
+		}, false},
 		{"kube_namespace_changed", artifactBindingCommand, func(t *testing.T, _, kubeconfig string) {
 			artifactBindingWrite(t, kubeconfig, artifactBindingKubeconfig("dev", "other-ns"))
-		}},
-		{"attached_flag_positive_control", "kubectl apply -fmanifest.yaml", nil},
-		{"attached_flag_manifest_edited", "kubectl apply -fmanifest.yaml", editManifest},
-		{"comma_list_manifest_edited", "kubectl apply -f other.yaml,manifest.yaml", editManifest},
+		}, false},
+		{"kube_context_repeated_key", artifactBindingCommand, func(t *testing.T, _, kubeconfig string) {
+			// kubectl keeps the last value of a repeated key and targets prod.
+			artifactBindingWrite(t, kubeconfig, artifactBindingKubeconfig("dev", "dev-ns")+"current-context: prod\n")
+		}, true},
+		{"kube_context_merge_key", artifactBindingCommand, func(t *testing.T, _, kubeconfig string) {
+			// kubectl applies a merge key after the keys before it and targets prod.
+			artifactBindingWrite(t, kubeconfig, artifactBindingKubeconfig("dev", "dev-ns")+"<<: {current-context: prod}\n")
+		}, false},
+		{"attached_flag_positive_control", "kubectl apply -fmanifest.yaml", nil, false},
+		{"attached_flag_manifest_edited", "kubectl apply -fmanifest.yaml", editManifest, false},
+		{"comma_list_manifest_edited", "kubectl apply -f other.yaml,manifest.yaml", editManifest, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -124,6 +137,12 @@ func TestArtifactBindingApprovalFollowsManifestAndKubeTarget(t *testing.T) {
 			defer httpServer.Close()
 			evaluator := referencedFileEvaluator(t, httpServer.URL, session)
 			cwd, kubeconfig, env := artifactBindingWorkspace(t)
+			artifactBindingWrite(t, filepath.Join(cwd, "other.yaml"), "kind: ConfigMap\nmetadata:\n  name: other\n")
+			if tc.listCopy {
+				listed := kubeconfig + ".copy"
+				artifactBindingWrite(t, listed, artifactBindingKubeconfig("dev", "dev-ns"))
+				env["KUBECONFIG"] = kubeconfig + string(os.PathListSeparator) + listed
+			}
 			if artifactBindingStarted(t, artifactBindingHook(t, evaluator, session, tc.command, cwd, env)) {
 				t.Fatal("pending tool must not start")
 			}
@@ -137,6 +156,40 @@ func TestArtifactBindingApprovalFollowsManifestAndKubeTarget(t *testing.T) {
 			}
 		})
 	}
+}
+
+type artifactPolicyCase struct {
+	name, tool string
+	input      map[string]any
+	approvals  int
+}
+
+// artifactBindingPlatformCases returns the rows one platform sets up: a
+// reader-relative /proc name on Linux, and on Windows a SYSTEM file and a
+// name ending in '.', which Git Bash's MSYS bash opens as other files.
+func artifactBindingPlatformCases(t *testing.T, cwd string) []artifactPolicyCase {
+	t.Helper()
+	switch runtime.GOOS {
+	case "linux":
+		file, err := os.Open(filepath.Join(cwd, "manifest.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = file.Close() })
+		return []artifactPolicyCase{{"reader_relative_denied_by_rule", "Bash", artifactBindingInput(fmt.Sprintf("bash /proc/self/fd/%d", file.Fd())), 0}}
+	case "windows":
+		artifactBindingWrite(t, filepath.Join(cwd, "deploy.sh"), "echo reviewed\n")
+		link := filepath.Join(cwd, "link.sh")
+		artifactBindingWrite(t, link, "!<symlink>deploy.sh")
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if out, err := exec.CommandContext(ctx, "attrib", "+s", link).CombinedOutput(); err != nil {
+			t.Fatalf("attrib: %v %s", err, out)
+		}
+		return []artifactPolicyCase{{"system_attribute_denied_by_rule", "Bash", artifactBindingInput("bash link.sh"), 0},
+			{"trailing_dot_denied_by_rule", "Bash", artifactBindingInput("bash deploy.sh."), 0}}
+	}
+	return nil
 }
 
 func TestArtifactBindingPolicyDeniesUnboundCommand(t *testing.T) {
@@ -153,33 +206,25 @@ func TestArtifactBindingPolicyDeniesUnboundCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	artifactBindingWrite(t, filepath.Join(cwd, "bin", "kubectl"), "a vendored kubectl\n")
-	cases := []struct {
-		name, tool, command string
-		approvals           int
-	}{
-		{"unbound_denied_by_rule", "Bash", "cat manifest.yaml | kubectl apply -f -", 0},
-		{"remote_kustomization_denied_by_rule", "Bash", "kubectl apply -k github.com/org/repo", 0},
-		{"inline_code_denied_by_rule", "Bash", "perl -E system+q+./deploy.sh+", 0},
-		{"remote_command_denied_by_rule", "Bash", "kubectl exec db-0 -- ./migrate.sh", 0},
-		{"assignment_prefix_denied_by_rule", "Bash", "X=x/bash ./bin/kubectl apply -k github.com/org/repo", 0},
-		{"powershell_denied_by_rule", "PowerShell", artifactBindingCommand, 0},
-		{"bound_requires_approval", "Bash", artifactBindingCommand, 1},
-	}
-	if runtime.GOOS == "linux" {
-		file, err := os.Open(filepath.Join(cwd, "manifest.yaml"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer func() { _ = file.Close() }()
-		cases = append(cases, struct {
-			name, tool, command string
-			approvals           int
-		}{"reader_relative_denied_by_rule", "Bash", fmt.Sprintf("bash /proc/self/fd/%d", file.Fd()), 0})
-	}
+	artifactBindingWrite(t, filepath.Join(cwd, "deploy.js"), "console.log('reviewed')\n")
+	cmd := artifactBindingInput
+	cases := append([]artifactPolicyCase{
+		{"unbound_denied_by_rule", "Bash", cmd("cat manifest.yaml | kubectl apply -f -"), 0},
+		{"remote_kustomization_denied_by_rule", "Bash", cmd("kubectl apply -k github.com/org/repo"), 0},
+		{"inline_code_denied_by_rule", "Bash", cmd("perl -E system+q+./deploy.sh+"), 0},
+		{"remote_command_denied_by_rule", "Bash", cmd("kubectl exec db-0 -- ./migrate.sh"), 0},
+		{"assignment_prefix_denied_by_rule", "Bash", cmd("X=x/bash ./bin/kubectl apply -k github.com/org/repo"), 0},
+		{"powershell_denied_by_rule", "PowerShell", cmd(artifactBindingCommand), 0},
+		{"control_character_denied_by_rule", "Bash", cmd("kubectl apply -f manifest.yaml\r --context dev"), 0},
+		{"from_file_control_character_denied_by_rule", "Bash", cmd("kubectl create configmap cm --from-file=k=manifest.yaml\r --context dev"), 0},
+		{"dotdot_script_denied_by_rule", "Bash", cmd("node bin/../deploy.js"), 0},
+		{"code_tool_denied_by_rule", "mcp__ide__executeCode", map[string]any{"code": "import os; os.system('node deploy.js')"}, 0},
+		{"bound_requires_approval", "Bash", cmd(artifactBindingCommand), 1},
+	}, artifactBindingPlatformCases(t, cwd)...)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			session := createEdgeEvaluateSessionWithPolicySnapshot(t, handler, safety.snapshot, edgecore.PolicyModeObserve)
-			out := artifactBindingToolHook(t, referencedFileEvaluator(t, httpServer.URL, session), session, tc.tool, tc.command, cwd, env)
+			out := artifactBindingToolHook(t, referencedFileEvaluator(t, httpServer.URL, session), session, tc.tool, tc.input, cwd, env)
 			if artifactBindingStarted(t, out) {
 				t.Fatal("tool must not start")
 			}
