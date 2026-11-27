@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/governance"
 	"github.com/cordum/cordum/core/infra/config"
@@ -18,6 +19,9 @@ import (
 func (s *server) handleGovernanceHealth(w http.ResponseWriter, r *http.Request) {
 	if err := s.requireRole(r, "admin"); err != nil {
 		writeForbidden(w, r, err)
+		return
+	}
+	if !s.requireLicensePermission(w, r, auth.PermGovernanceRead) {
 		return
 	}
 

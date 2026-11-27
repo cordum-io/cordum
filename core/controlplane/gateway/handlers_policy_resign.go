@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/infra/locks"
@@ -25,9 +26,13 @@ const resignPackLockResource = "packs:global"
 const resignPackLockTTL = 60 * time.Second
 
 // handleResignPolicyBundle is an explicit operator action, never called automatically.
-// It requires the admin role.
+// It admits the admin role, then takes the policy.write license break-glass decision
+// that the other policy bundle writes take.
 func (s *server) handleResignPolicyBundle(w http.ResponseWriter, r *http.Request) {
 	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+		return
+	}
+	if !s.requireLicensePermission(w, r, auth.PermPolicyWrite) {
 		return
 	}
 	id := policybundles.BundleIDFromRequest(r)
