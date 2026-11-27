@@ -596,6 +596,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- CI: the required OpenAPI Validate check regenerates the Python client with
+  `sdk/python/scripts/generate.sh` and fails when the result differs from the committed
+  `sdk/python/src/cordum_sdk/_generated`. A spec change that alters the generated client,
+  including one that only changes schemas or response codes, must ship the regenerated
+  client. To check locally, install the generator extra (`sdk/python/README.md`) and run
+  `bash sdk/python/scripts/check-generated.sh` (task-3d040551).
+
 - Safety kernel: when one of its action-layer gates denies a request, the kernel
   publishes an `actiongate.denied` audit event on `sys.audit.export`, which the
   gateway's audit consumer exports to SIEM and appends to the audit chain. The kernel
