@@ -7,6 +7,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- MCP: JSON-RPC errors no longer expose execution ids. Errors caused by
+  Cordum's own stores carry a fixed message, such as `internal error`, and
+  the detail is in the gateway log (#492, task-e489e0c5).
 - Scheduler: the tenant concurrency cap (`max_concurrent_jobs`) and the
   license tier's concurrent-job limit now hold when jobs of one tenant are
   admitted at the same time, on one scheduler or several. The check and the
