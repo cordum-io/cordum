@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Job trace, worker and deadline index writes now run one key at a time on Redis Cluster. The deadline sweep skips index entries with no recorded deadline.
+
 - API keys: creating a key from a user session or a static API key, and revoking a key, now work
   on Redis Cluster instead of failing with `CROSSSLOT`. The key record is written before its lookup
   indexes, and a revoked key stays refused even if its prefix index entry outlives the revoke.
