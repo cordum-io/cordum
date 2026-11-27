@@ -31,15 +31,36 @@ func (s *server) requireLicensePermission(w http.ResponseWriter, r *http.Request
 	state := s.currentBreakGlassState()
 	if licensing.IsAllowedUnderLicenseState(state, permission) {
 		if isBreakGlassState(state) {
-			s.emitBreakGlassAudit(r, state, permission)
+			s.recordBreakGlassAllow(w, r, state, permission)
 		}
-		s.logBreakGlassDecision(r, state, permission, "allow")
 		return true
 	}
 
 	s.logBreakGlassDecision(r, state, permission, "deny")
 	writeBreakGlassDenied(w, state)
 	return false
+}
+
+// recordBreakGlassAllow writes the allow record of a break-glass decision: the audit
+// event, the decision log line and the allow count. Behind instrumented it writes them
+// once the request is answered, and only for an answer below 400 or a connection
+// upgrade, so a request that a later check refuses writes none. A handler called
+// without instrumented writes them at once.
+func (s *server) recordBreakGlassAllow(w http.ResponseWriter, r *http.Request, state licensing.BreakGlassState, permission string) {
+	record := func() {
+		s.emitBreakGlassAudit(r, state, permission)
+		s.logBreakGlassDecision(r, state, permission, "allow")
+	}
+	rec, ok := w.(*statusRecorder)
+	if !ok {
+		record()
+		return
+	}
+	rec.whenAnswered(func(status int) {
+		if status < http.StatusBadRequest {
+			record()
+		}
+	})
 }
 
 func (s *server) emitBreakGlassAudit(r *http.Request, state licensing.BreakGlassState, permission string) {

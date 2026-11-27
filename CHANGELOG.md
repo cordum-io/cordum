@@ -17,6 +17,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `license.grace_restricted` in grace and `license.degraded` in degraded and invalid,
   and stores nothing; `cordumctl policy resign` then exits 1. The valid, warning and
   missing license states are unchanged (task-e8b0d09e).
+- License break-glass: the `license.breakglass_activated` audit event, the
+  `license break-glass decision` log line with decision `allow` and the `allow` count of
+  `license_breakglass_decisions_total` are written once the gateway answers the request,
+  and only when it answers with a status below 400 or upgrades the connection. A request
+  that a later permission, tenant, plan, step-up or credential check refuses writes none
+  of them (task-774fcbd2).
 - Auth: role names are matched exactly. Routes and checks that require the admin role
   admit only `admin`. A principal keeps the role it was given, whether it authenticates
   with a static API key, a session, or a JWT, OIDC or SAML role claim. A role list that

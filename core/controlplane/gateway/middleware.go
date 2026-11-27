@@ -762,14 +762,48 @@ func hstsMaxAge() int64 {
 	return defaultHSTSMaxAge
 }
 
+// statusRecorder records the response status. The response is answered by the first
+// WriteHeader, Write, Flush or successful Hijack, or by instrumented when the handler
+// returns without writing; hooks queued with whenAnswered then run once with that status.
 type statusRecorder struct {
 	http.ResponseWriter
-	status int
+	status   int
+	answered int
+	onAnswer []func(status int)
+}
+
+// whenAnswered runs fn with the answer status, at once when the response is already
+// answered and otherwise when it is answered.
+func (r *statusRecorder) whenAnswered(fn func(status int)) {
+	if r.answered != 0 {
+		fn(r.answered)
+		return
+	}
+	r.onAnswer = append(r.onAnswer, fn)
+}
+
+// answer marks the response answered with status and runs the queued hooks, once.
+func (r *statusRecorder) answer(status int) {
+	if r.answered != 0 {
+		return
+	}
+	r.answered = status
+	hooks := r.onAnswer
+	r.onAnswer = nil
+	for _, fn := range hooks {
+		fn(status)
+	}
 }
 
 func (r *statusRecorder) WriteHeader(code int) {
 	r.status = code
+	r.answer(code)
 	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *statusRecorder) Write(b []byte) (int, error) {
+	r.answer(r.status)
+	return r.ResponseWriter.Write(b)
 }
 
 // Hijack forwards websocket hijacking support to the underlying writer when available.
@@ -778,11 +812,16 @@ func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if !ok {
 		return nil, nil, fmt.Errorf("hijacker not supported")
 	}
-	return hj.Hijack()
+	conn, rw, err := hj.Hijack()
+	if err == nil {
+		r.answer(http.StatusSwitchingProtocols)
+	}
+	return conn, rw, err
 }
 
 // Flush preserves streaming support if the wrapped writer implements it.
 func (r *statusRecorder) Flush() {
+	r.answer(r.status)
 	if f, ok := r.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
