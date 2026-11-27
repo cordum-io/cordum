@@ -86,7 +86,7 @@ func (r *userRecord) toUser() *User {
 
 // RedisUserStore implements UserStore using Redis for persistence.
 type RedisUserStore struct {
-	client *redis.Client
+	client redis.UniversalClient
 
 	// fallbackThrottle provides bounded brute-force protection when Redis is
 	// unavailable. Entries are keyed with loginThrottleKey(username, ip) and
@@ -103,11 +103,10 @@ type fallbackEntry struct {
 
 // NewRedisUserStore creates a new Redis-backed user store.
 func NewRedisUserStore(redisURL string) (*RedisUserStore, error) {
-	opts, err := redisutil.ParseOptions(redisURL)
+	client, err := redisutil.NewClient(redisURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse redis url: %w", err)
 	}
-	client := redis.NewClient(opts)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {
@@ -126,7 +125,7 @@ func NewRedisUserStore(redisURL string) (*RedisUserStore, error) {
 }
 
 // NewRedisUserStoreFromClient creates a RedisUserStore using an existing Redis client.
-func NewRedisUserStoreFromClient(client *redis.Client) *RedisUserStore {
+func NewRedisUserStoreFromClient(client redis.UniversalClient) *RedisUserStore {
 	return &RedisUserStore{client: client}
 }
 

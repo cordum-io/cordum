@@ -44,16 +44,15 @@ func (h *LegalHold) IsActive() bool {
 
 // LegalHoldStore manages legal holds on audit data in Redis.
 type LegalHoldStore struct {
-	client *redis.Client
+	client redis.UniversalClient
 }
 
 // NewLegalHoldStore creates a new Redis-backed legal hold store.
 func NewLegalHoldStore(redisURL string) (*LegalHoldStore, error) {
-	opts, err := redisutil.ParseOptions(redisURL)
+	client, err := redisutil.NewClient(redisURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse redis url: %w", err)
 	}
-	client := redis.NewClient(opts)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {
@@ -63,7 +62,7 @@ func NewLegalHoldStore(redisURL string) (*LegalHoldStore, error) {
 }
 
 // NewLegalHoldStoreFromClient creates a LegalHoldStore from an existing client.
-func NewLegalHoldStoreFromClient(client *redis.Client) *LegalHoldStore {
+func NewLegalHoldStoreFromClient(client redis.UniversalClient) *LegalHoldStore {
 	return &LegalHoldStore{client: client}
 }
 

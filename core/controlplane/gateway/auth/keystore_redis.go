@@ -35,16 +35,15 @@ func unmarshalManagedKey(raw []byte) (ManagedKey, error) {
 
 // RedisKeyStore implements KeyStore using Redis for persistence.
 type RedisKeyStore struct {
-	client *redis.Client
+	client redis.UniversalClient
 }
 
 // NewRedisKeyStore creates a new Redis-backed API key store.
 func NewRedisKeyStore(redisURL string) (*RedisKeyStore, error) {
-	opts, err := redisutil.ParseOptions(redisURL)
+	client, err := redisutil.NewClient(redisURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse redis url: %w", err)
 	}
-	client := redis.NewClient(opts)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {
@@ -54,7 +53,7 @@ func NewRedisKeyStore(redisURL string) (*RedisKeyStore, error) {
 }
 
 // NewRedisKeyStoreFromClient creates a RedisKeyStore using an existing Redis client.
-func NewRedisKeyStoreFromClient(client *redis.Client) *RedisKeyStore {
+func NewRedisKeyStoreFromClient(client redis.UniversalClient) *RedisKeyStore {
 	return &RedisKeyStore{client: client}
 }
 

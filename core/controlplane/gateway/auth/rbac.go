@@ -277,16 +277,15 @@ const (
 
 // RBACStore manages RBAC role definitions in Redis.
 type RBACStore struct {
-	client *redis.Client
+	client redis.UniversalClient
 }
 
 // NewRBACStore creates a new Redis-backed RBAC store.
 func NewRBACStore(redisURL string) (*RBACStore, error) {
-	opts, err := redisutil.ParseOptions(redisURL)
+	client, err := redisutil.NewClient(redisURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse redis url: %w", err)
 	}
-	client := redis.NewClient(opts)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {
@@ -296,7 +295,7 @@ func NewRBACStore(redisURL string) (*RBACStore, error) {
 }
 
 // NewRBACStoreFromClient creates an RBACStore using an existing Redis client.
-func NewRBACStoreFromClient(client *redis.Client) *RBACStore {
+func NewRBACStoreFromClient(client redis.UniversalClient) *RBACStore {
 	return &RBACStore{client: client}
 }
 

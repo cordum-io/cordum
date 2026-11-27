@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Gateway: key, user, RBAC and legal-hold stores now use the shared cluster-aware Redis client.
+
 - MCP: the gateway's HTTP MCP endpoint now serves nine read tools instead of answering
   501 `read_only_unsupported`: listing jobs, runs, workflows, topics, agents and pending
   approvals, reading a run and its timeline, and verifying the audit chain. Each read runs through

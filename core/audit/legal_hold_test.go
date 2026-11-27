@@ -9,9 +9,31 @@ import (
 	"testing"
 
 	miniredis "github.com/alicebob/miniredis/v2"
+	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/cordum/cordum/core/internal/testredis"
 	"github.com/redis/go-redis/v9"
 )
+
+func TestNewLegalHoldStoreTakesClusterClient(t *testing.T) {
+	for _, cluster := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cluster=%t", cluster), func(t *testing.T) {
+			srv := miniredis.RunT(t)
+			addrs := ""
+			if cluster {
+				addrs = srv.Addr() + "," + srv.Addr()
+			}
+			t.Setenv("REDIS_CLUSTER_ADDRESSES", addrs)
+			store, err := NewLegalHoldStore(testredis.URL(srv.Addr()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = store.Close() })
+			if got := redisutil.IsCluster(store.client); got != cluster {
+				t.Errorf("IsCluster = %t, want %t", got, cluster)
+			}
+		})
+	}
+}
 
 func newTestLegalHoldStore(t *testing.T) (*LegalHoldStore, *miniredis.Miniredis) {
 	t.Helper()
