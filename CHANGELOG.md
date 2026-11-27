@@ -7,6 +7,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Gateway: the `sys.job.>` and `sys.audit.>` stream subscriptions act on a job result
+  sent under a worker session (handshake `warn` or `enforce`, or the production profile)
+  only when the job is recorded under the session's tenant and, when the job has a
+  dispatch record, that record names the same worker and tenant. A job stored without a
+  tenant matches no worker session. A result that fails the check is acknowledged, is not
+  relayed to stream clients or applied to a workflow run, and is logged as
+  `bus tap packet refused` with `reason=dispatch` (`tap=job_stream` on `sys.job.>`).
+  Results under a control-plane service token, and token-less packets in `warn` mode, are
+  outside this check (task-68c9eb16).
+
 - Approvals: an approve that fails after a policy-drift refresh, on a workflow-run lookup error
   or a failed resolution write, leaves the stored safety decision unchanged, so the same approve
   can be retried once the store recovers instead of answering 409 "job not awaiting approval"

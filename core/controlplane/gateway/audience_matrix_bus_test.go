@@ -76,6 +76,9 @@ func TestAudienceMatrixBusGatewayStream(t *testing.T) {
 	client := registerGatewayEdgeStreamClient(t, m.s, "", true)
 	identity.Run(t, identity.BusGatewayStream, func(t *testing.T, c identity.Credential) identity.Result {
 		job, worker := "job-matrix-stream-"+string(c), "worker-matrix-stream-"+string(c)
+		if err := m.s.jobStore.SetJobMeta(context.Background(), &pb.JobRequest{JobId: job, TenantId: matrixTenant}); err != nil {
+			t.Fatalf("record job tenant: %v", err)
+		}
 		sender := worker
 		if c == identity.ServiceToken {
 			sender = matrixServiceSender

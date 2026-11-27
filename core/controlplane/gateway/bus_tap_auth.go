@@ -83,6 +83,32 @@ func (a *busTapAuth) refuse(tap, reason string) {
 	slog.Warn("bus tap packet refused", "tap", tap, "reason", reason)
 }
 
+// busTapResultFromDispatchedWorker reports whether the taps may act on p's job
+// result. A worker session's result counts only for a job recorded under the
+// session's tenant whose dispatch record, when it has one, names that worker
+// and tenant. Claims-less packets (off mode, warn without a token, an audit
+// publisher token), packets without a result and reserved service identities
+// are not checked here.
+func (s *server) busTapResultFromDispatchedWorker(ctx context.Context, p *pb.BusPacket, c *scheduler.SessionTokenClaims) bool {
+	res := p.GetJobResult()
+	if c == nil || res == nil || servicetoken.IsReservedIdentity(c.Subject) {
+		return true
+	}
+	jobID := strings.TrimSpace(res.GetJobId())
+	worker, tenant := strings.TrimSpace(c.Subject), strings.TrimSpace(c.Tenant)
+	if jobTenant, ok := s.tenantForJobID(ctx, jobID); !ok || jobTenant != tenant {
+		return false
+	}
+	dispatchWorker, dispatchTenant, err := s.jobStore.GetDispatchAssignment(ctx, jobID)
+	if err != nil {
+		return false
+	}
+	if dispatchWorker == "" && dispatchTenant == "" {
+		return true
+	}
+	return dispatchWorker == worker && dispatchTenant == tenant
+}
+
 // busTapIdentityMatches applies the tap's credential rule to verified claims.
 // A heartbeat needs the sender's own bound worker session, the scheduler's
 // rule in engine_session_boundary.go verifiedIdentityMatches. A DLQ packet
