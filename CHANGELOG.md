@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Decision-log queries with multiple filters now use single-key commands on Redis Cluster while preserving ordering and pagination.
+
 - Job trace, worker and deadline index writes now run one key at a time on Redis Cluster. The deadline sweep skips index entries with no recorded deadline.
 
 - API keys: creating a key from a user session or a static API key, and revoking a key, now work

@@ -24,7 +24,6 @@ const (
 	decisionLogPrefix          = "gov:dec:"
 	decisionLogRecordFieldJSON = "json"
 	decisionLogQueryWorkFactor = 10
-	decisionLogTempIndexTTL    = 60 * time.Second
 )
 
 var _ model.DecisionLogStore = (*RedisDecisionLogStore)(nil)
@@ -175,12 +174,9 @@ func (s *RedisDecisionLogStore) QueryDecisions(ctx context.Context, query model.
 		return model.DecisionPage{}, err
 	}
 
-	sourceKey, cleanup, err := s.querySourceKey(ctx, query)
+	sourceKey, filterKeys, err := s.querySourceKey(ctx, query)
 	if err != nil {
 		return model.DecisionPage{}, err
-	}
-	if cleanup != nil {
-		defer cleanup()
 	}
 
 	cursorTS, cursorID, hasCursor, err := decodeDecisionCursor(query.Cursor)
@@ -234,6 +230,10 @@ func (s *RedisDecisionLogStore) QueryDecisions(ctx context.Context, query model.
 			break
 		}
 		offset += int64(len(zs))
+		zs, err = s.filterDecisionMembers(ctx, zs, filterKeys)
+		if err != nil {
+			return model.DecisionPage{}, err
+		}
 		scanned += len(zs)
 
 		ids := make([]string, 0, len(zs))
@@ -277,7 +277,7 @@ func (s *RedisDecisionLogStore) QueryDecisions(ctx context.Context, query model.
 	return model.DecisionPage{Items: items, NextCursor: nextCursor}, nil
 }
 
-func (s *RedisDecisionLogStore) querySourceKey(ctx context.Context, query model.DecisionQuery) (string, func(), error) {
+func (s *RedisDecisionLogStore) querySourceKey(ctx context.Context, query model.DecisionQuery) (string, []string, error) {
 	filterKeys := make([]string, 0, 4)
 	if query.RuleID != "" {
 		filterKeys = append(filterKeys, decisionRuleIndexKey(query.Tenant, query.RuleID))
@@ -303,25 +303,54 @@ func (s *RedisDecisionLogStore) querySourceKey(ctx context.Context, query model.
 		return filterKeys[0], nil, nil
 	}
 
-	tempKey := decisionTempIndexKey(query)
-	weights := make([]float64, len(filterKeys))
-	weights[0] = 1
-	for i := 1; i < len(weights); i++ {
-		weights[i] = 0
+	pipe := s.client.Pipeline()
+	counts := make([]*redis.IntCmd, len(filterKeys))
+	for i, key := range filterKeys {
+		counts[i] = pipe.ZCount(ctx, key, strconv.FormatInt(query.Since, 10), strconv.FormatInt(query.Until, 10))
 	}
-	if err := s.client.ZInterStore(ctx, tempKey, &redis.ZStore{
-		Keys:      filterKeys,
-		Weights:   weights,
-		Aggregate: "MAX",
-	}).Err(); err != nil {
-		return "", nil, fmt.Errorf("build decision filter intersection: %w", err)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return "", nil, fmt.Errorf("count decision filter members: %w", err)
 	}
-	if err := s.client.Expire(ctx, tempKey, decisionLogTempIndexTTL).Err(); err != nil {
-		return "", nil, fmt.Errorf("expire decision filter intersection: %w", err)
+	smallest := 0
+	for i, count := range counts {
+		if count.Val() < counts[smallest].Val() {
+			smallest = i
+		}
 	}
-	return tempKey, func() {
-		_ = s.client.Del(context.Background(), tempKey).Err()
-	}, nil
+	source := filterKeys[smallest]
+	return source, append(filterKeys[:smallest], filterKeys[smallest+1:]...), nil
+}
+
+func (s *RedisDecisionLogStore) filterDecisionMembers(ctx context.Context, zs []redis.Z, keys []string) ([]redis.Z, error) {
+	if len(keys) == 0 {
+		return zs, nil
+	}
+	pipe := s.client.Pipeline()
+	cmds := make([]*redis.FloatCmd, 0, len(zs)*len(keys))
+	for _, z := range zs {
+		for _, key := range keys {
+			cmds = append(cmds, pipe.ZScore(ctx, key, fmt.Sprint(z.Member)))
+		}
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("query decision filter membership: %w", err)
+	}
+	kept := zs[:0]
+	for i, z := range zs {
+		present := true
+		for _, cmd := range cmds[i*len(keys) : (i+1)*len(keys)] {
+			if err := cmd.Err(); err != nil {
+				if !errors.Is(err, redis.Nil) {
+					return nil, fmt.Errorf("query decision filter membership: %w", err)
+				}
+				present = false
+			}
+		}
+		if present {
+			kept = append(kept, z)
+		}
+	}
+	return kept, nil
 }
 
 func (s *RedisDecisionLogStore) fetchDecisionRecords(ctx context.Context, tenant string, ids []string) ([]model.DecisionLogRecord, []string, error) {
@@ -465,22 +494,6 @@ func decisionTopicIndexKey(tenant, topic string) string {
 
 func decisionVerdictIndexKey(tenant, verdict string) string {
 	return decisionTenantPrefix(tenant) + "idx:verdict:" + verdict
-}
-
-func decisionTempIndexKey(query model.DecisionQuery) string {
-	sum := sha256.Sum256([]byte(strings.Join([]string{
-		query.Tenant,
-		query.Topic,
-		query.RuleID,
-		string(query.Verdict),
-		query.AgentID,
-		query.Cursor,
-		strconv.FormatInt(query.Since, 10),
-		strconv.FormatInt(query.Until, 10),
-		strconv.Itoa(query.Limit),
-		strconv.FormatInt(time.Now().UTC().UnixNano(), 10),
-	}, "|")))
-	return decisionTenantPrefix(query.Tenant) + "tmp:" + hex.EncodeToString(sum[:8])
 }
 
 func decisionRecordID(record model.DecisionLogRecord) string {
