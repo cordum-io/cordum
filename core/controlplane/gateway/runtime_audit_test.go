@@ -14,6 +14,8 @@ import (
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	wf "github.com/cordum/cordum/core/workflow"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
 
@@ -184,4 +186,136 @@ func runtimeRequireOneEntry(t *testing.T, s *server, sink *recordingAuditSender,
 	}
 	require.NoError(t, json.Unmarshal(api.Body.Bytes(), &response))
 	require.Equal(t, entries, response.Items)
+}
+
+func runtimeWorkflow(t *testing.T, s *server) *wf.Workflow {
+	t.Helper()
+	s.workflowEng = wf.NewEngine(s.workflowStore, s.bus)
+	wfDef := &wf.Workflow{ID: "wf-runtime-audit", OrgID: "default", Name: "Runtime audit",
+		Steps: map[string]*wf.Step{"approve": {ID: "approve", Type: wf.StepTypeApproval}}}
+	require.NoError(t, s.workflowStore.SaveWorkflow(context.Background(), wfDef))
+	return wfDef
+}
+
+func runtimeRunRequest(path, id, idempotencyKey string) *http.Request {
+	r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
+	r.Header.Set("X-Tenant-ID", "default")
+	if idempotencyKey != "" {
+		r.Header.Set("Idempotency-Key", idempotencyKey)
+	}
+	r.SetPathValue("id", id)
+	return r
+}
+
+func TestRuntimeAudit_StartRunAuditFailureCreatesNoRun(t *testing.T) {
+	s, _, hooked, _ := auditPersistServer(t)
+	wfDef := runtimeWorkflow(t, s)
+	hooked.AddHook(auditPersistHook{failKey: auditPersistLogKey})
+	logs := storeWriterLogs(t)
+	ctx := context.Background()
+
+	rr := httptest.NewRecorder()
+	s.handleStartRun(rr, runtimeRunRequest("/api/v1/workflows/"+wfDef.ID+"/runs", wfDef.ID, "start-key"))
+
+	require.Equal(t, http.StatusInternalServerError, rr.Code, rr.Body.String())
+	require.Contains(t, rr.Body.String(), "run not dispatched: its audit entry was not stored")
+	runs, err := s.workflowStore.ListRunsByWorkflow(ctx, wfDef.ID, 10)
+	require.NoError(t, err)
+	require.Empty(t, runs, "no run record may exist")
+	pending, err := s.workflowStore.ListRunIDsByStatus(ctx, wf.RunStatusPending, 10)
+	require.NoError(t, err)
+	require.Empty(t, pending, "the reconciler must find nothing to start")
+	require.Empty(t, s.bus.(*stubBus).published)
+	_, err = s.workflowStore.GetRunByIdempotencyKey(ctx, "start-key")
+	require.ErrorIs(t, err, redis.Nil, "the idempotency key is released for a retry")
+	require.Len(t, auditPersistErrors(logs, "start"), 1)
+}
+
+func TestRuntimeAudit_StartRunReplayStoresOneEntry(t *testing.T) {
+	s, _, _, _ := auditPersistServer(t)
+	wfDef := runtimeWorkflow(t, s)
+	sink := &recordingAuditSender{}
+	s.auditExporter = sink
+	var runIDs []string
+	var r *http.Request
+	for range 2 {
+		r = runtimeRunRequest("/api/v1/workflows/"+wfDef.ID+"/runs", wfDef.ID, "replay-key")
+		rr := httptest.NewRecorder()
+		s.handleStartRun(rr, r)
+		require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+		var resp map[string]string
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+		runIDs = append(runIDs, resp["run_id"])
+	}
+
+	require.Equal(t, runIDs[0], runIDs[1], "the replay must reuse the run")
+	runtimeRequireOneEntry(t, s, sink, r, policybundles.PolicyAuditEntry{
+		Action: "start", ResourceType: "run", ResourceID: runIDs[0], ResourceName: wfDef.Name,
+		ActorID: policybundles.PolicyActorID(r), Role: policybundles.PolicyRole(r), Message: "start run " + runIDs[0],
+	})
+}
+
+func TestRuntimeAudit_RerunAuditFailureLeavesNewRunFailed(t *testing.T) {
+	s, _, hooked, _ := auditPersistServer(t)
+	wfDef := runtimeWorkflow(t, s)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	orig := &wf.WorkflowRun{ID: "run-orig", WorkflowID: wfDef.ID, OrgID: "default", Status: wf.RunStatusFailed,
+		Steps: map[string]*wf.StepRun{}, CreatedAt: now, UpdatedAt: now}
+	require.NoError(t, s.workflowStore.CreateRun(ctx, orig))
+	hooked.AddHook(auditPersistHook{failKey: auditPersistLogKey})
+
+	rr := httptest.NewRecorder()
+	s.handleRerunRun(rr, runtimeRunRequest("/api/v1/workflow-runs/"+orig.ID+"/rerun", orig.ID, ""))
+
+	require.Equal(t, http.StatusInternalServerError, rr.Code, rr.Body.String())
+	require.Contains(t, rr.Body.String(), "rerun not dispatched: its audit entry was not stored")
+	runs, err := s.workflowStore.ListRunsByWorkflow(ctx, wfDef.ID, 10)
+	require.NoError(t, err)
+	require.Len(t, runs, 2)
+	for _, run := range runs {
+		if run.ID != orig.ID {
+			require.Equal(t, wf.RunStatusFailed, run.Status, "the reconciler must not start the rerun")
+			require.Empty(t, run.Steps, "the rerun must not have started")
+		}
+	}
+	require.Empty(t, s.bus.(*stubBus).published)
+}
+
+// TestRuntimeAudit_SideEffectFirstReportsLostEntry covers callers whose change
+// is stored before the entry: they answer 500 and say what was applied.
+func TestRuntimeAudit_SideEffectFirstReportsLostEntry(t *testing.T) {
+	cases := []struct {
+		name, want string
+		call       func(t *testing.T, s *server) *httptest.ResponseRecorder
+		applied    func(t *testing.T, s *server)
+	}{
+		{
+			name: "create workflow", want: "workflow created but its audit entry was not stored",
+			call: func(t *testing.T, s *server) *httptest.ResponseRecorder {
+				r := httptest.NewRequest(http.MethodPost, "/api/v1/workflows",
+					strings.NewReader(`{"id":"wf-created","org_id":"default","name":"Created","steps":{"approve":{"type":"approval"}}}`))
+				r.Header.Set("X-Tenant-ID", "default")
+				rr := httptest.NewRecorder()
+				s.handleCreateWorkflow(rr, r)
+				return rr
+			},
+			applied: func(t *testing.T, s *server) {
+				_, err := s.workflowStore.GetWorkflow(context.Background(), "wf-created")
+				require.NoError(t, err)
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _, hooked, _ := auditPersistServer(t)
+			hooked.AddHook(auditPersistHook{failKey: auditPersistLogKey})
+
+			rr := tc.call(t, s)
+
+			require.Equal(t, http.StatusInternalServerError, rr.Code, rr.Body.String())
+			require.Contains(t, rr.Body.String(), tc.want)
+			tc.applied(t, s)
+		})
+	}
 }
