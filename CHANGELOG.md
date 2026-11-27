@@ -7,6 +7,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Stores: agent identity create, decision-log append, and DLQ add and delete now work on Redis
+  Cluster instead of failing with `CROSSSLOT`. Each record is written before its index entries,
+  a DLQ delete removes the index entry before the record, and a decision-log append whose index
+  write fails removes its record.
+
 - Gateway: key, user, RBAC and legal-hold stores now use the shared cluster-aware Redis client.
 
 - Workflows: saving and deleting workflows, and creating, updating and deleting workflow runs,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/cordum/cordum/core/internal/testredis"
+	"github.com/cordum/cordum/core/model"
 )
 
 const (
@@ -73,6 +75,22 @@ func TestSplitWritesSucceedOnCluster(t *testing.T) {
 				t.Fatal("Delete left the entry or its index member")
 			}
 		}},
+		{"append decision", func(t *testing.T, mr *miniredis.Miniredis, client redis.UniversalClient) {
+			s := NewRedisDecisionLogStoreFromClient(client)
+			record := splitWriteDecision()
+			if err := s.AppendDecision(ctx, record); err != nil {
+				t.Fatalf("AppendDecision: %v", err)
+			}
+			id := decisionRecordID(record)
+			if got := mr.TTL(decisionRecordKey(splitWriteTenant, id)); got != s.ttl {
+				t.Fatalf("decision record TTL = %v; want %v", got, s.ttl)
+			}
+			for _, key := range splitWriteDecisionIndexKeys(record) {
+				if !splitWriteIndexed(mr, key, id) {
+					t.Fatalf("%s does not hold the record id", key)
+				}
+			}
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -85,6 +103,7 @@ func TestSplitWritesSucceedOnCluster(t *testing.T) {
 // A failed record write must leave no index entry pointing at it.
 func TestSplitWritesRecordBeforeIndex(t *testing.T) {
 	ctx := context.Background()
+	decision := splitWriteDecision()
 	cases := []struct {
 		name      string
 		recordKey string
@@ -102,6 +121,10 @@ func TestSplitWritesRecordBeforeIndex(t *testing.T) {
 		{"dlq add", dlqEntryKey("dlq-1"), []string{dlqIndexKey()}, "dlq-1",
 			func(client redis.UniversalClient) error {
 				return NewDLQStoreFromClient(client, time.Hour).Add(ctx, splitWriteDLQEntry("dlq-1", 100))
+			}},
+		{"append decision", decisionRecordKey(splitWriteTenant, decisionRecordID(decision)), splitWriteDecisionIndexKeys(decision), decisionRecordID(decision),
+			func(client redis.UniversalClient) error {
+				return NewRedisDecisionLogStoreFromClient(client).AppendDecision(ctx, decision)
 			}},
 	}
 	for _, tc := range cases {
@@ -143,6 +166,41 @@ func TestDLQDeleteRemovesIndexFirst(t *testing.T) {
 	}
 }
 
+// A failed index write removes the record, so the backfill that skips recorded
+// decisions can repair it; a query skips and drops the members it left.
+func TestDecisionLogIndexFailureRemovesRecord(t *testing.T) {
+	ctx := context.Background()
+	mr := miniredis.RunT(t)
+	record := splitWriteDecision()
+	id := decisionRecordID(record)
+	failure := errors.New("index write failed")
+	hook := splitWriteHook{key: decisionPrimaryIndexKey(splitWriteTenant), err: failure, afterRun: true}
+	err := NewRedisDecisionLogStoreFromClient(splitWriteClient(t, mr, hook)).AppendDecision(ctx, record)
+	if !errors.Is(err, failure) || !strings.Contains(err.Error(), "append decision log record") {
+		t.Fatalf("AppendDecision error = %v; want the wrapped %v", err, failure)
+	}
+	if mr.Exists(decisionRecordKey(splitWriteTenant, id)) {
+		t.Fatal("record kept although its index write failed")
+	}
+	ruleIndex := decisionRuleIndexKey(splitWriteTenant, record.RuleID)
+	if !splitWriteIndexed(mr, ruleIndex, id) {
+		t.Fatal("the failed index pipeline did not run")
+	}
+	reader := NewRedisDecisionLogStoreFromClient(testredis.NewMiniClusterClient(t, mr.Addr()))
+	page, err := reader.QueryDecisions(ctx, model.DecisionQuery{Tenant: splitWriteTenant, RuleID: record.RuleID})
+	if err != nil {
+		t.Fatalf("QueryDecisions: %v", err)
+	}
+	if len(page.Items) != 0 {
+		t.Fatalf("QueryDecisions returned %d items; want none", len(page.Items))
+	}
+	for _, key := range []string{decisionPrimaryIndexKey(splitWriteTenant), ruleIndex} {
+		if splitWriteIndexed(mr, key, id) {
+			t.Fatalf("%s still holds the record id after the query", key)
+		}
+	}
+}
+
 func TestAgentIdentityListSkipsIndexEntryWithoutRecord(t *testing.T) {
 	ctx := context.Background()
 	mr := miniredis.RunT(t)
@@ -176,6 +234,23 @@ func splitWriteIdentity() AgentIdentity {
 
 func splitWriteDLQEntry(jobID string, createdAt int64) DLQEntry {
 	return DLQEntry{JobID: jobID, Topic: "job.split", CreatedAt: time.Unix(createdAt, 0).UTC()}
+}
+
+func splitWriteDecision() model.DecisionLogRecord {
+	return model.DecisionLogRecord{
+		Tenant: splitWriteTenant, JobID: "job-split", RuleID: "rule-split", AgentID: splitWriteAgentID,
+		Topic: "job.split", Verdict: model.SafetyDeny, Timestamp: time.Now().UTC().UnixMilli(),
+	}
+}
+
+func splitWriteDecisionIndexKeys(record model.DecisionLogRecord) []string {
+	return []string{
+		decisionPrimaryIndexKey(record.Tenant),
+		decisionRuleIndexKey(record.Tenant, record.RuleID),
+		decisionAgentIndexKey(record.Tenant, record.AgentID),
+		decisionTopicIndexKey(record.Tenant, record.Topic),
+		decisionVerdictIndexKey(record.Tenant, model.DecisionVerdictDeny),
+	}
 }
 
 func splitWriteIndexed(mr *miniredis.Miniredis, key, member string) bool {
