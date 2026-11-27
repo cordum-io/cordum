@@ -39,7 +39,7 @@ A failing proof stays an open finding under the review process, not a weaker tes
 | DI-C10 | retention cleanup | `core/infra/artifacts/redis_store.go` (`RedisStore.Put`); `core/infra/artifacts/redis_store.go` (`RedisStore.ttlFor`); `core/infra/artifacts/content_store.go` (`RedisStore.PutContent`); `core/infra/artifacts/content_store.go` (`RedisStore.RetainContent`) | `TestRetentionProofDIC10` |
 | DI-C11 | retention cleanup | `core/infra/store/redis_store.go` (`RedisStore.DeleteContext`); `core/infra/store/redis_store.go` (`RedisStore.PutResult`) | `TestRetentionProofDIC11` |
 | DI-C12 | retention cleanup | `core/contextwindow/engine/service.go` (`Service.UpdateMemory`) | `TestRetentionProofDIC12` |
-| DI-C13 | retention cleanup | `core/telemetry/store.go` (`Store.SaveSnapshot`); `core/telemetry/store.go` (`Store.trimHistory`) | pending PR2-08-SERVICES |
+| DI-C13 | retention cleanup | `core/telemetry/store.go` (`Store.SaveSnapshot`); `core/telemetry/store.go` (`Store.trimHistory`) | `TestRetentionProofDIC13` |
 | DI-C14 | no cleanup path | none | none: No automatic deletion of persistent telemetry metadata; operator-managed removal |
 | DI-C15 | no cleanup path | none | none: No Cordum deletion path for already exported metrics or telemetry copies |
 | DI-C16 | no cleanup path | none | none: No Cordum backup-deletion path; operators manage persistence files and backup copies |
@@ -65,7 +65,7 @@ A failing proof stays an open finding under the review process, not a weaker tes
 | DI-C36 | explicit delete only | `core/infra/store/eval_dataset_store.go` (`EvalDatasetStore.DeleteEvalDataset`) | none: Datasets persist until DeleteEvalDataset. |
 | DI-C37 | retention cleanup | `core/infra/store/eval_run_store.go` (`EvalRunStore.DeleteRun`); `core/infra/store/eval_run_store.go` (`EvalRunStore.GCExpired`); `core/controlplane/gateway/handlers_evals_runs.go` (`server.deleteEvalRunPending`) | `TestRetentionProofDIC37`, open finding PR2-08-F4 |
 | DI-C38 | no cleanup path | none | none: No user-record deletion; Delete disables the record and drops its email index, tenant membership and sessions; user:id entries remain |
-| DI-C39 | retention cleanup | `core/controlplane/gateway/auth/userstore_redis.go` (`RedisUserStore.DeleteSession`); `core/controlplane/gateway/auth/userstore_redis.go` (`RedisUserStore.DeleteUserSessions`); `core/controlplane/gateway/auth/userstore_redis.go` (`RedisUserStore.ClearFailedLogins`); `core/controlplane/gateway/auth/userstore_redis.go` (`RedisUserStore.DeleteSAMLState`); `core/controlplane/gateway/auth/oidc_flow.go` (`redisOIDCStateStore.Delete`) | pending PR2-08-SERVICES |
+| DI-C39 | retention cleanup | `core/controlplane/gateway/auth/userstore_redis.go` (`RedisUserStore.DeleteSession`); `core/controlplane/gateway/auth/userstore_redis.go` (`RedisUserStore.DeleteUserSessions`); `core/controlplane/gateway/auth/userstore_redis.go` (`RedisUserStore.ClearFailedLogins`); `core/controlplane/gateway/auth/userstore_redis.go` (`RedisUserStore.DeleteSAMLState`); `core/controlplane/gateway/auth/oidc_flow.go` (`redisOIDCStateStore.Delete`) | `TestRetentionProofDIC39` |
 | DI-C40 | no cleanup path | none | none: No key-record deletion; Revoke marks the record revoked and drops only its prefix lookup |
 | DI-C41 | no cleanup path | none | none: No deletion path; the token is overwritten when set again and SCIM user metadata stays after deactivation |
 | DI-C42 | explicit delete only | `core/controlplane/gateway/auth/scim.go` (`RedisUserStore.deleteSCIMGroup`) | none: Groups persist until explicit deleteSCIMGroup. |
@@ -73,7 +73,7 @@ A failing proof stays an open finding under the review process, not a weaker tes
 | DI-C44 | retention cleanup | `core/auth/delegation/revocation.go` (`RedisRevocationStore.Revoke`); `core/auth/delegation/cascade.go` (`RedisRevocationStore.CascadeRevoke`); `core/controlplane/gateway/handlers_delegation.go` (`server.allowDelegationIssue`) | pending PR2-08-SERVICES |
 | DI-C45 | retention cleanup | `core/controlplane/scheduler/session_token.go` (`SessionTokenIssuer.persistIssue`); `core/controlplane/scheduler/handshake_challenge.go` (`RedisHandshakeChallengeStore.Consume`) | pending PR2-08-SERVICES |
 | DI-C46 | retention cleanup | `core/controlplane/gateway/mcp_approvals.go` (`MCPApprovalStore.EnqueueMCPApproval`); `core/controlplane/gateway/mcp_approvals.go` (`MCPApprovalStore.pruneIndexFor`) | pending PR2-08-SERVICES |
-| DI-C47 | retention cleanup | `core/controlplane/copilot/store_redis.go` (`RedisStore.AppendMessage`) | pending PR2-08-SERVICES |
+| DI-C47 | retention cleanup | `core/controlplane/copilot/store_redis.go` (`RedisStore.AppendMessage`) | `TestRetentionProofDIC47`, open finding PR2-08-F6 |
 | DI-C48 | retention cleanup | `core/controlplane/gateway/middleware.go` (`redisRateLimiter.Allow`); `core/controlplane/safetykernel/velocity.go` (`velocityChecker.CheckAndRecord`) | pending PR2-08-SERVICES |
 | DI-C49 | retention cleanup | `core/infra/store/job_store.go` (`RedisJobStore.ReleaseLock`); `core/infra/locks/redis_store.go` (`RedisStore.Release`) | `TestRetentionProofDIC49` |
 | DI-C50 | explicit delete only | `core/controlplane/scheduler/saga.go` (`SagaManager.popCompensation`); `core/controlplane/scheduler/saga.go` (`SagaManager.Rollback`) | none: Rollback drains compensation entries; recorded-step sets never expire. |
