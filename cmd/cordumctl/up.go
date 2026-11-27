@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -286,7 +287,41 @@ func ensureDevCerts(composeDir string) {
 	}
 }
 
+// ensureDevBootstrapEnv fills composeDir's .env with missing dev credentials under the bootstrap lock, held from
+// before .env is read until the result is built, so concurrent runs never return credentials the file lacks.
 func ensureDevBootstrapEnv(composeDir string) (devBootstrapResult, error) {
+	unlock, err := lockDevBootstrap(composeDir)
+	if err != nil {
+		return devBootstrapResult{}, err
+	}
+	res, err := ensureDevBootstrapEnvLocked(composeDir)
+	if unlockErr := unlock(); unlockErr != nil {
+		return devBootstrapResult{}, errors.Join(err, unlockErr)
+	}
+	return res, err
+}
+
+// lockDevBootstrap creates composeDir's bootstrap lock file exclusively. It never takes over an existing
+// lock, even one a killed run left behind; its error tells the user to delete that file.
+func lockDevBootstrap(composeDir string) (func() error, error) {
+	lockPath := filepath.Clean(filepath.Join(composeDir, ".cordum-dev-bootstrap.lock"))
+	f, err := os.OpenFile(lockPath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+	if os.IsExist(err) {
+		return nil, fmt.Errorf("%s exists: another `cordumctl up --dev` is bootstrapping %s; retry when it finishes, or delete the lock file if none is running", lockPath, composeDir)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("create %s: %w", lockPath, err)
+	}
+	return func() error {
+		closeErr := f.Close()
+		if err := os.Remove(lockPath); err != nil {
+			return fmt.Errorf("remove %s: %w", lockPath, err)
+		}
+		return closeErr
+	}, nil
+}
+
+func ensureDevBootstrapEnvLocked(composeDir string) (devBootstrapResult, error) {
 	envPath := filepath.Join(composeDir, ".env")
 	var existing string
 	// #nosec G304 -- local compose directory .env managed by CLI.
@@ -412,11 +447,12 @@ func ensureDevBootstrapEnv(composeDir string) (devBootstrapResult, error) {
 		if !ok {
 			return devBootstrapResult{}, fmt.Errorf("generated %s has no effective CORDUM_API_KEY", envPath)
 		}
-		// os.WriteFile keeps an existing file's mode, so restrict .env before it gets credentials.
+		// Windows cannot replace a read-only file, so restrict an existing .env to 0600 (and writable) first.
 		if err := os.Chmod(envPath, 0o600); err != nil && !os.IsNotExist(err) {
 			return devBootstrapResult{}, fmt.Errorf("chmod %s: %w", envPath, err)
 		}
-		if err := os.WriteFile(envPath, []byte(candidate), 0o600); err != nil {
+		// Stage and rename, so a failed write leaves the previous .env intact rather than truncated.
+		if err := atomicWriteManagedSettings(envPath, []byte(candidate)); err != nil {
 			return devBootstrapResult{}, fmt.Errorf("write %s: %w", envPath, err)
 		}
 	}
