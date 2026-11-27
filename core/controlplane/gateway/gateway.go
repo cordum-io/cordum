@@ -914,20 +914,17 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	// Wire distributed rate limiters. Use Redis-backed counters by default;
 	// fall back to in-memory when REDIS_RATE_LIMIT=false or Redis unavailable.
 	redisRL := strings.ToLower(strings.TrimSpace(os.Getenv("REDIS_RATE_LIMIT")))
-	// Both branches use one API limit: API_RATE_LIMIT_RPS/BURST over the tier
-	// default, clamped to the license tier's requests per second.
-	apiRPSDefault, apiBurstDefault := s.tierRateLimitDefaults()
-	apiRPS, apiBurst := rateLimitFromEnv("API_RATE_LIMIT_RPS", "API_RATE_LIMIT_BURST", apiRPSDefault, apiBurstDefault)
-	apiRPS, apiBurst = clampRateLimitToEntitlements(apiRPS, apiBurst, s.currentEntitlements())
+	var apiRLClient redis.UniversalClient
 	if redisRL != "false" && redisRL != "0" && redisRL != "no" && jobStore != nil {
-		redisClient := jobStore.Client()
+		apiRLClient = jobStore.Client()
 		pubRPS, pubBurst := rateLimitFromEnv("API_PUBLIC_RATE_LIMIT_RPS", "API_PUBLIC_RATE_LIMIT_BURST", defaultPublicRateLimitRPS, defaultPublicRateLimitBurst)
-		s.apiRL = newRedisRateLimiter(redisClient, apiRPS, apiBurst)
-		s.publicRL = newRedisRateLimiter(redisClient, pubRPS, pubBurst)
+		s.publicRL = newRedisRateLimiter(apiRLClient, pubRPS, pubBurst)
 	} else {
-		s.apiRL = newKeyedRateLimiterFromEnvWithDefaults(apiRPS, apiBurst)
 		s.publicRL = newPublicRateLimiterFromEnvWithDefaults(defaultPublicRateLimitRPS, defaultPublicRateLimitBurst)
 	}
+	// Both branches apply one API limit, recomputed for the current license
+	// state on each request (see apiRateLimit).
+	s.apiRL = newAPIRateLimiter(s, apiRLClient)
 
 	// Instance registry: self-register this gateway replica in Redis.
 	instanceID := registry.ResolveInstanceID()
