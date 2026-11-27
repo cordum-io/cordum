@@ -884,11 +884,10 @@ func (s *RedisJobStore) GetState(ctx context.Context, jobID string) (model.JobSt
 }
 
 func (s *RedisJobStore) SetResultPtr(ctx context.Context, jobID, resultPtr string) error {
-	pipe := s.client.TxPipeline()
-	pipe.Set(ctx, jobResultPtrKey(jobID), resultPtr, s.metaTTL)
-	pipe.HSet(ctx, jobMetaKey(jobID), "result_ptr", resultPtr)
-	_, err := pipe.Exec(ctx)
-	if err != nil {
+	if err := s.client.Set(ctx, jobResultPtrKey(jobID), resultPtr, s.metaTTL).Err(); err != nil {
+		return fmt.Errorf("job store set result ptr %s: %w", jobID, err)
+	}
+	if err := s.client.HSet(ctx, jobMetaKey(jobID), "result_ptr", resultPtr).Err(); err != nil {
 		return fmt.Errorf("job store set result ptr %s: %w", jobID, err)
 	}
 	if exists, existsErr := s.client.Exists(ctx, jobRuntimeKey(jobID)).Result(); existsErr != nil {
@@ -1845,14 +1844,23 @@ func (s *RedisJobStore) SetSafetyDecision(ctx context.Context, jobID string, rec
 	}
 	encoded, _ := json.Marshal(entry)
 
-	pipe := s.client.TxPipeline()
-	pipe.HSet(ctx, jobMetaKey(jobID), fields)
-	pipe.RPush(ctx, jobDecisionKey(jobID), string(encoded))
-	if s.metaTTL > 0 {
-		pipe.Expire(ctx, jobMetaKey(jobID), s.metaTTL)
-		pipe.Expire(ctx, jobDecisionKey(jobID), s.metaTTL)
+	_, err := s.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.RPush(ctx, jobDecisionKey(jobID), string(encoded))
+		if s.metaTTL > 0 {
+			pipe.Expire(ctx, jobDecisionKey(jobID), s.metaTTL)
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("job store set safety decision %s: %w", jobID, err)
 	}
-	_, err := pipe.Exec(ctx)
+	_, err = s.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.HSet(ctx, jobMetaKey(jobID), fields)
+		if s.metaTTL > 0 {
+			pipe.Expire(ctx, jobMetaKey(jobID), s.metaTTL)
+		}
+		return nil
+	})
 	if err != nil {
 		return fmt.Errorf("job store set safety decision %s: %w", jobID, err)
 	}
@@ -1982,18 +1990,20 @@ func (s *RedisJobStore) SetOutputDecision(ctx context.Context, jobID string, rec
 	if err != nil {
 		return fmt.Errorf("marshal output safety record: %w", err)
 	}
-	pipe := s.client.TxPipeline()
 	ttl := time.Duration(0)
 	if s.metaTTL > 0 {
 		ttl = s.metaTTL
 	}
-	pipe.Set(ctx, outputDecisionKey(jobID), string(encoded), ttl)
-	pipe.HSet(ctx, jobMetaKey(jobID), metaFieldOutputSafety, string(encoded))
-	if s.metaTTL > 0 {
-		pipe.Expire(ctx, jobMetaKey(jobID), s.metaTTL)
-		pipe.Expire(ctx, outputDecisionKey(jobID), s.metaTTL)
+	if err := s.client.Set(ctx, outputDecisionKey(jobID), string(encoded), ttl).Err(); err != nil {
+		return fmt.Errorf("job store set output decision %s: %w", jobID, err)
 	}
-	_, err = pipe.Exec(ctx)
+	_, err = s.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.HSet(ctx, jobMetaKey(jobID), metaFieldOutputSafety, string(encoded))
+		if s.metaTTL > 0 {
+			pipe.Expire(ctx, jobMetaKey(jobID), s.metaTTL)
+		}
+		return nil
+	})
 	if err != nil {
 		return fmt.Errorf("job store set output decision %s: %w", jobID, err)
 	}
