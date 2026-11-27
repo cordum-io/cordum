@@ -814,7 +814,10 @@ func (s *server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.appendAuditEntryNamed(r.Context(), "change_password", "user", authCtx.PrincipalID, user.Username, authCtx.PrincipalID, authCtx.Role, "change password")
+	if err := s.appendNamedAuditEntry(r.Context(), "change_password", "user", authCtx.PrincipalID, user.Username, authCtx.PrincipalID, authCtx.Role, "change password"); err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "password changed but its audit entry was not stored")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -918,7 +921,10 @@ func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.appendAuditEntryNamed(r.Context(), "create", "user", user.ID, user.Username, authCtx.PrincipalID, authCtx.Role, "create user "+user.Username)
+	if err := s.appendNamedAuditEntry(r.Context(), "create", "user", user.ID, user.Username, authCtx.PrincipalID, authCtx.Role, "create user "+user.Username); err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "user created but its audit entry was not stored")
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, AuthUser{
@@ -1046,7 +1052,10 @@ func (s *server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.appendAuditEntryNamed(r.Context(), "update", "user", userID, updated.Username, authCtx.PrincipalID, authCtx.Role, "update user "+updated.Username)
+	if err := s.appendNamedAuditEntry(r.Context(), "update", "user", userID, updated.Username, authCtx.PrincipalID, authCtx.Role, "update user "+updated.Username); err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "user updated but its audit entry was not stored")
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, userResponse(updated))
 }
@@ -1107,6 +1116,7 @@ func (s *server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Must complete: the delete removes authority, so a lost entry is only logged (ERROR).
 	s.appendAuditEntryNamed(r.Context(), "delete", "user", userID, user.Username, authCtx.PrincipalID, authCtx.Role, "delete user "+user.Username)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -1173,7 +1183,10 @@ func (s *server) handleChangeUserPassword(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	s.appendAuditEntryNamed(r.Context(), "change_password", "user", userID, user.Username, authCtx.PrincipalID, authCtx.Role, "admin changed password for "+user.Username)
+	if err := s.appendNamedAuditEntry(r.Context(), "change_password", "user", userID, user.Username, authCtx.PrincipalID, authCtx.Role, "admin changed password for "+user.Username); err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "password changed but its audit entry was not stored")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -1430,7 +1443,15 @@ func (s *server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.appendAuditEntryNamed(r.Context(), "create", "api_key", mk.ID, mk.Name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "create api key: "+mk.Name)
+	// The store assigns mk.ID in Create, so the entry cannot come first. A key
+	// whose entry is lost is revoked and its secret is never returned.
+	if err := s.appendNamedAuditEntry(r.Context(), "create", "api_key", mk.ID, mk.Name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "create api key: "+mk.Name); err != nil {
+		if revokeErr := s.keyStore.Revoke(context.WithoutCancel(r.Context()), mk.ID, mk.Tenant); revokeErr != nil {
+			slog.Error("revoke unaudited api key failed", "key_id", mk.ID, "error", revokeErr)
+		}
+		writeErrorJSON(w, http.StatusInternalServerError, "API key not created: its audit entry was not stored")
+		return
+	}
 	s.emitAPIKeyCreated(r, mk)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1468,6 +1489,7 @@ func (s *server) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Must complete: the revoke removes authority, so a lost entry is only logged (ERROR).
 	s.appendAuditEntryNamed(r.Context(), "revoke", "api_key", id, "", policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "revoke api key: "+id)
 	s.emitAPIKeyRevoked(r, id, tenant)
 	w.WriteHeader(http.StatusNoContent)
