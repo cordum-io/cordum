@@ -416,6 +416,10 @@ func (s *server) startBusTaps() error {
 				tapAuth.refuse(tap, "dispatch")
 				return nil
 			}
+			if !s.busTapPacketInWorkerTenant(ctx, p, claims) {
+				tapAuth.refuse(tap, "tenant")
+				return nil
+			}
 			// Always broadcast to WS clients first — duplicate broadcasts are
 			// harmless (dashboard re-renders) and ensures visibility even on retry.
 			s.enqueueBusPacket(p)

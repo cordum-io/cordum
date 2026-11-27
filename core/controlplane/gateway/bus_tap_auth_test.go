@@ -241,6 +241,9 @@ func TestBusTapAuthRefusalLog(t *testing.T) {
 	bus.emit(capsdk.SubjectResult, &pb.BusPacket{SenderId: worker, AuthToken: hbToken, Payload: &pb.BusPacket_JobResult{
 		JobResult: &pb.JobResult{JobId: job, WorkerId: worker, Status: pb.JobStatus_JOB_STATUS_SUCCEEDED, ErrorMessage: message},
 	}})
+	bus.emit(capsdk.SubjectProgress, &pb.BusPacket{SenderId: worker, AuthToken: hbToken, Payload: &pb.BusPacket_JobProgress{
+		JobProgress: &pb.JobProgress{JobId: job, Message: message},
+	}})
 	_, warnBus := busTapGateway(t, scheduler.HandshakeModeWarn, false)
 	for range 2 {
 		warnBus.emit(capsdk.SubjectHeartbeat, busTapHeartbeatPacket(sender, sender, ""))
@@ -264,6 +267,7 @@ func TestBusTapAuthRefusalLog(t *testing.T) {
 		`level=WARN msg="bus tap packet refused" tap=job_stream reason=identity`,
 		`level=WARN msg="bus tap packet refused" tap=job_stream reason=reject_invalid`,
 		`level=WARN msg="bus tap packet refused" tap=job_stream reason=dispatch`,
+		`level=WARN msg="bus tap packet refused" tap=job_stream reason=tenant`,
 		`level=WARN msg="bus tap packet refused" tap=audit_stream reason=reject_invalid`,
 		`level=WARN msg="bus tap admitted a packet without a session token" tap=heartbeat`,
 	}
