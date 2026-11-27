@@ -79,9 +79,12 @@ func rateLimitFromEnv(rpsEnv, burstEnv string, defaultRPS, defaultBurst int) (in
 	return rps, burst
 }
 
-func newKeyedRateLimiterFromEnvWithDefaults(defaultRPS, defaultBurst int) *keyedRateLimiter {
-	rps, burst := rateLimitFromEnv("API_RATE_LIMIT_RPS", "API_RATE_LIMIT_BURST", defaultRPS, defaultBurst)
-	return newKeyedRateLimiter(rps, burst)
+// newKeyedRateLimiterFromEnvWithDefaults treats maxRPS and maxBurst as a
+// ceiling: API_RATE_LIMIT_RPS and API_RATE_LIMIT_BURST may lower them, never
+// raise them.
+func newKeyedRateLimiterFromEnvWithDefaults(maxRPS, maxBurst int) *keyedRateLimiter {
+	rps, burst := rateLimitFromEnv("API_RATE_LIMIT_RPS", "API_RATE_LIMIT_BURST", maxRPS, maxBurst)
+	return newKeyedRateLimiter(min(rps, maxRPS), min(burst, maxBurst))
 }
 
 func newPublicRateLimiterFromEnvWithDefaults(defaultRPS, defaultBurst int) *keyedRateLimiter {
