@@ -48,8 +48,10 @@ const (
 	// share the same ZSET on these keys (Q7 binding governor ruling,
 	// comment-a17f4f1c on task-de50a293). Tenant isolation is enforced
 	// at read time via the gate in ListFindings; cross-tenant members
-	// are SKIPPED (never deleted) by the indexIsTenantScoped=false
-	// branch — see the data-loss guard there.
+	// are SKIPPED by the indexIsTenantScoped=false branch. Cleanup
+	// removes a member from these sets only when its finding key is
+	// gone, and re-adds the members of a finding created at that id
+	// meanwhile (pruneFindingIndexes).
 	redisIndexKeySource  = "edge:shadow:index:source:"
 	redisIndexKeyCluster = "edge:shadow:index:cluster:"
 	redisIndexKeyRepo    = "edge:shadow:index:repo:"
@@ -1005,86 +1007,141 @@ func (s *RedisStore) getStaleCleanupStartHook() func(context.Context, string, []
 	return s.staleCleanupStartHook
 }
 
+// staleCleanupScope is cleanupStaleIDTx's decision on which index sets
+// pruneFindingIndexes may remove the id from.
+type staleCleanupScope int
+
+const (
+	// staleCleanupSkip: the finding is live for the tenant, or unreadable.
+	staleCleanupSkip staleCleanupScope = iota
+	// staleCleanupScoped: the finding is live under another tenant, so only
+	// the caller tenant's sets are pruned.
+	staleCleanupScoped
+	// staleCleanupFull: the finding key is gone or past retention.
+	staleCleanupFull
+)
+
 func (s *RedisStore) cleanupStaleID(ctx context.Context, tenant, id string) {
 	key := findingKey(id)
 	for attempt := 0; attempt < staleCleanupMaxTxRetries; attempt++ {
+		scope := staleCleanupSkip
 		err := s.client.Watch(ctx, func(tx *redis.Tx) error {
-			return s.cleanupStaleIDTx(ctx, tx, tenant, id, key)
+			var err error
+			scope, err = s.cleanupStaleIDTx(ctx, tx, tenant, id, key)
+			return err
 		}, key)
 		if errors.Is(err, redis.TxFailedErr) {
 			continue
+		}
+		if err == nil && scope != staleCleanupSkip {
+			s.pruneFindingIndexes(ctx, tenant, id, scope == staleCleanupFull)
 		}
 		return
 	}
 }
 
-func (s *RedisStore) cleanupStaleIDTx(ctx context.Context, tx *redis.Tx, tenant, id, key string) error {
+// cleanupStaleIDTx decides, under a WATCH of the finding key alone, whether
+// id is stale for tenant. On the full path its MULTI deletes only the
+// finding key; pruneFindingIndexes then prunes the index sets.
+func (s *RedisStore) cleanupStaleIDTx(ctx context.Context, tx *redis.Tx, tenant, id, key string) (staleCleanupScope, error) {
 	raw, err := tx.Get(ctx, key).Bytes()
 	if err == nil {
 		var current ShadowAgentFinding
 		if json.Unmarshal(raw, &current) == nil {
 			applyReadDefaults(&current)
 			if current.TenantID != "" && current.TenantID != tenant {
-				return txTenantScopedCleanup(ctx, tx, tenant, id)
+				return staleCleanupScoped, nil
 			}
 			if current.TenantID == tenant && !s.isExpiredTerminal(&current) {
-				return nil
+				return staleCleanupSkip, nil
 			}
 		}
 	} else if !errors.Is(err, redis.Nil) {
-		return nil
+		return staleCleanupSkip, nil
 	}
 	_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 		pipe.Del(ctx, key)
-		addTenantScopedFindingCleanup(ctx, pipe, tenant, id)
-		addSharedFindingCleanup(ctx, pipe, id)
 		return nil
 	})
-	return err
+	return staleCleanupFull, err
 }
 
-func txTenantScopedCleanup(ctx context.Context, tx *redis.Tx, tenant, id string) error {
-	_, err := tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-		addTenantScopedFindingCleanup(ctx, pipe, tenant, id)
-		return nil
-	})
-	return err
-}
-
-func addTenantScopedFindingCleanup(ctx context.Context, pipe redis.Pipeliner, tenant, id string) {
-	pipe.ZRem(ctx, tenantIndexKey(tenant), id)
-	for _, seg := range []string{redisIndexSegStatus, redisIndexSegRisk, redisIndexSegAgent, redisIndexSegOwner} {
-		// We don't know which secondary-index buckets the id lives in
-		// without the original fields. ZREM is idempotent and O(log N),
-		// so blasting every known closed-set value is acceptable.
-		for _, v := range knownEnumValuesForSeg(seg) {
-			pipe.ZRem(ctx, secondaryIndexKey(tenant, seg, v), id)
+// pruneFindingIndexes removes id from the sets the tenant's finding was
+// indexed in and deletes the tenant's index record. The sets are the
+// closed-set values (closedSetIndexKeys) plus every set the index record
+// names, so an expired record still prunes the closed sets. With shared
+// false only tenant-scoped sets are pruned: the id is live under another
+// tenant in the shared sets. It runs one plain pipeline of single-key
+// commands, then repairFindingIndexes re-adds a finding created at id
+// meanwhile.
+func (s *RedisStore) pruneFindingIndexes(ctx context.Context, tenant, id string, shared bool) {
+	refKey := findingIndexRefKey(tenant, id)
+	raw, err := s.client.Get(ctx, refKey).Bytes()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return
+	}
+	keys, sharedKeys := closedSetIndexKeys(tenant)
+	var fields findingIndexFields
+	if err == nil && json.Unmarshal(raw, &fields) == nil {
+		refScoped, refShared := findingIndexKeys(tenant, fields)
+		keys = append(keys, refScoped...)
+		sharedKeys = append(sharedKeys, refShared...)
+	}
+	if shared {
+		keys = append(keys, sharedKeys...)
+	}
+	_, err = s.client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		for _, key := range keys {
+			pipe.ZRem(ctx, key, id)
 		}
-	}
-}
-
-func addSharedFindingCleanup(ctx context.Context, pipe redis.Pipeliner, id string) {
-	// EDGE-143.5 — source index is closed-enum, so we blast all values.
-	// cluster/repo/signal indexes are open-set and intentionally leak stale
-	// members; list reads GET the JSON and skip missing records.
-	for _, src := range []string{SourceTypeLocal, SourceTypeKubernetes, SourceTypeCI, SourceTypeNetwork} {
-		pipe.ZRem(ctx, sourceIndexKey(src), id)
-	}
-}
-
-// knownEnumValuesForSeg returns the closed-set values we ZREM during
-// stale-index cleanup. For agent/owner segments the value-space is
-// open — we accept that cleanup leaks a few stale member entries until
-// the next ZADD overwrites them on a re-create.
-func knownEnumValuesForSeg(seg string) []string {
-	switch seg {
-	case redisIndexSegStatus:
-		return []string{string(FindingStatusDetected), string(FindingStatusResolved), string(FindingStatusSuppressed)}
-	case redisIndexSegRisk:
-		return []string{string(FindingRiskLow), string(FindingRiskMedium), string(FindingRiskHigh), string(FindingRiskCritical)}
-	default:
+		pipe.Del(ctx, refKey)
 		return nil
+	})
+	if err != nil {
+		return
 	}
+	s.repairFindingIndexes(ctx, tenant, id, shared)
+}
+
+// repairFindingIndexes re-applies the index writes and index record of a
+// live finding at id whose sets pruneFindingIndexes may have touched: the
+// caller tenant's, or any tenant's after a shared prune. The ZADDs and the
+// record SET are idempotent; like any finding write, the SET resets the
+// record's TTL.
+func (s *RedisStore) repairFindingIndexes(ctx context.Context, tenant, id string, shared bool) {
+	raw, err := s.client.Get(ctx, findingKey(id)).Bytes()
+	if err != nil {
+		return
+	}
+	var f ShadowAgentFinding
+	if json.Unmarshal(raw, &f) != nil {
+		return
+	}
+	applyReadDefaults(&f)
+	if f.TenantID == "" || (f.TenantID != tenant && !shared) || s.isExpiredTerminal(&f) {
+		return
+	}
+	_, _ = s.client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		addFindingIndexWrites(ctx, pipe, &f, float64(f.CreatedAt.UnixMilli()))
+		return s.addFindingIndexRefWrite(ctx, pipe, &f)
+	})
+}
+
+// closedSetIndexKeys returns the index sets whose values form a closed set,
+// which cleanup prunes even without an index record: the tenant index and
+// each status and risk value, then each source type (shared).
+func closedSetIndexKeys(tenant string) (scoped, shared []string) {
+	scoped = []string{tenantIndexKey(tenant)}
+	for _, v := range []FindingStatus{FindingStatusDetected, FindingStatusResolved, FindingStatusSuppressed} {
+		scoped = append(scoped, secondaryIndexKey(tenant, redisIndexSegStatus, string(v)))
+	}
+	for _, v := range []FindingRisk{FindingRiskLow, FindingRiskMedium, FindingRiskHigh, FindingRiskCritical} {
+		scoped = append(scoped, secondaryIndexKey(tenant, redisIndexSegRisk, string(v)))
+	}
+	for _, src := range []string{SourceTypeLocal, SourceTypeKubernetes, SourceTypeCI, SourceTypeNetwork} {
+		shared = append(shared, sourceIndexKey(src))
+	}
+	return scoped, shared
 }
 
 // chooseIndex picks the narrowest index for the query and returns the
