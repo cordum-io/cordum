@@ -1,0 +1,15 @@
+schema_version: 1
+endpoint_only:
+  - id: DI-E01
+    storage:
+      redis_keys:
+        - pattern: 'document:{suffix}'
+          path: core/store/documents.go
+control_plane:
+  - id: DI-C01
+    storage:
+      redis_keys:
+        - pattern: 'single:{tenant}'
+          path: core/store/records.go
+        - pattern: 'planted:secret:{tenant}'
+          path: core/other/secrets.go

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -61,7 +62,7 @@ func TestAgentIdentityCreateAndGet(t *testing.T) {
 		t.Fatalf("expected 2 data classifications, got %d", len(created.DataClassifications))
 	}
 
-	got, err := s.Get(ctx, "", created.ID)
+	got, err := s.GetAnyTenant(ctx, created.ID)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -76,6 +77,41 @@ func TestAgentIdentityCreateAndGet(t *testing.T) {
 	}
 	if got.RiskTier != "high" {
 		t.Fatalf("got risk_tier %q, want high", got.RiskTier)
+	}
+}
+
+func TestAgentIdentityEmptyTenantFailsClosed(t *testing.T) {
+	for _, tenant := range []string{"", "  "} {
+		t.Run(fmt.Sprintf("tenant=%q", tenant), func(t *testing.T) {
+			s := newTestAgentIdentityStore(t)
+			ctx := context.Background()
+			created, err := s.Create(ctx, AgentIdentity{
+				TenantID: "tenant-a", Name: "agent", Owner: "owner", RiskTier: "low",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			key := agentIdentityKeyPrefix + created.ID
+			before, err := s.client.Get(ctx, key).Result()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, err := s.Get(ctx, tenant, created.ID); err != nil || got != nil {
+				t.Errorf("Get = %v, %v; want nil, nil", got, err)
+			}
+			if got, err := s.Update(ctx, tenant, created.ID, AgentIdentity{Name: "updated"}); err == nil || got != nil {
+				t.Errorf("Update = %v, %v; want nil, error", got, err)
+			}
+			if err := s.Delete(ctx, tenant, created.ID); err == nil {
+				t.Error("Delete: want error")
+			}
+			if after, err := s.client.Get(ctx, key).Result(); err != nil || after != before {
+				t.Errorf("stored identity changed: %v", err)
+			}
+			if got, err := s.GetAnyTenant(ctx, created.ID); err != nil || !reflect.DeepEqual(got, created) {
+				t.Errorf("GetAnyTenant = %v, %v; want seeded identity", got, err)
+			}
+		})
 	}
 }
 
@@ -248,7 +284,7 @@ func TestAgentIdentityUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	updated, err := s.Update(ctx, "", created.ID, AgentIdentity{
+	updated, err := s.Update(ctx, "tenant-a", created.ID, AgentIdentity{
 		Name:     "updated-name",
 		RiskTier: "high",
 	})
@@ -269,7 +305,7 @@ func TestAgentIdentityUpdate(t *testing.T) {
 	}
 
 	// Verify persisted correctly by re-reading
-	refetched, err := s.Get(ctx, "", created.ID)
+	refetched, err := s.GetAnyTenant(ctx, created.ID)
 	if err != nil {
 		t.Fatalf("Get after update: %v", err)
 	}
@@ -281,13 +317,13 @@ func TestAgentIdentityUpdate(t *testing.T) {
 	}
 
 	// Verify invalid update is rejected
-	_, err = s.Update(ctx, "", created.ID, AgentIdentity{RiskTier: "extreme"})
+	_, err = s.Update(ctx, "tenant-a", created.ID, AgentIdentity{RiskTier: "extreme"})
 	if err == nil {
 		t.Fatal("expected error for invalid risk_tier")
 	}
 
 	// Verify update of non-existent identity returns error
-	_, err = s.Update(ctx, "", "nonexistent", AgentIdentity{Name: "x"})
+	_, err = s.Update(ctx, "tenant-a", "nonexistent", AgentIdentity{Name: "x"})
 	if err == nil {
 		t.Fatal("expected error for nonexistent identity")
 	}
@@ -314,7 +350,7 @@ func TestAgentIdentityMCPAllowlistsCreateAndUpdate(t *testing.T) {
 	assertStoreStrings(t, "AllowedResources", created.AllowedResources, []string{"cordum://docs/*", "cordum://repos/*"})
 	assertStoreStrings(t, "Entitlements", created.Entitlements, []string{"billing.export", "repo.read"})
 
-	updated, err := s.Update(ctx, "", created.ID, AgentIdentity{
+	updated, err := s.Update(ctx, "tenant-a", created.ID, AgentIdentity{
 		AllowedServers:   []string{"staging-mcp"},
 		AllowedResources: []string{},
 		Entitlements:     []string{"repo.write"},
@@ -340,7 +376,7 @@ func TestAgentIdentityGetNormalizesMissingMCPAllowlists(t *testing.T) {
 		t.Fatalf("seed legacy identity: %v", err)
 	}
 
-	got, err := s.Get(ctx, "", "legacy-agent")
+	got, err := s.GetAnyTenant(ctx, "legacy-agent")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -366,12 +402,12 @@ func TestAgentIdentityDelete(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	if err := s.Delete(ctx, "", created.ID); err != nil {
+	if err := s.Delete(ctx, "tenant-a", created.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 
 	// Should still be retrievable with revoked status
-	got, err := s.Get(ctx, "", created.ID)
+	got, err := s.GetAnyTenant(ctx, created.ID)
 	if err != nil {
 		t.Fatalf("Get after delete: %v", err)
 	}
@@ -383,7 +419,7 @@ func TestAgentIdentityDelete(t *testing.T) {
 	}
 
 	// Delete of non-existent should error
-	if err := s.Delete(ctx, "", "nonexistent"); err == nil {
+	if err := s.Delete(ctx, "tenant-a", "nonexistent"); err == nil {
 		t.Fatal("expected error for nonexistent identity")
 	}
 }

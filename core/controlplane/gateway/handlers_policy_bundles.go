@@ -221,10 +221,8 @@ func (s *server) handlePolicyOutputStats(w http.ResponseWriter, r *http.Request)
 	var lastCheckMicros int64
 
 	for _, job := range jobs {
-		if tenant := strings.TrimSpace(job.Tenant); tenant != "" {
-			if err := s.requireTenantAccess(r, tenant); err != nil {
-				continue
-			}
+		if !s.jobTenantAllowed(r, job.Tenant) {
+			continue
 		}
 		record, err := s.jobStore.GetOutputDecision(r.Context(), job.ID)
 		if err != nil || record.Decision == "" {
@@ -873,8 +871,12 @@ func (s *server) handleListPolicyAudit(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(w, r, "policy operation", err)
 		return
 	}
+	scopeTenant, scoped := s.policyAuditListScope(r)
 	filtered := make([]policybundles.PolicyAuditEntry, 0, len(entries))
 	for _, entry := range entries {
+		if scoped && (entry.Tenant == "" || entry.Tenant != scopeTenant) {
+			continue
+		}
 		if ruleID != "" && !strings.EqualFold(strings.TrimSpace(entry.ResourceID), ruleID) {
 			continue
 		}
@@ -949,10 +951,8 @@ func (s *server) listOutputPolicyAudit(r *http.Request, ruleID string, limit int
 		if job.State != model.JobStateQuarantined {
 			continue
 		}
-		if tenant := strings.TrimSpace(job.Tenant); tenant != "" {
-			if err := s.requireTenantAccess(r, tenant); err != nil {
-				continue
-			}
+		if !s.jobTenantAllowed(r, job.Tenant) {
+			continue
 		}
 		record, err := s.jobStore.GetOutputDecision(r.Context(), job.ID)
 		if err != nil || record.Decision == "" {
@@ -1315,6 +1315,40 @@ func policyAuditEntriesFromDoc(doc *configsvc.Document) ([]policybundles.PolicyA
 	return entries, nil
 }
 
+// policyAuditTenant returns the tenant to record on entry: the job's stored
+// tenant for a job entry, otherwise the tenant of a caller without
+// cross-tenant access. It returns "" when neither is known.
+func (s *server) policyAuditTenant(ctx context.Context, entry policybundles.PolicyAuditEntry) string {
+	if entry.ResourceType == "job" {
+		if s.jobStore == nil {
+			return ""
+		}
+		tenant, err := s.jobStore.GetTenant(ctx, entry.ResourceID)
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(tenant)
+	}
+	if authCtx := auth.FromContext(ctx); authCtx != nil && !authCtx.AllowCrossTenant {
+		return strings.TrimSpace(authCtx.Tenant)
+	}
+	return ""
+}
+
+// policyAuditListScope returns the tenant r's caller may list entries of and
+// true, or false when auth is off or the caller has cross-tenant access. A
+// caller with no auth context is scoped to "", which no entry matches.
+func (s *server) policyAuditListScope(r *http.Request) (string, bool) {
+	if s.auth == nil {
+		return "", false
+	}
+	authCtx := auth.FromRequest(r)
+	if authCtx == nil {
+		return "", true
+	}
+	return strings.TrimSpace(authCtx.Tenant), !authCtx.AllowCrossTenant
+}
+
 // prependPolicyAuditEntry puts added, given in append order, first in doc's
 // entries list, newest first, and keeps the newest 500. A list that does not
 // parse leaves doc unchanged.
@@ -1351,6 +1385,9 @@ func (s *server) appendPolicyAudit(ctx context.Context, entry policybundles.Poli
 	entry = normalizePolicyAuditEntry(entry)
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), policyAuditTimeout)
 	defer cancel()
+	if entry.Tenant == "" {
+		entry.Tenant = s.policyAuditTenant(ctx, entry)
+	}
 	err := s.policyAudit.append(entry, func(batch []policybundles.PolicyAuditEntry) error {
 		return s.configSvc.SetWithRetry(ctx, configsvc.Scope(policybundles.PolicyAuditScope), policybundles.PolicyAuditID, policyAuditAttempts,
 			func(doc *configsvc.Document) error { return prependPolicyAuditEntry(doc, batch...) })
@@ -1379,6 +1416,9 @@ func (s *server) commitPolicyWithAudit(ctx context.Context, apply func(doc *conf
 	entry = normalizePolicyAuditEntry(entry)
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), policyAuditTimeout)
 	defer cancel()
+	if entry.Tenant == "" {
+		entry.Tenant = s.policyAuditTenant(ctx, entry)
+	}
 	getOrNew := func(scope configsvc.Scope, id string) (*configsvc.Document, error) {
 		doc, err := s.configSvc.Get(ctx, scope, id)
 		if errors.Is(err, redis.Nil) {

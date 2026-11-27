@@ -227,7 +227,7 @@ func TestRuntimeAudit_StartRunAuditFailureCreatesNoRun(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, pending, "the reconciler must find nothing to start")
 	require.Empty(t, s.bus.(*stubBus).published)
-	_, err = s.workflowStore.GetRunByIdempotencyKey(ctx, "start-key")
+	_, err = s.workflowStore.GetRunByIdempotencyKey(ctx, "default", wfDef.ID, "start-key")
 	require.ErrorIs(t, err, redis.Nil, "the idempotency key is released for a retry")
 	require.Len(t, auditPersistErrors(logs, "start"), 1)
 }

@@ -141,7 +141,7 @@ func TestAdminAudit_CreateUserStoresAndExportsEntry(t *testing.T) {
 	entry := entries[0]
 	require.Equal(t, policybundles.PolicyAuditEntry{
 		ID: entry.ID, CreatedAt: entry.CreatedAt, Action: "create", ResourceType: "user",
-		ResourceID: created.ID, ResourceName: "audit-user", ActorID: "admin", Role: "admin",
+		ResourceID: created.ID, ResourceName: "audit-user", Tenant: "default", ActorID: "admin", Role: "admin",
 		Message: "create user audit-user",
 	}, entry)
 	require.Len(t, sink.events, 1)

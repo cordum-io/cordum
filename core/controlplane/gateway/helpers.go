@@ -1509,19 +1509,42 @@ func isNilStore(v any) bool {
 	return rv.Kind() == reflect.Ptr && rv.IsNil()
 }
 
+// jobTenantAllowed reports whether the caller may use a job stored under
+// tenant. A job whose tenant is empty is open only to callers with
+// cross-tenant access, or to every caller when no auth provider is set.
+func (s *server) jobTenantAllowed(r *http.Request, tenant string) bool {
+	if strings.TrimSpace(tenant) != "" {
+		return s.requireTenantAccess(r, tenant) == nil
+	}
+	if s == nil || s.auth == nil {
+		return true
+	}
+	ac := auth.FromRequest(r)
+	return ac != nil && ac.AllowCrossTenant
+}
+
 // requireJobTenantAccess verifies the caller has access to the tenant that
-// owns the given job. Returns false (and writes 403) if denied.
+// owns the given job. It writes 503 when the tenant lookup fails, 404 when the
+// job has no tenant the caller may use, and 403 for another tenant's job, and
+// returns false after writing.
 func (s *server) requireJobTenantAccess(w http.ResponseWriter, r *http.Request, jobID string) bool {
 	if s.jobStore == nil {
 		return true
 	}
-	if tenant, _ := s.jobStore.GetTenant(r.Context(), jobID); tenant != "" {
-		if err := s.requireTenantAccess(r, tenant); err != nil {
-			writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
-			return false
-		}
+	tenant, err := s.jobStore.GetTenant(r.Context(), jobID)
+	if err != nil && !errors.Is(err, redis.Nil) {
+		writeErrorJSON(w, http.StatusServiceUnavailable, "job store unavailable")
+		return false
 	}
-	return true
+	if s.jobTenantAllowed(r, tenant) {
+		return true
+	}
+	if strings.TrimSpace(tenant) == "" {
+		writeErrorJSON(w, http.StatusNotFound, "job not found")
+		return false
+	}
+	writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
+	return false
 }
 
 // requirePathParam extracts a path parameter and writes a 400 error if empty.

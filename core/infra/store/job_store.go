@@ -1668,8 +1668,8 @@ func (s *RedisJobStore) TrySetIdempotencyKeyScoped(ctx context.Context, tenant, 
 			if tErr != nil && tErr != redis.Nil {
 				return false, "", fmt.Errorf("job store idempotency tenant check %s: %w", jobID, tErr)
 			}
-			// Match if: no tenant in meta, empty tenant, or same tenant.
-			if metaTenant == "" || metaTenant == tenant {
+			// Match only when the legacy job's stored tenant is the caller's.
+			if metaTenant == tenant {
 				return false, legacyID, nil
 			}
 		}
@@ -1739,7 +1739,7 @@ func (s *RedisJobStore) GetJobByIdempotencyKeyScoped(ctx context.Context, tenant
 	if terr != nil && terr != redis.Nil {
 		return "", fmt.Errorf("job store get job by idempotency key scoped: %w", terr)
 	}
-	if legacyTenant != "" && legacyTenant != tenant {
+	if legacyTenant != tenant {
 		return "", redis.Nil
 	}
 	_ = s.SetIdempotencyKeyScoped(ctx, tenant, key, legacyID)

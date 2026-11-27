@@ -50,6 +50,13 @@ HELPER="${SANDBOX}/production_gate_functions.sh"
   extract_function json_escape
   extract_full_function write_results_json
   extract_function is_blocking_gate
+  extract_function api_url
+  extract_function api_code
+  extract_function api_body
+  extract_function has_mock_bank_worker
+  extract_function _recover_mock_bank_pid
+  extract_function issue_mock_bank_worker_credentials
+  extract_function ensure_mock_bank_worker
 } >"${HELPER}"
 # shellcheck source=/dev/null
 source "${HELPER}"
@@ -318,6 +325,122 @@ COMPOSE_FILE='D:\repo\docker-compose.porttest.yml'
 ensure_compose_cmd
 compose_joined="$(printf '<%s>' "${COMPOSE_CMD[@]}")"
 assert_contains "ensure_compose_cmd preserves Windows drive path" "${compose_joined}" '<-f><D:\repo\docker-compose.porttest.yml>'
+
+curl() {
+  jq -cn --args '$ARGS.positional' -- "$@" >>"${ISSUE_CALLS}"
+  if [[ "${*: -1}" == "${API_BASE}/api/v1/workers" ]]; then
+    printf '%s' '{"items":[{"pool":"demo-mock-bank"}]}'
+    return
+  fi
+  local status="${ISSUE_STATUS}"
+  if [[ "${ISSUE_FAIL_THIRD}" == 1 && $(wc -l <"${ISSUE_CALLS}") -eq 3 ]]; then
+    status=402
+  fi
+  printf '{"token":"%s"}\n%s' "${ISSUE_SENTINEL}" "${status}"
+}
+
+check_worker_issue() {
+  local status="$1" rc=0
+  ISSUE_STATUS="${status}"
+  : >"${ISSUE_CALLS}"
+  issue_mock_bank_worker_credentials >"${ISSUE_OUT}" 2>"${ISSUE_ERR}" || rc=$?
+  assert_eq "worker issue accepts ${status}" "${rc}" 0
+  assert_eq "worker issue ${status} sends seven requests" "$(wc -l <"${ISSUE_CALLS}")" 7
+  assert_not_contains "worker issue ${status} omits response token" \
+    "$(cat "${ISSUE_OUT}" "${ISSUE_ERR}")" "${ISSUE_SENTINEL}"
+}
+
+check_worker_issue_requests() {
+  local ids sent id expected="${SANDBOX}/issue-expected.jsonl"
+  ids="$(sed -n 's/^[[:space:]]*ID:[[:space:]]*"\([^"]*\)".*/\1/p' "${ROOT}/demo/mock-bank/worker/main.go")"
+  sent="$(jq -r '.[index("-d") + 1] | fromjson | .worker_id' "${ISSUE_CALLS}")"
+  assert_eq "worker issue IDs follow main.go order" "${sent}" "${ids}"
+  : >"${expected}"
+  while IFS= read -r id; do
+    jq -cn --arg id "${id}" --arg url "${API_BASE}/api/v1/workers/credentials" \
+      '["-sS", "-w", "\n%{http_code}", "-X", "POST", "--max-time", "30", "-k",
+        "-H", "X-API-Key: gate-test-key", "-H", "X-Tenant-ID: gate-test-tenant",
+        "-H", "Content-Type: application/json", "-d", ({worker_id:$id}|tojson), $url]' >>"${expected}"
+  done <<<"${ids}"
+  assert_eq "worker issue sends exact endpoint, body and headers per ID" \
+    "$(cat "${ISSUE_CALLS}")" "$(cat "${expected}")"
+}
+
+check_worker_issue_failure() {
+  local rc=0
+  ISSUE_FAIL_THIRD=1
+  : >"${ISSUE_CALLS}"
+  issue_mock_bank_worker_credentials >"${ISSUE_OUT}" 2>"${ISSUE_ERR}" || rc=$?
+  assert_eq "worker issue rejects 402" "$((rc != 0))" 1
+  assert_eq "worker issue stops on the third POST" "$(wc -l <"${ISSUE_CALLS}")" 3
+  assert_contains "worker issue error names the worker and status" "$(cat "${ISSUE_ERR}")" \
+    'could not issue a worker credential for megacorp-compliance-scanner (status=402)'
+  assert_not_contains "worker issue error omits response token" \
+    "$(cat "${ISSUE_OUT}" "${ISSUE_ERR}")" "${ISSUE_SENTINEL}"
+  : >"${ISSUE_CALLS}"
+  rc=0
+  ensure_mock_bank_worker >"${ISSUE_OUT}" 2>"${ISSUE_ERR}" || rc=$?
+  assert_eq "worker issue failure stops ensure" "$((rc != 0))" 1
+  assert_eq "worker issue failure starts no command" "$(cat "${ISSUE_STARTS}")" ""
+  assert_eq "worker issue failure writes no PID file" "$(test -e "${MOCK_BANK_PID_FILE}" && echo present || echo absent)" absent
+}
+
+check_worker_issue_reuse() {
+  local rc=0
+  ISSUE_FAIL_THIRD=0
+  ISSUE_STATUS=201
+  export CORDUM_PRODUCTION_GATE_REUSE_MOCK_BANK_WORKER=1
+  : >"${ISSUE_CALLS}"
+  ensure_mock_bank_worker >"${ISSUE_OUT}" 2>"${ISSUE_ERR}" || rc=$?
+  assert_eq "worker issue permits fleet reuse" "${rc}" 0
+  assert_eq "worker issue completes seven POSTs before the list read" \
+    "$(jq -r '.[index("-X") + 1]' "${ISSUE_CALLS}" | paste -sd, -)" 'POST,POST,POST,POST,POST,POST,POST,GET'
+  assert_eq "worker issue reuse starts no command" "$(cat "${ISSUE_STARTS}")" ""
+  assert_eq "worker issue reuse writes no PID file" "$(test -e "${MOCK_BANK_PID_FILE}" && echo present || echo absent)" absent
+  assert_not_contains "worker issue reuse omits response token" \
+    "$(cat "${ISSUE_OUT}" "${ISSUE_ERR}")" "${ISSUE_SENTINEL}"
+}
+
+# These fixtures are read by the extracted functions.
+# shellcheck disable=SC2034
+if declare -F issue_mock_bank_worker_credentials >/dev/null 2>&1; then
+  API_BASE=https://gate.test
+  CURL_TIMEOUT_OPTS=(--max-time 30)
+  CURL_TLS_OPTS=(-k)
+  AUTH_HEADERS=(-H 'X-API-Key: gate-test-key' -H 'X-Tenant-ID: gate-test-tenant')
+  JSON_HEADERS=(-H 'Content-Type: application/json')
+  ISSUE_CALLS="${SANDBOX}/issue-calls.jsonl"
+  ISSUE_OUT="${SANDBOX}/issue.out"
+  ISSUE_ERR="${SANDBOX}/issue.err"
+  ISSUE_STARTS="${SANDBOX}/issue-starts.log"
+  export ISSUE_STARTS
+  ISSUE_SENTINEL=worker-response-token-sentinel
+  ISSUE_FAIL_THIRD=0
+  MOCK_BANK_WORKER_PID=""
+  MOCK_BANK_WORKER_STARTED=0
+  MOCK_BANK_PID_FILE="${SANDBOX}/worker.pid"
+  ROOT_DIR="${ROOT}"
+  NATS_URL=nats://unused
+  REDIS_URL=redis://unused
+  log() { printf '%s\n' "$*"; }
+  : >"${ISSUE_STARTS}"
+  for command in nohup go; do
+    cat >"${FAKE_BIN}/${command}" <<'ISSUE_STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$0" >>"${ISSUE_STARTS}"
+exit 1
+ISSUE_STUB
+    chmod +x "${FAKE_BIN}/${command}"
+  done
+  check_worker_issue 201
+  check_worker_issue_requests
+  check_worker_issue 200
+  check_worker_issue_failure
+  check_worker_issue_reuse
+else
+  echo 'FAIL: worker issue behavior: issue_mock_bank_worker_credentials is not defined' >&2
+  FAIL=$((FAIL + 1))
+fi
 
 echo "SUMMARY: ${PASS} pass, ${FAIL} fail"
 if [[ "${FAIL}" -gt 0 ]]; then

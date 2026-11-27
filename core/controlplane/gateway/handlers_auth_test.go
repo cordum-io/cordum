@@ -475,7 +475,7 @@ func TestLoginHandler_DisabledUserRecordsThrottleAttempt(t *testing.T) {
 	s.handleLogin(rec, req)
 
 	requireStableErrorCode(t, rec, http.StatusUnauthorized, "AUTH_INVALID_CREDENTIALS")
-	if err := store.CheckLoginThrottle(ctx, "disabled-throttle", clientIP(req)); !errors.Is(err, auth.ErrLoginThrottled) {
+	if err := store.CheckLoginThrottle(ctx, "default", "disabled-throttle", clientIP(req)); !errors.Is(err, auth.ErrLoginThrottled) {
 		t.Fatalf("disabled-user login must record failed throttle attempt, got %v", err)
 	}
 }
@@ -501,9 +501,9 @@ func TestHandleAuthLogin_NoUserEnumerationViaResponseShape(t *testing.T) {
 	// Burn the throttled-user's attempt budget under the IP we'll reuse below.
 	const throttleIP = "192.0.2.7"
 	for i := 0; i < maxLoginAttempts()+2; i++ {
-		store.RecordFailedLogin(ctx, "throttled-user", throttleIP)
+		store.RecordFailedLogin(ctx, "default", "throttled-user", throttleIP)
 	}
-	if err := store.CheckLoginThrottle(ctx, "throttled-user", throttleIP); err == nil {
+	if err := store.CheckLoginThrottle(ctx, "default", "throttled-user", throttleIP); err == nil {
 		t.Fatalf("expected throttle to fire after burning budget")
 	}
 

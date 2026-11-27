@@ -18,6 +18,7 @@
 #   6. CORDUM_API_KEY exported (or inherited from `.env`).
 #   7. CORDUM_API_BASE defaults to https://127.0.0.1:8081 (HTTPS with the
 #      self-signed cert from `cordumctl generate-certs`).
+#   8. The script issues credentials for transfer agents 01 and 02 in the API key's tenant.
 #
 # Exit codes:
 #   0  pass — all three verdict paths reached their expected terminal state.
@@ -92,6 +93,16 @@ echo "[integration] installing mock-bank pack ..."
 "${cordumctl_bin}" pack install "$(to_cordumctl_path "${pack_dir}")" --upgrade
 
 # --- helpers ----------------------------------------------------------------
+
+issue_worker_credentials() {
+  local id
+  for id in megacorp-transfer-agent-01 megacorp-transfer-agent-02; do
+    if ! "${cordumctl_bin}" worker credential create --worker-id "${id}" >/dev/null; then
+      echo "ERROR: could not issue a worker credential for ${id}" >&2
+      exit 2
+    fi
+  done
+}
 
 # curl_api <method> <path>  —  auth-wrapped, tolerates self-signed TLS.
 curl_api() {
@@ -205,6 +216,7 @@ wait_for_status() {
 
 # --- preflight --------------------------------------------------------------
 
+issue_worker_credentials
 wait_for_workers || exit 2
 
 run_start_epoch="$(date +%s)"

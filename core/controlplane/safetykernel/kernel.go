@@ -1315,15 +1315,9 @@ func toProtoRemediations(remediations []config.PolicyRemediation) []*pb.PolicyRe
 // to avoid per-evaluation Redis lookups.
 //
 // tenant must be the calling request's own tenant (already resolved by the
-// caller — see evaluate()). The AgentIdentityStore lookup below uses an
-// empty-tenant lookup, which is a system-level bypass that skips the
-// store's own tenant check, so it must be verified here: without it, a
-// worker credential (or guessed agent_id) linked to another tenant's agent
-// identity could have that agent's risk_tier / data_classifications
-// influence policy decisions for jobs submitted by a different tenant. The
-// cache key includes the tenant for the same reason — keying on agentID
-// alone would let a cross-tenant lookup poison the cache entry that a
-// same-tenant request later reads.
+// caller — see evaluate()). Both the store lookup and the cache key are
+// scoped to that tenant, so cached identities stay within the request's
+// tenant as well as its agent ID.
 func (s *server) enrichAgentContext(ctx context.Context, tenant string, labels map[string]string, input *config.PolicyInput) {
 	if s.agentStore == nil || len(labels) == 0 {
 		return
@@ -1344,7 +1338,7 @@ func (s *server) enrichAgentContext(ctx context.Context, tenant string, labels m
 	identity := s.getAgentFromCache(cacheKey)
 	if identity == nil {
 		var err error
-		identity, err = s.agentStore.Get(ctx, "", agentID)
+		identity, err = s.agentStore.Get(ctx, tenant, agentID)
 		if err != nil {
 			slog.Warn("safety-kernel: agent identity lookup failed", "agent_id", agentID, "error", err)
 			return

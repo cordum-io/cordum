@@ -196,6 +196,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Context engine memory is stored per tenant. `BuildWindowRequest` has a new
+  `tenant_id` field. `BuildWindow` and `UpdateMemory` use stored memory only
+  for a request whose `tenant_id` is set, under the id
+  `<tenant>/<memory id>`. An id that already starts with `<tenant>/` is used
+  as is, and any other id containing `/` is refused. Without a usable
+  tenant, `BuildWindow` builds the window from the request payload alone,
+  and a chat or RAG `UpdateMemory` returns an error. Workflow-run chat
+  stores its history under the same id, qualified with the run's tenant.
+  Memory stored under an id without a tenant segment before this release is
+  not read (task-eeaba4b9).
+
+- Config: documents at team, workflow and step scope are stored per tenant,
+  under `cfg:{scope}:{tenant}/{id}` with the tenant path-escaped.
+  `GET /api/v1/config` and `PUT`/`POST /api/v1/config` at those scopes use
+  the caller's tenant; a caller with cross-tenant access selects one with
+  `X-Tenant-ID`. Effective config merges only the documents of the tenant it
+  is computed for. Documents stored at `cfg:{scope}:{id}` are not read; write
+  them again from their tenant (task-80a785cd).
+
+- Config: team, workflow and step documents record their tenant. A document
+  stored at `cfg:{scope}:{tenant}/{id}` without that tenant recorded is not
+  read and not merged into effective config, and `PUT`/`POST /api/v1/config`
+  answer `403` instead of replacing it. Delete such a key in Redis, then
+  write the document again from its tenant (task-42142ce4).
+
 - Auth: a static API key entry (`CORDUM_API_KEYS`, `CORDUM_API_KEYS_PATH`)
   whose role is `operator` now authenticates as `operator` instead of
   `admin`. `admin` and `viewer` are also kept as written, and `secops` is
@@ -388,6 +413,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `--allow-unauthenticated-http` is passed (#492, task-ee0dc819).
 
 ### Changed
+
+- Login: failed-login counters are kept per tenant. The per-IP and per-username counters key on the login's tenant (base64url-encoded), so failures recorded for a username count only toward that username's limits in that tenant. Counters recorded before this release are not read and expire within the lockout period.
+
+- Velocity rule stats: for callers without cross-tenant access, `GET /api/v1/policy/velocity-rules/stats` counts only buckets recorded under the caller's own tenant. Buckets without a tenant segment count only for callers with cross-tenant access.
+- Safety kernel: velocity rules count each tenant's requests in that tenant's own bucket, `cordum:velocity:{rule}:{tenant}:{key}` with the tenant base64url-encoded. A request without a tenant counts in the default tenant's bucket. Counts held under `cordum:velocity:{rule}:{key}` age out with their window.
 
 - A key that a managed API key creates through `POST /api/v1/auth/keys` is
   stored only if the calling key is unexpired when the gateway checks it and
@@ -1325,6 +1355,87 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Worker reads: a worker belongs to the tenant of its worker credential. For a
+  caller without cross-tenant access, `GET /api/v1/workers` lists only that
+  tenant's workers, `GET /api/v1/workers/{id}` and
+  `GET /api/v1/workers/{id}/jobs` answer 404 for any other worker, and the jobs
+  list holds only that tenant's jobs. A worker without a credential record is
+  listed only to callers with cross-tenant access (task-fa19ec96).
+
+- Mock-bank demo: `demo/mock-bank/integration_test.sh` issues worker
+  credentials in the API key's tenant for `megacorp-transfer-agent-01` and
+  `megacorp-transfer-agent-02` (`cordumctl worker credential create`, with
+  the printed token discarded) before it waits for their heartbeats, so
+  `GET /api/v1/workers` lists both agents. A rerun replaces both credentials.
+  The demo's other workers stay without credentials (task-50828e1f).
+
+- Test and demo scripts: `tools/scripts/e2e_test.sh` and
+  `tools/scripts/demo_guardrails_run.sh` issue a worker credential in the API
+  key's tenant for the worker each one starts (`hello-worker`,
+  `demo-guardrails-worker`) before waiting for its heartbeat, so
+  `GET /api/v1/workers` lists it. The token is discarded, and a rerun
+  replaces the credential (task-e7d1fe1d).
+
+- Production gate: before it starts or reuses the mock-bank fleet,
+  `tools/scripts/production_gate.sh` issues a worker credential in the API
+  key's tenant for each of the seven workers `demo/mock-bank/worker` starts,
+  so its readiness check finds them in `GET /api/v1/workers`. Each token is
+  discarded, and a new start replaces the credentials (task-729c47ac).
+
+- Governed A2A demo: `demo/a2a-governed/integration_test.sh` issues a worker
+  credential in the API key's tenant for `a2a-demo-worker` before it waits
+  for the worker's heartbeat, so `GET /api/v1/workers` lists the worker and
+  `GET /api/v1/workers/a2a-demo-worker/jobs` returns its jobs. The token is
+  discarded, and a rerun replaces the credential (task-f1a5c71d).
+
+- Workflow runs: `POST /api/v1/workflows/{id}/runs/{run_id}/cancel` reads the run's tenant before cancelling; a failed lookup returns `503`, and a run whose tenant cannot be read returns `404 run not found` to callers without cross-tenant access.
+
+- Audit: submit, approve and reject audit events and spans name the agent in a job's `agent_id` label only when that agent belongs to the job's tenant; otherwise they carry the label's id with no name or risk tier.
+
+- Approvals: when a job's tenant cannot be read, callers without cross-tenant
+  access get `404 job not found` from `POST /api/v1/approvals/{job_id}/approve`,
+  `/reject` and `/repair`, and a failed tenant lookup returns `503` from all
+  three.
+- Approvals: `POST /api/v1/approvals/{job_id}/approve` and `/reject` check the
+  job's tenant before its state. A caller who may not access that tenant gets
+  `403 tenant access denied` (`404 job not found` when the job's tenant cannot
+  be read) for a job in any state, and no audit entry is written
+  (task-c043017a).
+- Jobs: when a job's tenant cannot be read, for example after its metadata
+  expires (`JOB_META_TTL`, 7 days by default), callers without cross-tenant
+  access get `404 job not found` from `GET /api/v1/jobs/{id}/decisions`,
+  `POST /api/v1/jobs/{id}/cancel`, `DELETE /api/v1/dlq/{job_id}` and
+  `POST /api/v1/dlq/{job_id}/retry` for that job, and `NOT_FOUND` from gRPC
+  `GetJobStatus`. A failed tenant lookup returns `503` (gRPC `UNAVAILABLE`).
+  The output entries of `GET /api/v1/policy/audit?type=output` and
+  `GET /api/v1/policy/output/stats` include the job only for callers with
+  cross-tenant access, who can read its decisions and status and delete its
+  DLQ entry. The DLQ entry keeps its own expiry
+  (`CORDUM_DLQ_ENTRY_TTL_DAYS`, 30 days by default) (task-e845f244).
+- Workflow runs: `POST /api/v1/workflows/{id}/runs` stores each `Idempotency-Key`
+  reservation per tenant and workflow, under `wf:run:idem:{hash}`. A key stored
+  as `wf:run:idempotency:{key}` before this release still returns its run when
+  the repeat comes from that run's tenant and workflow (task-0b797b4b).
+- Config: `PUT` and `POST /api/v1/config` accept only the scopes `system`,
+  `org`, `team`, `workflow` and `step`, the same set `GET /api/v1/config`
+  accepts. Any other `scope` string gets 400 `CONFIG_REQUEST_INVALID`
+  ("invalid scope"), and the config store is neither read nor written. The
+  gateway reads its MCP argument-redaction rules from scope `gateway`; that
+  scope is not written through this endpoint (task-13eb1d1e).
+- Jobs: a submit whose idempotency key matches a legacy unscoped key
+  (`job:idempotency:{key}`) reuses that key's job only when the job's stored
+  tenant equals the caller's tenant. When the job's tenant cannot be read,
+  for example after its metadata expires (`JOB_META_TTL`, 7 days by default),
+  the submit is handled as a new job under the caller's tenant-scoped key
+  (task-e9209d0e).
+
+- Policy audit: each entry records a tenant: the job's tenant for job
+  entries, otherwise the tenant of a caller without cross-tenant access.
+  For callers without cross-tenant access, `GET /api/v1/policy/audit` lists
+  only entries recorded for their own tenant. Entries recorded before this
+  release carry no tenant and are listed only to callers with cross-tenant
+  access (task-1dbaae72).
+
 - `cordumctl governance tail` records a decision only from a `sys.audit.export` packet whose service token verifies as the audit export consumer requires: an `api-gateway` or `cordum-scheduler` token under the control-plane keys (`CORDUM_POLICY_PUBLIC_KEY_*`), or a publisher's token under its own `CORDUM_AUDIT_PUBLIC_KEY_*` key. The tail reads these keys from its environment, like the gateway. Other packets are counted as `refused` and write nothing (task-876183dc).
 
 - In production mode, the scheduler applies the API gateway's cancel and
@@ -1631,6 +1742,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `approval_ref`, then retry with `_approval_ref`.
 - The governed MCP demo worker retries a `429` on the approval poll, and its
   README lists the MCP, agent identity and endpoint prerequisites.
+- Schemas: a new schema id belongs to the tenant that registers it. A caller
+  bound to one tenant lists and reads platform schemas and its own tenant's;
+  another tenant's schema, like an id with no schema, answers `404` to a read
+  or delete. A register over another tenant's id, and a register over or
+  delete of a platform schema, answer `403`. Schemas registered before this
+  release, by pack install or by a cross-tenant caller, are platform schemas:
+  every tenant can read them and only a cross-tenant caller can change or
+  delete them (task-01abd084).
+- Schemas: a tenant-bound register, read or delete checks the owner tenant and
+  acts on the schema document in one atomic Redis step. The owner tenant of a
+  schema id is stored at `cordum:schema:owner:{schema:<id>}`, in the same Redis
+  Cluster hash slot as the document (task-3963d7b0).
+- Schemas: a tenant-bound delete of an id that no tenant owns takes its answer
+  from the atomic Redis step that checks the owner and removes the document
+  (task-d2fbe1d4).
+- Schemas: a tenant-bound schema list includes an id only when one atomic
+  Redis read shows the id's document and an owner of none or the caller
+  (task-240cdf5c).
 - Edge approvals: a held MCP call whose arguments differ from a still-pending
   hold of the same tool in the same session now gets its own approval ref. It
   used to get the first hold's ref, so resuming it failed with `-32096`

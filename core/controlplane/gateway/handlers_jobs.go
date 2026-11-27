@@ -131,6 +131,10 @@ func (s *server) handleGetWorkers(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermissionOrRole(w, r, auth.PermWorkersRead, "admin") {
 		return
 	}
+	_, ids, allowed := s.workerReadScope(w, r)
+	if !allowed {
+		return
+	}
 	// Prefer Redis snapshot (consistent across all replicas). The
 	// response shape layers session authority (online, session_valid,
 	// session_exp_ms, session_revoked, session_state) over the existing
@@ -142,6 +146,9 @@ func (s *server) handleGetWorkers(w http.ResponseWriter, r *http.Request) {
 	if err == nil && snap != nil {
 		items := make([]map[string]any, 0, len(snap.Workers))
 		for _, ws := range snap.Workers {
+			if ids != nil && !ids[ws.WorkerID] {
+				continue
+			}
 			items = append(items, s.workerStatusFromSummary(r.Context(), ws, snap.CapturedAt))
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -162,6 +169,9 @@ func (s *server) handleGetWorkers(w http.ResponseWriter, r *http.Request) {
 	}
 	s.workerMu.RUnlock()
 	for _, hb := range hbs {
+		if ids != nil && !ids[hb.GetWorkerId()] {
+			continue
+		}
 		items = append(items, s.workerStatusResponse(r.Context(), hb, seenCopy[hb.GetWorkerId()]))
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -1624,7 +1634,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		DeadlineMs:      req.DeadlineMs,
 	}, memoryID)
 	// Resolve agent context for audit events and tracing.
-	submitAgentID, submitAgentName, submitAgentRiskTier := s.resolveAgentForAudit(r.Context(), req.Labels["agent_id"])
+	submitAgentID, submitAgentName, submitAgentRiskTier := s.resolveAgentForAudit(r.Context(), orgID, req.Labels["agent_id"])
 	submitActorID, submitIdentitySource, submitIdentityLabel := policybundles.PolicyActorIdentity(r)
 
 	// Write authoritative agent identity onto the request span (not from
@@ -1685,7 +1695,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Must complete: the refusal stands whatever happens to its entry, and appendPolicyAudit logs ERROR.
-		_ = s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_denied", jobID, req.Topic, submitActorID, policybundles.PolicyRole(r), submitIdentitySource, submitIdentityLabel, "submit-time policy denied: "+reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
+		_ = s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_denied", jobID, orgID, req.Topic, submitActorID, policybundles.PolicyRole(r), submitIdentitySource, submitIdentityLabel, "submit-time policy denied: "+reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
 		writeJSON(w, map[string]any{
@@ -1702,7 +1712,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			reason = policyResult.Reason
 		}
 		// Must complete: the refusal stands whatever happens to its entry, and appendPolicyAudit logs ERROR.
-		_ = s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_throttled", jobID, req.Topic, submitActorID, policybundles.PolicyRole(r), submitIdentitySource, submitIdentityLabel, "submit-time policy throttled: "+reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
+		_ = s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_throttled", jobID, orgID, req.Topic, submitActorID, policybundles.PolicyRole(r), submitIdentitySource, submitIdentityLabel, "submit-time policy throttled: "+reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
 		w.Header().Set("Retry-After", "30")
 		writeErrorJSON(w, http.StatusTooManyRequests, reason)
 		return
@@ -1864,7 +1874,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			s.syncApprovalQueueDepth(r.Context())
 		}
 		// Must complete: the hold stands whatever happens to its entry, and appendPolicyAudit logs ERROR.
-		_ = s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_approval_required", jobID, req.Topic, submitActorID, policybundles.PolicyRole(r), submitIdentitySource, submitIdentityLabel, "submit-time policy requires approval: "+policyResult.Reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
+		_ = s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_approval_required", jobID, orgID, req.Topic, submitActorID, policybundles.PolicyRole(r), submitIdentitySource, submitIdentityLabel, "submit-time policy requires approval: "+policyResult.Reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
 
 		w.Header().Set("X-Trace-Id", traceID)
 		w.Header().Set("Content-Type", "application/json")
@@ -2045,7 +2055,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// The "submit" entry is stored before the job is dispatched: a job whose
 	// entry was not stored is set FAILED and never published.
-	if err := s.appendSubmitSafetyDecisionAudit(r.Context(), "submit", jobID, req.Topic, submitActorID, policybundles.PolicyRole(r), submitIdentitySource, submitIdentityLabel, "submit job "+jobID, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier); err != nil {
+	if err := s.appendSubmitSafetyDecisionAudit(r.Context(), "submit", jobID, orgID, req.Topic, submitActorID, policybundles.PolicyRole(r), submitIdentitySource, submitIdentityLabel, "submit job "+jobID, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier); err != nil {
 		_ = s.jobStore.SetState(r.Context(), jobID, model.JobStateFailed)
 		writeErrorJSON(w, http.StatusServiceUnavailable, submitAuditNotStored)
 		return

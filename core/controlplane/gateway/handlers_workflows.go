@@ -450,14 +450,17 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 	idempotencyKey := idempotencyKeyFromRequest(r)
 	runID := uuid.NewString()
 	reservedKey := false
+	deleteReservation := func(ctx context.Context, key string) error {
+		return s.workflowStore.DeleteRunIdempotencyKey(ctx, orgID, wfID, key)
+	}
 	if idempotencyKey != "" {
-		ok, err := s.workflowStore.TrySetRunIdempotencyKey(r.Context(), idempotencyKey, runID)
+		ok, err := s.workflowStore.TrySetRunIdempotencyKey(r.Context(), orgID, wfID, idempotencyKey, runID)
 		if err != nil {
 			writeErrorJSON(w, http.StatusInternalServerError, "idempotency reservation failed")
 			return
 		}
 		if !ok {
-			if existingID, err := s.workflowStore.GetRunByIdempotencyKey(r.Context(), idempotencyKey); err == nil && existingID != "" {
+			if existingID, err := s.workflowStore.GetRunByIdempotencyKey(r.Context(), orgID, wfID, idempotencyKey); err == nil && existingID != "" {
 				w.Header().Set("Content-Type", "application/json")
 				writeJSON(w, map[string]string{"run_id": existingID})
 				return
@@ -478,7 +481,7 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 					idempotencyKey,
 					runID,
 					"failed to cleanup idempotency key after active run count failure",
-					s.workflowStore.DeleteRunIdempotencyKey,
+					deleteReservation,
 				)
 			}
 			slog.Error("count active runs failed", "org_id", orgID, "error", err)
@@ -492,7 +495,7 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 					idempotencyKey,
 					runID,
 					"failed to cleanup idempotency key after concurrency limit rejection",
-					s.workflowStore.DeleteRunIdempotencyKey,
+					deleteReservation,
 				)
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -513,7 +516,7 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 					idempotencyKey,
 					runID,
 					"failed to cleanup idempotency key after tier workflow limit rejection",
-					s.workflowStore.DeleteRunIdempotencyKey,
+					deleteReservation,
 				)
 			}
 			writeTierLimitJSON(w, limitErr)
@@ -556,7 +559,7 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 	if err := s.appendNamedAuditEntry(r.Context(), "start", "run", runID, startWfName, actorID, role, "start run "+runID); err != nil {
 		if reservedKey && idempotencyKey != "" {
 			cleanupRunIdempotencyReservation(r.Context(), idempotencyKey, runID,
-				"failed to cleanup idempotency key after run audit failure", s.workflowStore.DeleteRunIdempotencyKey)
+				"failed to cleanup idempotency key after run audit failure", deleteReservation)
 		}
 		writeErrorJSON(w, http.StatusInternalServerError, "run not dispatched: its audit entry was not stored")
 		return
@@ -568,7 +571,7 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 				idempotencyKey,
 				runID,
 				"failed to cleanup idempotency key after run creation failure",
-				s.workflowStore.DeleteRunIdempotencyKey,
+				deleteReservation,
 			)
 		}
 		slog.Error("run create failed", "error", err, "run_id", runID)

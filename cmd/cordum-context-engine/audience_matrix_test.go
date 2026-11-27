@@ -77,7 +77,7 @@ func audienceContextCall(t *testing.T, md metadata.MD, baseline bool, f serverTL
 	ctx = metadata.NewOutgoingContext(ctx, md)
 	before := mr.Dump()
 	response, err := pb.NewContextEngineClient(conn).UpdateMemory(ctx, &pb.UpdateMemoryRequest{
-		MemoryId: "matrix-memory", Mode: pb.ContextMode_CONTEXT_MODE_CHAT,
+		MemoryId: "matrix-memory", TenantId: "default", Mode: pb.ContextMode_CONTEXT_MODE_CHAT,
 		ModelResponse: []byte("matrix-memory-marker"),
 	})
 	after := mr.Dump()
@@ -90,8 +90,8 @@ func audienceContextCall(t *testing.T, md metadata.MD, baseline bool, f serverTL
 		probe = audienceContextTLSRefusal(t, lis, tlsCfg)
 	}
 	return identity.Result{Accepted: err == nil && response != nil, Effect: before != after,
-		Evidence: fmt.Sprintf("miniredis mem:matrix-memory:events before/after snapshot changed=%t; key exists=%t; RPC error=%v; TLS probe=%s",
-			before != after, mr.Exists("mem:matrix-memory:events"), err, probe)}
+		Evidence: fmt.Sprintf("miniredis mem:default/matrix-memory:events before/after snapshot changed=%t; key exists=%t; RPC error=%v; TLS probe=%s",
+			before != after, mr.Exists("mem:default/matrix-memory:events"), err, probe)}
 }
 
 func audienceContextConn(t *testing.T, svc *engine.Service, baseline bool, f serverTLSFixture) (*grpc.ClientConn, *bufconn.Listener, *tls.Config) {
