@@ -2,12 +2,15 @@ package gateway
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/cordum/cordum/core/controlplane/workercredentials"
+	"github.com/cordum/cordum/core/infra/registry"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -113,4 +116,57 @@ func TestTenantIsolationGatewayWorkflowIndexes(t *testing.T) {
 	checkTenantObjectRead(t, s.handleListRuns, "/api/v1/workflows/tenant-b-wf/runs", "tenant-b-wf", "tenant-b-run")
 	checkTenantObjectRead(t, s.handleListAllRuns, "/api/v1/workflow-runs?workflow_id=tenant-b-wf", "", "tenant-b-run")
 	checkTenantObjectRead(t, s.handleGetRun, "/api/v1/workflow-runs/tenant-b-run", "tenant-b-run", "tenant-b-run")
+}
+
+func seedGatewayIndexWorkers(t *testing.T, s *server) {
+	t.Helper()
+	ctx := context.Background()
+	snap := registry.Snapshot{CapturedAt: time.Now().UTC().Format(time.RFC3339)}
+	for _, tenant := range []string{"tenant-b", "tenant-a"} {
+		id := tenant + "-worker"
+		if _, err := s.workerCredentialStore.Create(ctx, workercredentials.IssueInput{TenantID: tenant, WorkerID: id, CreatedBy: tenant}); err != nil {
+			t.Fatal(err)
+		}
+		snap.Workers = append(snap.Workers, registry.WorkerSummary{WorkerID: id, Pool: "shared-pool", Labels: map[string]string{"marker": tenant + "-marker"}})
+	}
+	seedSnapshot(t, s, snap)
+}
+
+func TestTenantIsolationGatewayWorkerIndexes(t *testing.T) {
+	for _, surface := range []string{"snapshot", "jobs"} {
+		t.Run(surface, func(t *testing.T) {
+			s, _, _ := newTestGateway(t)
+			s.auth = newBasicAuthForTest(t, nil)
+			seedGatewayIndexWorkers(t, s)
+			seedGatewayIndexJobs(t, s)
+			tenantObjectUnchanged(t, s)
+			handler, marker := s.handleGetWorker, "tenant-b-worker"
+			if surface == "jobs" {
+				handler, marker = s.handleGetWorkerJobs, "tenant-b-job"
+			}
+			rr := httptest.NewRecorder()
+			handler(rr, tenantObjectRequest(http.MethodGet, "/api/v1/workers/tenant-a-worker", "tenant-a", "tenant-a-worker"))
+			if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "tenant-a-") || strings.Contains(rr.Body.String(), "tenant-b") {
+				t.Fatalf("own worker: %d %s", rr.Code, rr.Body.String())
+			}
+			checkTenantObjectRead(t, handler, "/api/v1/workers/tenant-b-worker", "tenant-b-worker", marker)
+		})
+	}
+}
+
+func TestTenantIsolationGatewaySchemaIndex(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.auth = newBasicAuthForTest(t, nil)
+	for _, tenant := range []string{"tenant-b", "tenant-a"} {
+		r := tenantObjectRequest(http.MethodPost, "/api/v1/schemas", tenant, "")
+		r.Body = io.NopCloser(strings.NewReader(`{"id":"` + tenant + `-schema","schema":{"type":"object","description":"` + tenant + `-marker"}}`))
+		rr := httptest.NewRecorder()
+		s.handleRegisterSchema(rr, r)
+		if rr.Code != http.StatusNoContent {
+			t.Fatalf("tenant schema seed: %d %s", rr.Code, rr.Body.String())
+		}
+	}
+	tenantObjectUnchanged(t, s)
+	checkIndexList(t, s.handleListSchemas, "/api/v1/schemas", "", "tenant-a-schema", "tenant-b-schema")
+	checkTenantObjectRead(t, s.handleGetSchema, "/api/v1/schemas/tenant-b-schema", "tenant-b-schema", "tenant-b-marker")
 }
