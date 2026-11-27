@@ -53,7 +53,7 @@ describe("BundleDetailPage extraction contract", () => {
     expect(viewer.isReadOnly).toBe(true);
   });
 
-  it("grants edit and publish to authorized roles", () => {
+  it("grants edit and publish to the admin role", () => {
     const admin = derivePolicyAccess({
       requiresAuth: true,
       roles: ["admin"],
@@ -64,13 +64,13 @@ describe("BundleDetailPage extraction contract", () => {
     expect(admin.isReadOnly).toBe(false);
   });
 
-  it("enforces publish restriction for editor-only role", () => {
+  it("gives the editor role neither edit nor publish", () => {
     const editor = derivePolicyAccess({
       requiresAuth: true,
       roles: ["editor"],
       principalRole: "editor",
     });
-    expect(editor.canEdit).toBe(true);
+    expect(editor.canEdit).toBe(false);
     expect(editor.canPublish).toBe(false);
     expect(editor.isReadOnly).toBe(false);
   });

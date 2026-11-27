@@ -26,11 +26,11 @@ describe("policy access role boundaries for GOVERN shells", () => {
     expect(access.canRelease).toBe(false);
   });
 
-  it("enables edit/publish/release affordances for operator roles", () => {
+  it("enables edit/publish/release affordances for the admin role", () => {
     const access = derivePolicyAccess({
       requiresAuth: true,
-      roles: ["operator"],
-      principalRole: "operator",
+      roles: ["admin"],
+      principalRole: "admin",
     });
     expect(access.isReadOnly).toBe(false);
     expect(access.canEdit).toBe(true);
@@ -50,55 +50,36 @@ describe("policy access role boundaries for GOVERN shells", () => {
     expect(access.isReadOnly).toBe(false);
   });
 
-  it("enforces publish/release boundary: publisher can publish but not edit or release", () => {
-    const access = derivePolicyAccess({
-      requiresAuth: true,
-      roles: ["publisher"],
-      principalRole: "publisher",
-    });
-    expect(access.canPublish).toBe(true);
-    expect(access.canEdit).toBe(false);
-    expect(access.canRelease).toBe(false);
-    expect(access.isReadOnly).toBe(false);
-  });
+  it.each(["publisher", "editor", "release_manager"])(
+    "gives the %s role none of edit, publish or release",
+    (role) => {
+      const access = derivePolicyAccess({
+        requiresAuth: true,
+        roles: [role],
+        principalRole: role,
+      });
+      expect(access.canEdit).toBe(false);
+      expect(access.canPublish).toBe(false);
+      expect(access.canRelease).toBe(false);
+      expect(access.isReadOnly).toBe(false);
+    },
+  );
 
-  it("enforces publish/release boundary: editor can edit but not publish or release", () => {
-    const access = derivePolicyAccess({
+  it("shares output-rule and tenant management scope with edit capability, for the admin role only", () => {
+    const admin = derivePolicyAccess({
       requiresAuth: true,
-      roles: ["editor"],
-      principalRole: "editor",
+      roles: ["admin"],
+      principalRole: "admin",
     });
-    expect(access.canEdit).toBe(true);
-    expect(access.canPublish).toBe(false);
-    expect(access.canRelease).toBe(false);
-  });
+    expect(admin.canManageOutputRules).toBe(true);
+    expect(admin.canManageTenants).toBe(true);
 
-  it("enforces publish/release boundary: release_manager can release but not edit or publish", () => {
-    const access = derivePolicyAccess({
-      requiresAuth: true,
-      roles: ["release_manager"],
-      principalRole: "release_manager",
-    });
-    expect(access.canRelease).toBe(true);
-    expect(access.canEdit).toBe(false);
-    expect(access.canPublish).toBe(false);
-  });
-
-  it("shares output-rule and tenant management scope with edit capability", () => {
     const editor = derivePolicyAccess({
       requiresAuth: true,
       roles: ["editor"],
       principalRole: "editor",
     });
-    expect(editor.canManageOutputRules).toBe(true);
-    expect(editor.canManageTenants).toBe(true);
-
-    const publisher = derivePolicyAccess({
-      requiresAuth: true,
-      roles: ["publisher"],
-      principalRole: "publisher",
-    });
-    expect(publisher.canManageOutputRules).toBe(false);
-    expect(publisher.canManageTenants).toBe(false);
+    expect(editor.canManageOutputRules).toBe(false);
+    expect(editor.canManageTenants).toBe(false);
   });
 });

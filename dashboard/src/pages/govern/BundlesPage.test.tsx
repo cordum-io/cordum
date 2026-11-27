@@ -60,22 +60,22 @@ describe("BundlesPage extraction contract", () => {
     expect(viewer.canEdit).toBe(false);
     expect(viewer.isReadOnly).toBe(true);
 
-    const operator = derivePolicyAccess({
+    const admin = derivePolicyAccess({
       requiresAuth: true,
-      roles: ["operator"],
-      principalRole: "operator",
+      roles: ["admin"],
+      principalRole: "admin",
     });
-    expect(operator.canPublish).toBe(true);
-    expect(operator.canEdit).toBe(true);
-    expect(operator.isReadOnly).toBe(false);
+    expect(admin.canPublish).toBe(true);
+    expect(admin.canEdit).toBe(true);
+    expect(admin.isReadOnly).toBe(false);
 
     const secops = derivePolicyAccess({
       requiresAuth: true,
       roles: ["secops"],
       principalRole: "secops",
     });
-    expect(secops.canPublish).toBe(true);
-    expect(secops.canEdit).toBe(true);
+    expect(secops.canPublish).toBe(false);
+    expect(secops.canEdit).toBe(false);
   });
 
   it("grants full access when auth is not required", () => {
