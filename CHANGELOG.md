@@ -576,6 +576,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- CI: the required OpenAPI Validate check regenerates the Python client with
+  `sdk/python/scripts/generate.sh` and fails when the result differs from the committed
+  `sdk/python/src/cordum_sdk/_generated`. A spec change that alters the generated client,
+  including one that only changes schemas or response codes, must ship the regenerated
+  client. To check locally, install the generator extra (`sdk/python/README.md`) and run
+  `bash sdk/python/scripts/check-generated.sh` (task-3d040551).
+
 - Managed API keys: the scope resource `mcpgateway` covers the gateway's MCP endpoints.
   `GET /mcp/sse` and `GET /mcp/status` need `mcpgateway:read`, and `POST /mcp/message`
   needs `mcpgateway:write`. `mcpgateway:read`, `mcpgateway:write` and `mcpgateway:*`

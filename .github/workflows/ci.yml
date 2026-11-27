@@ -761,3 +761,18 @@ jobs:
       run: make openapi-validate
       env:
         OPENAPI_BASE_REF: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || format('origin/{0}', github.base_ref || 'main') }}
+
+    # The generated Python client must match the spec. This job is a required check, and ci.yml has
+    # no paths filter, so these steps run whatever files a PR changes. sdk-python.yml's paths
+    # filter reads only a PR's first 300 files, so large PRs skipped it.
+    - name: Set up Python for the Python SDK generator
+      uses: actions/setup-python@v7
+      with:
+        python-version: '3.12'
+
+    - name: Check the generated Python client is current
+      run: |
+        python -m venv sdk/python/.venv
+        sdk/python/.venv/bin/python -m pip install --disable-pip-version-check -e "./sdk/python[generator]"
+        bash sdk/python/scripts/check-generated.sh
+        bash sdk/python/scripts/check-generated.test.sh
