@@ -1229,6 +1229,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Schemas: a tenant-bound delete of an id that no tenant owns takes its answer
   from the atomic Redis step that checks the owner and removes the document
   (task-d2fbe1d4).
+- Schemas: a tenant-bound schema list includes an id only when one atomic
+  Redis read shows the id's document and an owner of none or the caller
+  (task-240cdf5c).
 - Edge approvals: a held MCP call whose arguments differ from a still-pending
   hold of the same tool in the same session now gets its own approval ref. It
   used to get the first hold's ref, so resuming it failed with `-32096`

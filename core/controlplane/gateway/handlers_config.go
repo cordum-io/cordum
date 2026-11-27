@@ -533,7 +533,7 @@ func (s *server) schemaCountAllows(w http.ResponseWriter, r *http.Request) bool 
 
 // visibleSchemaIDs keeps platform ids and the tenant's own, up to limit.
 func (s *server) visibleSchemaIDs(r *http.Request, ids []string, tenant string, limit int64) ([]string, error) {
-	owners, err := s.schemaRegistry.Owners(r.Context(), ids)
+	shown, err := s.schemaRegistry.VisibleTo(r.Context(), ids, tenant)
 	if err != nil {
 		return nil, err
 	}
@@ -542,7 +542,7 @@ func (s *server) visibleSchemaIDs(r *http.Request, ids []string, tenant string, 
 		if int64(len(visible)) >= limit {
 			break
 		}
-		if owners[i] == "" || owners[i] == tenant {
+		if shown[i] {
 			visible = append(visible, id)
 		}
 	}

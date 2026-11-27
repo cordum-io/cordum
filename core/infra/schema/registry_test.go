@@ -201,6 +201,18 @@ func TestRegistryOwners(t *testing.T) {
 		}
 	})
 
+	t.Run("visible-to", func(t *testing.T) {
+		if err := reg.Register(ctx, "platform/p", body); err != nil {
+			t.Fatal(err)
+		}
+		ids := []string{"platform/p", "owned/a", "absent/x"}
+		for tenant, want := range map[string][]bool{"tenant-a": {true, true, false}, "tenant-b": {true, false, false}} {
+			if got, err := reg.VisibleTo(ctx, ids, tenant); err != nil || !reflect.DeepEqual(got, want) {
+				t.Fatalf("VisibleTo(%s) = %v, %v; want %v", tenant, got, err, want)
+			}
+		}
+	})
+
 	t.Run("delete lets another tenant claim", func(t *testing.T) {
 		if err := claim("owned/r", "tenant-a"); err != nil {
 			t.Fatal(err)
@@ -386,7 +398,7 @@ func TestRegistryOwnerKeySlot(t *testing.T) {
 }
 
 func TestRegistryOwnerReadErrors(t *testing.T) {
-	for _, kind := range []string{"owner", "document", "owners-pipeline"} {
+	for _, kind := range []string{"owner", "document", "owners-pipeline", "visible-to"} {
 		t.Run(kind, func(t *testing.T) {
 			reg, mr := ownedRegistry(t, "", false)
 			key := ownerKey("id")
@@ -397,12 +409,18 @@ func TestRegistryOwnerReadErrors(t *testing.T) {
 				t.Fatal(err)
 			}
 			before := mr.Dump()
-			if kind == "owners-pipeline" {
+			switch kind {
+			case "owners-pipeline":
 				owners, err := reg.Owners(t.Context(), []string{"absent", "id"})
 				if err == nil || errors.Is(err, redis.Nil) || owners != nil {
 					t.Fatalf("Owners = %q, %v", owners, err)
 				}
-			} else {
+			case "visible-to":
+				visible, err := reg.VisibleTo(t.Context(), []string{"absent", "id"}, "a")
+				if err == nil || errors.Is(err, redis.Nil) || visible != nil {
+					t.Fatalf("VisibleTo = %v, %v", visible, err)
+				}
+			default:
 				data, err := reg.GetOwned(t.Context(), "id", "a")
 				if err == nil || errors.Is(err, redis.Nil) || len(data) != 0 {
 					t.Fatalf("GetOwned = %q, %v", data, err)
