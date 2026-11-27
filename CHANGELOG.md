@@ -7,6 +7,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- SDKs: the Go and Python clients retry a POST only when its idempotency key is
+  non-blank after trimming, as the TypeScript client does. Listing POST in the Python
+  `RetryPolicy.retryable_methods` does not make a POST without a key retryable
+  (task-123a7aa8).
+
 - Gateway: the `sys.job.>` and `sys.audit.>` stream subscriptions act on a job result
   sent under a worker session (handshake `warn` or `enforce`, or the production profile)
   only when the job is recorded under the session's tenant and, when the job has a
