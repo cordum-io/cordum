@@ -420,14 +420,15 @@ func (s *EvalRunStore) GCExpired(ctx context.Context, tenant string) (int, error
 	// every dataset-index ZSET under the tenant prefix and remove the
 	// id from each. This is O(datasets) per GC pass, which is fine for
 	// reasonable tenant cardinality and runs infrequently.
-	iter := s.client.Scan(ctx, 0, evalRunTenantPrefix(tenant)+"idx:ds:*", 0).Iterator()
-	for iter.Next(ctx) {
-		if err := s.client.ZRem(ctx, iter.Val(), stale...).Err(); err != nil {
-			slog.Warn("eval run GC: dataset-index prune failed",
-				"tenant", tenant, "key", iter.Val(), "error", err)
+	if err := redisutil.ScanKeys(ctx, s.client, evalRunTenantPrefix(tenant)+"idx:ds:*", 0, func(keys []string) error {
+		for _, key := range keys {
+			if err := s.client.ZRem(ctx, key, stale...).Err(); err != nil {
+				slog.Warn("eval run GC: dataset-index prune failed",
+					"tenant", tenant, "key", key, "error", err)
+			}
 		}
-	}
-	if err := iter.Err(); err != nil {
+		return nil
+	}); err != nil {
 		slog.Warn("eval run GC: dataset-index scan failed",
 			"tenant", tenant, "error", err)
 	}
