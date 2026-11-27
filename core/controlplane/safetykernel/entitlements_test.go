@@ -54,7 +54,7 @@ func newSafetyEntitlementResolver(t *testing.T, plan licensing.Plan, mutate func
 	return resolver
 }
 
-func TestPolicyLoaderSkipsCustomBundlesWhenTierLimitExceeded(t *testing.T) {
+func TestPolicyLoaderLoadsEveryBundleOnCommunity(t *testing.T) {
 	srv, err := miniredis.Run()
 	if err != nil {
 		t.Skipf("miniredis unavailable: %v", err)
@@ -85,6 +85,15 @@ rules:
     decision: deny
     reason: custom policy active
 `,
+				kernelInvariantsBundleKey: `
+rules:
+  - id: deny-invariant
+    match:
+      topics:
+        - job.secops.invariant
+    decision: deny
+    reason: invariant active
+`,
 			},
 		},
 	}
@@ -99,23 +108,27 @@ rules:
 		configKey:    "bundles",
 		entitlements: newSafetyEntitlementResolver(t, licensing.PlanCommunity, nil),
 	}
-	policy, _, snapshot, customCount, err := loader.loadFragments(context.Background())
+	policy, invariants, snapshot, customCount, err := loader.loadFragments(context.Background())
 	if err != nil {
 		t.Fatalf("load fragments: %v", err)
 	}
-	if policy == nil {
-		t.Fatal("expected base policy to load")
+	if policy == nil || invariants == nil {
+		t.Fatalf("policy loaded %v, invariants loaded %v; want both", policy != nil, invariants != nil)
 	}
 	if snapshot == "" {
 		t.Fatal("expected snapshot hash")
 	}
-	if customCount != 0 {
-		t.Fatalf("custom bundle count = %d, want 0", customCount)
+	if customCount != 2 {
+		t.Fatalf("custom bundle count = %d, want 2", customCount)
 	}
 
 	resp := policy.Evaluate(config.PolicyInput{Tenant: "default", Topic: "job.secops.test"})
-	if resp.Decision != "allow" {
-		t.Fatalf("expected skipped custom bundle to fall back to allow, got %q", resp.Decision)
+	if resp.Decision != "deny" || resp.RuleID != "deny-custom" {
+		t.Fatalf("job.secops.test: decision %q, rule %q; want deny by deny-custom", resp.Decision, resp.RuleID)
+	}
+	resp = applyKernelInvariants(policy, invariants).Evaluate(config.PolicyInput{Tenant: "default", Topic: "job.secops.invariant"})
+	if resp.Decision != "deny" || resp.RuleID != "deny-invariant" {
+		t.Fatalf("job.secops.invariant: decision %q, rule %q; want deny by deny-invariant", resp.Decision, resp.RuleID)
 	}
 }
 
