@@ -163,6 +163,40 @@ func (r *Registry) Owners(ctx context.Context, ids []string) ([]string, error) {
 	return owners, nil
 }
 
+// visibleScript reads an id's owner and whether its document exists in one
+// atomic step. For an id without braces both keys share a hash slot.
+var visibleScript = redis.NewScript(`return {redis.call("GET", KEYS[1]) or "", redis.call("EXISTS", KEYS[2])}`)
+
+// VisibleTo reports, in order, whether each id has a document and an owner of
+// "" or tenant, reading both keys of an id in one atomic step.
+func (r *Registry) VisibleTo(ctx context.Context, ids []string, tenant string) ([]bool, error) {
+	if r == nil || r.client == nil {
+		return nil, fmt.Errorf("registry unavailable")
+	}
+	pipe := r.client.Pipeline()
+	cmds := make([]*redis.Cmd, len(ids))
+	for i, id := range ids {
+		cmds[i] = visibleScript.Eval(ctx, pipe, []string{ownerKey(id), schemaKey(id)})
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return nil, fmt.Errorf("read schema visibility: %w", err)
+	}
+	visible := make([]bool, len(ids))
+	for i, cmd := range cmds {
+		reply, _ := cmd.Val().([]any)
+		if len(reply) != 2 {
+			return nil, fmt.Errorf("read schema visibility %s: unexpected reply %v", ids[i], cmd.Val())
+		}
+		owner, isString := reply[0].(string)
+		exists, isInt := reply[1].(int64)
+		if !isString || !isInt {
+			return nil, fmt.Errorf("read schema visibility %s: unexpected reply %v", ids[i], cmd.Val())
+		}
+		visible[i] = exists == 1 && (owner == "" || owner == tenant)
+	}
+	return visible, nil
+}
+
 // RegisterOwned stores a document and its owner in one owner-checked step.
 func (r *Registry) RegisterOwned(ctx context.Context, id, tenant string, schema []byte) error {
 	if r == nil || r.client == nil {
