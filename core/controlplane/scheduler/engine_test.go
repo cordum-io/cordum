@@ -1551,9 +1551,9 @@ func TestProcessJobApprovalGateStoreFailureReturnsRetryableError(t *testing.T) {
 		t.Fatalf("expected retryable error, got %v", err)
 	}
 	// Safety decision store write failure surfaces as SafetyUnavailable
-	// in checkSafetyDecision, so the retry uses safetyThrottleDelay.
-	if retryErr.RetryDelay() != safetyThrottleDelay {
-		t.Fatalf("expected retry delay %s, got %s", safetyThrottleDelay, retryErr.RetryDelay())
+	// in checkSafetyDecision, so the first retry backs off from safetyThrottleDelay.
+	if d := retryErr.RetryDelay(); d < safetyThrottleDelay || d >= safetyThrottleDelay+backoffJitterMax {
+		t.Fatalf("expected retry delay in [%s, %s), got %s", safetyThrottleDelay, safetyThrottleDelay+backoffJitterMax, d)
 	}
 	if len(bus.snapshotPublished()) != 0 {
 		t.Fatalf("expected no publish when synthetic decision persistence fails")

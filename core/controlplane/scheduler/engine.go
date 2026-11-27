@@ -1680,7 +1680,8 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 		if !errors.Is(err, errSafetyCheckTimeout) {
 			slog.Error("safety decision not recorded, retrying",
 				"job_id", jobID, "topic", topic, "trace_id", traceID, "error", err)
-			return RetryAfter(fmt.Errorf("safety unavailable: %w", err), safetyThrottleDelay)
+			e.countSchedulingAttempt(lockCtx, jobID)
+			return RetryAfter(fmt.Errorf("safety unavailable: %w", err), backoffDelay(attempts, safetyThrottleDelay, backoffMax))
 		}
 		slog.Error("safety check failed", "job_id", jobID, "error", err)
 		record.Decision = SafetyUnavailable
@@ -1720,18 +1721,20 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			return nil
 		}
 	case SafetyThrottle:
+		delay := backoffDelay(attempts, safetyThrottleDelay, backoffMax)
 		slog.Info("job throttled",
 			"job_id", jobID,
 			"topic", topic,
 			"reason", record.Reason,
 			"trace_id", traceID,
-			"retry_after", safetyThrottleDelay.String(),
+			"retry_after", delay.String(),
 		)
 		msg := "safety throttle"
 		if strings.TrimSpace(record.Reason) != "" {
 			msg = msg + ": " + record.Reason
 		}
-		return RetryAfter(fmt.Errorf("%s", msg), safetyThrottleDelay)
+		e.countSchedulingAttempt(lockCtx, jobID)
+		return RetryAfter(fmt.Errorf("%s", msg), delay)
 	case SafetyUnavailable:
 		if e.metrics != nil {
 			e.metrics.IncSafetyUnavailable(topic)
@@ -1769,7 +1772,8 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			slog.Warn("safety kernel unavailable, requeueing job",
 				"job_id", jobID, "topic", topic, "reason", reason,
 				"trace_id", traceID, "input_fail_mode", mode)
-			return RetryAfter(fmt.Errorf("safety unavailable: %s", record.Reason), safetyThrottleDelay)
+			e.countSchedulingAttempt(lockCtx, jobID)
+			return RetryAfter(fmt.Errorf("safety unavailable: %s", record.Reason), backoffDelay(attempts, safetyThrottleDelay, backoffMax))
 		}
 	case SafetyRequireApproval:
 		slog.Info("job requires human approval",
@@ -2088,8 +2092,8 @@ func (e *Engine) rollbackFailedDispatch(
 // reserveTenantSlot takes a concurrency slot for jobID under its stored tenant
 // when the policy cap (max_concurrent_jobs) or the tier limit applies, at the
 // lower of the two, and returns that tenant ("" and false when it reserves
-// nothing). At the cap it returns a retryable ErrTenantLimit, or the tier-limit
-// error when the tier limit is the one reached.
+// nothing). At the cap it counts one scheduling attempt and returns a retryable
+// ErrTenantLimit, or the tier-limit error when the tier limit is the one reached.
 func (e *Engine) reserveTenantSlot(ctx context.Context, jobID string, constraints *pb.PolicyConstraints) (string, bool, error) {
 	if e.jobStore == nil {
 		return "", false, nil
@@ -2119,12 +2123,30 @@ func (e *Engine) reserveTenantSlot(ctx context.Context, jobID string, constraint
 	if limitErr == nil || (policyCap > 0 && int64(others) >= policyCap) {
 		slog.Info("tenant concurrency limit reached",
 			"job_id", jobID, "tenant", tenant, "active", others, "limit", limit)
+		e.countSchedulingAttempt(ctx, jobID)
 		return "", false, RetryAfter(ErrTenantLimit, retryDelayNoWorkers)
 	}
 	slog.Info("tier concurrency limit reached",
 		"job_id", jobID, "tenant", tenant, "active", others,
 		"allowed", limitErr.Allowed, "upgrade_url", limitErr.UpgradeURL)
+	e.countSchedulingAttempt(ctx, jobID)
 	return "", false, RetryAfter(limitErr, retryDelayNoWorkers)
+}
+
+// countSchedulingAttempt counts one scheduling attempt for a job that is
+// requeued, so the maxSchedulingRetries cap bounds how often it is handled.
+func (e *Engine) countSchedulingAttempt(ctx context.Context, jobID string) {
+	inc, ok := e.jobStore.(interface {
+		IncrAttempts(context.Context, string) error
+	})
+	if !ok {
+		return
+	}
+	incCtx, cancel := context.WithTimeout(ctx, storeOpTimeout)
+	defer cancel()
+	if err := inc.IncrAttempts(incCtx, jobID); err != nil {
+		slog.Warn("attempt counter increment failed", "job_id", jobID, "error", err)
+	}
 }
 
 // releaseTenantSlot gives back a slot reserveTenantSlot took for a job that

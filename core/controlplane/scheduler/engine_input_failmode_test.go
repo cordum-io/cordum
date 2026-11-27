@@ -493,7 +493,8 @@ func TestFailOpenColdTenantCacheRequeuesUntilLoaded(t *testing.T) {
 	err := e.processJob(testCtx(t), cold, "cold-cache")
 	var retry *retryableError
 	require.ErrorAs(t, err, &retry)
-	assert.Equal(t, safetyThrottleDelay, retry.RetryDelay())
+	assert.GreaterOrEqual(t, retry.RetryDelay(), safetyThrottleDelay)
+	assert.Less(t, retry.RetryDelay(), safetyThrottleDelay+backoffJitterMax)
 	assert.ErrorContains(t, err, "safety unavailable")
 	assert.Empty(t, bus.published)
 	assert.Empty(t, store.states[cold.JobId])
@@ -537,7 +538,8 @@ func TestDecisionStoreWriteFailureRequeuesInBothInputModes(t *testing.T) {
 				assert.ErrorIs(t, err, writeErr)
 				var retry *retryableError
 				if assert.ErrorAs(t, err, &retry) {
-					assert.Equal(t, safetyThrottleDelay, retry.RetryDelay())
+					assert.GreaterOrEqual(t, retry.RetryDelay(), safetyThrottleDelay)
+					assert.Less(t, retry.RetryDelay(), safetyThrottleDelay+backoffJitterMax)
 				}
 				assert.Empty(t, bus.published)
 				assert.Empty(t, base.states[req.JobId])

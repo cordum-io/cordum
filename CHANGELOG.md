@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Scheduler: each requeue of a job for a tenant or tier concurrency
+  limit, or by a throttling or unavailable safety kernel, counts one
+  scheduling attempt, so a waiting job is handled at most
+  `maxSchedulingRetries` (50) times, or `budgets.max_retries` + 1,
+  before it fails to the DLQ. Safety requeues back off from 5 to 30
+  seconds. Upgrading: a policy that sets `budgets.max_retries` also
+  limits a job that waits at a concurrency limit or for the safety
+  kernel to `budgets.max_retries` + 1 handlings (task-94e96836).
 - MCP: JSON-RPC errors no longer expose execution ids. Errors caused by
   Cordum's own stores carry a fixed message, such as `internal error`, and
   the detail is in the gateway log (#492, task-e489e0c5).
