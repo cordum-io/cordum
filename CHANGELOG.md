@@ -177,6 +177,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- JetStream streams take `NATS_JS_MAX_AGE` at bus start. When `CORDUM_SYS` or
+  `CORDUM_JOBS` exists with another MaxAge, bus init updates that stream in
+  place to the configured value and keeps its messages, sequence numbers and
+  other settings; the server then removes messages older than the new MaxAge.
+  An unchanged setting leaves the streams as they are. If the server refuses
+  the update, bus init logs the error and the stream keeps its MaxAge. The
+  DI-C21 retention proof is `TestRetentionProofDIC21` (PR2-08, task-5c098d99).
 - Job index and event keys follow `JOB_META_TTL`. On each scan the scheduler
   reconciler removes a job's id from the `job:index:<state>` sets and
   `job:recent`, and deletes its `job:events:<id>` list, once the job's

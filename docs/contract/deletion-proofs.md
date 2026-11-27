@@ -47,7 +47,7 @@ A failing proof stays an open finding under the review process, not a weaker tes
 | DI-C18 | retention cleanup | `core/edge/mcp_upstream_store_redis.go` (`RedisMCPUpstreamRegistry.updateExisting`); fixed 30d TTL | `TestRetentionProofDIC18` |
 | DI-C19 | explicit delete only | `core/audit/buffer.go` (`BufferedExporter.loop`); `core/audit/buffer.go` (`BufferedExporter.Close`) | none: Queue drain/flush or retry exhaustion, not retention erasure; exported copies remain. |
 | DI-C20 | no cleanup path | none | none: No Cordum remote deletion of downloaded evidence; recipient must remove its copies |
-| DI-C21 | retention cleanup | `core/infra/bus/nats.go` (`NatsBus.initJetStreamFromEnv`) | `TestRetentionProofDIC21/new_streams`, open finding PR2-08-F5 |
+| DI-C21 | retention cleanup | `core/infra/bus/nats.go` (`NatsBus.initJetStreamFromEnv`) | `TestRetentionProofDIC21` |
 | DI-C22 | retention cleanup | `core/infra/store/job_store.go` (`RedisJobStore.SetStateWithContext`); `core/infra/store/job_event_store.go` (`RedisJobStore.ApplyJobResult`); `core/infra/store/job_store.go` (`RedisJobStore.SetWorkerID`); `core/infra/store/job_index_sweep.go` (`RedisJobStore.SweepExpiredJobIndexes`) | `TestRetentionProofDIC22` |
 | DI-C23 | no cleanup path | none | none: No code path deletes trace sets at reviewed_at |
 | DI-C24 | retention cleanup | `core/infra/store/job_store.go` (`RedisJobStore.SetStateWithContext`); `core/infra/store/job_index_sweep.go` (`RedisJobStore.SweepExpiredJobIndexes`) | `TestRetentionProofDIC24` |
