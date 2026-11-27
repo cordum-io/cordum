@@ -1,7 +1,10 @@
 package claude
 
 import (
+	"errors"
 	"io"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -169,7 +172,7 @@ func artifactKubeTarget(fields []string, cwd string, env map[string]string) (str
 	kubeContext, namespace := flags["context"], flags["namespace"]
 	current, namespaces := artifactKubeconfigs(kubeconfig, cwd, env)
 	if namespaces == nil {
-		return "", "" // a special file can change the target even with --context
+		return "", "" // a special or undecodable file can change the target even with --context
 	}
 	if kubeContext == "" {
 		kubeContext = current
@@ -185,7 +188,11 @@ func artifactKubeTarget(fields []string, cwd string, env map[string]string) (str
 
 // artifactKubeconfigs reads the kubeconfig files kubectl would read: the
 // KUBECONFIG list, or ~/.kube/config. The first file that sets current-context
-// wins, and so does the first definition of each context.
+// wins, and so does the first definition of each context. kubectl skips a
+// missing file and reads an empty one as an empty config, but fails on any
+// other file it cannot load, and it loads YAML that yaml.v3 rejects (a
+// repeated key keeps its last value). So any other file that cannot be read
+// or decoded returns no namespaces: the target is unknown.
 func artifactKubeconfigs(kubeconfig, cwd string, env map[string]string) (string, map[string]string) {
 	paths := filepath.SplitList(kubeconfig)
 	if len(paths) == 0 {
@@ -206,15 +213,21 @@ func artifactKubeconfigs(kubeconfig, cwd string, env map[string]string) (string,
 		if artifactSpecialPath(path) {
 			return "", nil
 		}
+		if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
 		file, reason := artifactOpen(path)
 		if reason != "" {
-			continue
+			return "", nil
 		}
 		var config artifactKubeconfig
 		err := yaml.NewDecoder(io.LimitReader(file, artifactMaxFileBytes)).Decode(&config)
 		_ = file.Close()
-		if err != nil {
+		if errors.Is(err, io.EOF) {
 			continue
+		}
+		if err != nil {
+			return "", nil
 		}
 		if current == "" {
 			current = config.CurrentContext

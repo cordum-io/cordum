@@ -297,6 +297,47 @@ func TestArtifactBindingKubeTarget(t *testing.T) {
 	}
 }
 
+func TestArtifactBindingKubeconfigMustDecode(t *testing.T) {
+	cwd := t.TempDir()
+	kubeconfig := "current-context: dev\ncontexts:\n- name: dev\n  context:\n    namespace: dev-ns\n"
+	artifactWriteFiles(t, cwd, map[string]string{"a.yaml": kubeconfig, "b.yaml": kubeconfig, "empty.yaml": "", "dir/keep": "", "big.yaml": ""})
+	if err := os.Truncate(filepath.Join(cwd, "big.yaml"), artifactMaxFileBytes+1); err != nil {
+		t.Fatal(err)
+	}
+	target := func(names ...string) string {
+		t.Helper()
+		paths := make([]string, len(names))
+		for i, name := range names {
+			paths[i] = filepath.Join(cwd, name)
+		}
+		env := map[string]string{"KUBECONFIG": strings.Join(paths, string(os.PathListSeparator))}
+		labels := artifactBindingLabels(context.Background(), artifactHookInput(cwd, "kubectl get pods"), env, "unknown")
+		if labels["artifact.binding"] == "bound" {
+			return labels["kube.context"] + "/" + labels["kube.namespace"]
+		}
+		return labels["artifact.unbound_reason"]
+	}
+	for _, tc := range []struct {
+		names []string
+		want  string
+	}{
+		{[]string{"missing.yaml", "b.yaml"}, "dev/dev-ns"},
+		{[]string{"empty.yaml", "b.yaml"}, "dev/dev-ns"},
+		{[]string{"dir", "b.yaml"}, "kube-context"},
+		{[]string{"big.yaml", "b.yaml"}, "kube-context"},
+		{[]string{"a.yaml", "b.yaml"}, "dev/dev-ns"},
+	} {
+		if got := target(tc.names...); got != tc.want {
+			t.Fatalf("KUBECONFIG=%v: target = %q, want %q", tc.names, got, tc.want)
+		}
+	}
+	// kubectl keeps the last value of a repeated key; yaml.v3 refuses the file.
+	artifactWriteFiles(t, cwd, map[string]string{"a.yaml": kubeconfig + "current-context: prod\n"})
+	if got := target("a.yaml", "b.yaml"); got != "kube-context" {
+		t.Fatalf("after a.yaml repeats current-context: target = %q, want kube-context", got)
+	}
+}
+
 func TestArtifactBindingFollowsFlagSpellings(t *testing.T) {
 	cwd := t.TempDir()
 	artifactWriteFiles(t, cwd, map[string]string{"other.yaml": "kind: ConfigMap\n",
