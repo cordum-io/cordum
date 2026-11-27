@@ -18,6 +18,7 @@ import (
 	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/cordum/cordum/core/infra/timeutil"
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/redis/go-redis/v9"
@@ -866,12 +867,7 @@ func collectVelocityRuleStats(ctx context.Context, client redis.UniversalClient,
 
 func scanVelocityRuleKeys(ctx context.Context, client redis.UniversalClient, rules map[string]velocityRuleResponse) (map[string][]string, error) {
 	out := make(map[string][]string)
-	var cursor uint64
-	for {
-		keys, next, err := client.Scan(ctx, cursor, "cordum:velocity:*", 200).Result()
-		if err != nil {
-			return nil, err
-		}
+	err := redisutil.ScanKeys(ctx, client, "cordum:velocity:*", 200, func(keys []string) error {
 		for _, key := range keys {
 			parts := strings.SplitN(key, ":", 4)
 			if len(parts) != 4 {
@@ -883,10 +879,10 @@ func scanVelocityRuleKeys(ctx context.Context, client redis.UniversalClient, rul
 			}
 			out[ruleID] = append(out[ruleID], key)
 		}
-		cursor = next
-		if cursor == 0 {
-			break
-		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/redis/go-redis/v9"
 )
@@ -57,14 +58,16 @@ func scanLocks(ctx context.Context, rdb redis.UniversalClient, pattern string, l
 	}
 
 	var keys []string
-	iter := rdb.Scan(ctx, 0, pattern, 100).Iterator()
-	for iter.Next(ctx) {
-		keys = append(keys, iter.Val())
-		if len(keys) >= limit {
-			break
+	err := redisutil.ScanKeys(ctx, rdb, pattern, 100, func(batch []string) error {
+		for _, key := range batch {
+			keys = append(keys, key)
+			if len(keys) >= limit {
+				return redisutil.ErrStopScan
+			}
 		}
-	}
-	if err := iter.Err(); err != nil {
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 	if len(keys) == 0 {
