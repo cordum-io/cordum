@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -265,6 +266,56 @@ func TestEvalRunGCExpired(t *testing.T) {
 	}
 	if n, _ := s.client.ZCard(ctx, evalRunIndexKey("acme")).Result(); n != 0 {
 		t.Fatalf("primary index should be empty post-GC, has %d", n)
+	}
+}
+
+// TestEvalRunCreatePrunesExpiredIndexMembers: each create sets both index keys'
+// TTL to the record TTL and drops the members whose record has expired, while
+// a live run that started before the TTL window keeps its memberships.
+func TestEvalRunCreatePrunesExpiredIndexMembers(t *testing.T) {
+	t.Setenv("CORDUM_EVAL_RUN_TTL_SECONDS", "3600")
+	s, srv := newTestEvalRunStore(t)
+	ctx := context.Background()
+	const tenant, ds = "acme", "ds-1"
+	indexes := []string{evalRunIndexKey(tenant), evalRunDatasetIndexKey(tenant, ds)}
+	create := func(id string, startedAt time.Time) {
+		t.Helper()
+		if err := s.CreateRun(ctx, sampleRun(id, tenant, ds, startedAt, 100.0, 0)); err != nil {
+			t.Fatalf("CreateRun(%s): %v", id, err)
+		}
+	}
+	twoHoursAgo := time.Now().UTC().Add(-2 * time.Hour)
+
+	create("run-x", twoHoursAgo)
+	recordTTL := srv.TTL(evalRunRecordKey(tenant, "run-x"))
+	for _, key := range indexes {
+		if got := srv.TTL(key); recordTTL != time.Hour || got != recordTTL {
+			t.Fatalf("TTL(%s) = %v with record TTL %v; want both 1h", key, got, recordTTL)
+		}
+	}
+	srv.FastForward(30 * time.Minute)
+	create("run-l", twoHoursAgo)
+	srv.FastForward(31 * time.Minute)
+	create("run-y", time.Now().UTC())
+
+	for _, key := range indexes {
+		members, err := srv.ZMembers(key)
+		if err != nil || !slices.Equal(members, []string{"run-l", "run-y"}) {
+			t.Fatalf("ZMembers(%s) = %v, %v; want [run-l run-y]", key, members, err)
+		}
+	}
+	for _, filter := range []RunFilter{{}, {DatasetID: ds}} {
+		page, err := s.ListRuns(ctx, tenant, filter, "", 10)
+		if err != nil {
+			t.Fatalf("ListRuns(%+v): %v", filter, err)
+		}
+		ids := make([]string, 0, len(page.Items))
+		for _, r := range page.Items {
+			ids = append(ids, r.RunID)
+		}
+		if !slices.Equal(ids, []string{"run-y", "run-l"}) {
+			t.Fatalf("ListRuns(%+v) = %v; want [run-y run-l]", filter, ids)
+		}
 	}
 }
 
