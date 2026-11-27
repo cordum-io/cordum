@@ -33,6 +33,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `warn` mode, are outside this check. The scheduler's own handling of these packets is
   unchanged (task-b0d537bc).
 
+- Gateway: in the production profile, the `sys.job.>` and `sys.audit.>` stream
+  subscriptions act on a job result sent under a worker session only when the job has a
+  dispatch record that names the same worker and tenant. A result that fails the check is
+  acknowledged, is not relayed to stream clients or applied to a workflow run, and is
+  logged as `bus tap packet refused` with `reason=dispatch`. Other profiles are unchanged
+  (task-9995f003).
+
 - Approvals: an approve that fails after a policy-drift refresh, on a workflow-run lookup error
   or a failed resolution write, leaves the stored safety decision unchanged, so the same approve
   can be retried once the store recovers instead of answering 409 "job not awaiting approval"

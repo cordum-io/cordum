@@ -11,6 +11,7 @@ import (
 	"github.com/cordum/cordum/core/auth/servicetoken"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
+	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/cordum/cordum/tests/identity"
@@ -78,6 +79,12 @@ func TestAudienceMatrixBusGatewayStream(t *testing.T) {
 		job, worker := "job-matrix-stream-"+string(c), "worker-matrix-stream-"+string(c)
 		if err := m.s.jobStore.SetJobMeta(context.Background(), &pb.JobRequest{JobId: job, TenantId: matrixTenant}); err != nil {
 			t.Fatalf("record job tenant: %v", err)
+		}
+		if err := m.s.jobStore.SetState(context.Background(), job, model.JobStateRunning); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := m.s.jobStore.BeginDispatch(context.Background(), job, worker, matrixTenant); err != nil {
+			t.Fatal(err)
 		}
 		sender := worker
 		if c == identity.ServiceToken {
