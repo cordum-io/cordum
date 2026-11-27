@@ -81,15 +81,19 @@ func (s *RedisStore) SaveWorkflow(ctx context.Context, wf *Workflow) error {
 		return fmt.Errorf("marshal workflow: %w", err)
 	}
 
-	pipe := s.client.TxPipeline()
-	pipe.Set(ctx, workflowKey(wf.ID), payload, 0)
+	// The record and its index keys sit in different cluster slots, so they
+	// are written one key at a time: record first, so a failure leaves the
+	// workflow unlisted until a re-save, never listed without a record.
+	if err := s.client.Set(ctx, workflowKey(wf.ID), payload, 0).Err(); err != nil {
+		return fmt.Errorf("save workflow: %w", err)
+	}
+	pipe := s.client.Pipeline()
 	if wf.OrgID != "" {
 		pipe.ZAdd(ctx, workflowOrgIndexKey(wf.OrgID), redis.Z{Score: float64(now.Unix()), Member: wf.ID})
 	}
 	pipe.ZAdd(ctx, workflowAllIndexKey(), redis.Z{Score: float64(now.Unix()), Member: wf.ID})
-	_, err = pipe.Exec(ctx)
-	if err != nil {
-		return fmt.Errorf("save workflow: %w", err)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("index workflow: %w", err)
 	}
 	return nil
 }
@@ -119,14 +123,15 @@ func (s *RedisStore) DeleteWorkflow(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("load workflow for delete: %w", err)
 	}
-	pipe := s.client.TxPipeline()
-	pipe.Del(ctx, workflowKey(id))
+	pipe := s.client.Pipeline()
 	pipe.ZRem(ctx, workflowAllIndexKey(), id)
 	if wf.OrgID != "" {
 		pipe.ZRem(ctx, workflowOrgIndexKey(wf.OrgID), id)
 	}
-	_, err = pipe.Exec(ctx)
-	if err != nil {
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("unindex workflow: %w", err)
+	}
+	if err := s.client.Del(ctx, workflowKey(id)).Err(); err != nil {
 		return fmt.Errorf("delete workflow: %w", err)
 	}
 	return nil
@@ -217,24 +222,18 @@ func (s *RedisStore) CreateRun(ctx context.Context, run *WorkflowRun) error {
 		return fmt.Errorf("marshal run job index: %w", err)
 	}
 
-	pipe := s.client.TxPipeline()
-	pipe.Set(ctx, runKey(run.ID), payload, 0)
-	pipe.ZAdd(ctx, runIndexKey(run.WorkflowID), redis.Z{Score: float64(now.Unix()), Member: run.ID})
-	pipe.ZAdd(ctx, runAllIndexKey(), redis.Z{Score: float64(now.Unix()), Member: run.ID})
-	pipe.ZAdd(ctx, runStatusIndexKey(run.Status), redis.Z{Score: float64(now.Unix()), Member: run.ID})
-	enqueueRunJobIndexWrites(ctx, pipe, jobRefPayloads)
-	enqueuePendingAuditDeletes(ctx, pipe, pendingDeletes)
-	if run.OrgID != "" {
-		activeKey := runOrgActiveKey(run.OrgID)
-		if isActiveRunStatus(run.Status) {
-			pipe.SAdd(ctx, activeKey, run.ID)
-		} else {
-			pipe.SRem(ctx, activeKey, run.ID)
-		}
-	}
-	_, err = pipe.Exec(ctx)
-	if err != nil {
+	if err := s.client.Set(ctx, runKey(run.ID), payload, 0).Err(); err != nil {
 		return fmt.Errorf("create run: %w", err)
+	}
+	if err := s.indexNewRun(ctx, run, jobRefPayloads); err != nil {
+		return fmt.Errorf("create run: %w", err)
+	}
+	if len(pendingDeletes) > 0 {
+		pipe := s.client.Pipeline()
+		enqueuePendingAuditDeletes(ctx, pipe, pendingDeletes)
+		if _, err := pipe.Exec(ctx); err != nil {
+			slog.Warn("workflow: pending audit hash cleanup failed", "run_id", run.ID, "error", err)
+		}
 	}
 	if run.IdempotencyKey != "" {
 		if _, err := s.TrySetRunIdempotencyKey(ctx, run.IdempotencyKey, run.ID); err != nil {
@@ -244,9 +243,64 @@ func (s *RedisStore) CreateRun(ctx context.Context, run *WorkflowRun) error {
 	return nil
 }
 
+// indexNewRun lists and counts a run whose record CreateRun has written. The
+// status entry goes last because the reconciler starts any pending run listed
+// there. On failure it undoes its writes and the record, so CreateRun's error
+// leaves nothing to start.
+func (s *RedisStore) indexNewRun(ctx context.Context, run *WorkflowRun, jobRefs map[string][]byte) error {
+	z := redis.Z{Score: float64(run.UpdatedAt.Unix()), Member: run.ID}
+	pipe := s.client.Pipeline()
+	pipe.ZAdd(ctx, runIndexKey(run.WorkflowID), z)
+	pipe.ZAdd(ctx, runAllIndexKey(), z)
+	enqueueRunJobIndexWrites(ctx, pipe, jobRefs)
+	if run.OrgID != "" {
+		if isActiveRunStatus(run.Status) {
+			pipe.SAdd(ctx, runOrgActiveKey(run.OrgID), run.ID)
+		} else {
+			pipe.SRem(ctx, runOrgActiveKey(run.OrgID), run.ID)
+		}
+	}
+	_, err := pipe.Exec(ctx)
+	if err == nil {
+		err = s.client.ZAdd(ctx, runStatusIndexKey(run.Status), z).Err()
+	}
+	if err == nil {
+		return nil
+	}
+	if undoErr := s.undoCreateRun(ctx, run, jobRefs); undoErr != nil {
+		return fmt.Errorf("%w (undo failed: %w)", err, undoErr)
+	}
+	return err
+}
+
+// undoCreateRun removes a half-created run newest write first, and stops at the
+// first failure, so a run that is still listed also stays counted.
+func (s *RedisStore) undoCreateRun(ctx context.Context, run *WorkflowRun, jobRefs map[string][]byte) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	if err := s.client.ZRem(ctx, runStatusIndexKey(run.Status), run.ID).Err(); err != nil {
+		return err
+	}
+	pipe := s.client.Pipeline()
+	pipe.ZRem(ctx, runIndexKey(run.WorkflowID), run.ID)
+	pipe.ZRem(ctx, runAllIndexKey(), run.ID)
+	for jobID := range jobRefs {
+		pipe.Del(ctx, runJobIndexKey(jobID))
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return err
+	}
+	if run.OrgID != "" && isActiveRunStatus(run.Status) {
+		if err := s.client.SRem(ctx, runOrgActiveKey(run.OrgID), run.ID).Err(); err != nil {
+			return err
+		}
+	}
+	return s.client.Del(ctx, runKey(run.ID)).Err()
+}
+
 // updateRunScript atomically:
-//  1. Reads the persisted run and extracts its previous status (so the index
-//     update outside the script can ZREM the stale status set when status flips).
+//  1. Reads the persisted run and returns its previous status. Callers ignore
+//     it: the index update outside the script clears every other status set.
 //  2. Merges any populated `audit_hash` from persisted-side StepRuns forward
 //     into the new payload's StepRuns whose `audit_hash` is empty for the same
 //     `job_id` (recursively walks `children`). This is the load-bearing
@@ -357,41 +411,66 @@ func (s *RedisStore) UpdateRun(ctx context.Context, run *WorkflowRun) error {
 	if err != nil {
 		return fmt.Errorf("marshal run: %w", err)
 	}
+
+	if err := updateRunScript.Run(ctx, s.client, []string{runKey(run.ID)}, string(payload)).Err(); err != nil {
+		return fmt.Errorf("update run: %w", err)
+	}
+	if err := s.syncRunIndexes(ctx, run, oldJobRefs, pendingDeletes); err != nil {
+		slog.Warn("update run: index update failed (idempotent, will self-heal)", "run_id", run.ID, "error", err)
+	}
+	return nil
+}
+
+// RepairRunIndexes rewrites the run's index entries from its record, for a run
+// a failed index update left listed under a stale status.
+func (s *RedisStore) RepairRunIndexes(ctx context.Context, run *WorkflowRun) error {
+	return s.syncRunIndexes(ctx, run, nil, nil)
+}
+
+// allRunStatuses lists every status set a run can be indexed under.
+var allRunStatuses = []RunStatus{
+	RunStatusPending, RunStatusRunning, RunStatusWaiting, RunStatusSucceeded,
+	RunStatusFailed, RunStatusDenied, RunStatusCancelled, RunStatusTimedOut,
+}
+
+// syncRunIndexes brings the run's listing, status, job and active-set entries
+// in line with its record, one key per command so it works on Redis Cluster.
+// Additions run before removals, so a failure between them leaves the run
+// listed and counted rather than missing.
+func (s *RedisStore) syncRunIndexes(ctx context.Context, run *WorkflowRun, oldJobRefs map[string]runJobRef, pendingDeletes []string) error {
 	jobRefs := collectRunJobRefs(run)
 	jobRefPayloads, err := marshalJobRefs(jobRefs)
 	if err != nil {
 		return fmt.Errorf("marshal run job index: %w", err)
 	}
+	z := redis.Z{Score: float64(run.UpdatedAt.Unix()), Member: run.ID}
+	active := isActiveRunStatus(run.Status)
 
-	prevStatus, err := updateRunScript.Run(ctx, s.client, []string{runKey(run.ID)}, string(payload)).Text()
-	if err != nil {
-		return fmt.Errorf("update run: %w", err)
+	add := s.client.Pipeline()
+	add.ZAdd(ctx, runIndexKey(run.WorkflowID), z)
+	add.ZAdd(ctx, runAllIndexKey(), z)
+	add.ZAdd(ctx, runStatusIndexKey(run.Status), z)
+	enqueueRunJobIndexWrites(ctx, add, jobRefPayloads)
+	if run.OrgID != "" && active {
+		add.SAdd(ctx, runOrgActiveKey(run.OrgID), run.ID)
+	}
+	if _, err := add.Exec(ctx); err != nil {
+		return fmt.Errorf("index run: %w", err)
 	}
 
-	score := float64(now.Unix())
-	pipe := s.client.TxPipeline()
-	pipe.ZAdd(ctx, runIndexKey(run.WorkflowID), redis.Z{Score: score, Member: run.ID})
-	pipe.ZAdd(ctx, runAllIndexKey(), redis.Z{Score: score, Member: run.ID})
-	pipe.ZAdd(ctx, runStatusIndexKey(run.Status), redis.Z{Score: score, Member: run.ID})
-	enqueueRunJobIndexWrites(ctx, pipe, jobRefPayloads)
-	enqueueRunJobIndexDeletes(ctx, pipe, oldJobRefs, jobRefs)
-	enqueuePendingAuditDeletes(ctx, pipe, pendingDeletes)
-
-	if prevStatus != "" && prevStatus != string(run.Status) {
-		pipe.ZRem(ctx, runStatusIndexKey(RunStatus(prevStatus)), run.ID)
-	}
-
-	if run.OrgID != "" {
-		orgKey := runOrgActiveKey(run.OrgID)
-		if isActiveRunStatus(run.Status) {
-			pipe.SAdd(ctx, orgKey, run.ID)
-		} else {
-			pipe.SRem(ctx, orgKey, run.ID)
+	remove := s.client.Pipeline()
+	for _, status := range allRunStatuses {
+		if status != run.Status {
+			remove.ZRem(ctx, runStatusIndexKey(status), run.ID)
 		}
 	}
-
-	if _, err := pipe.Exec(ctx); err != nil {
-		slog.Warn("update run: index pipeline failed (idempotent, will self-heal)", "run_id", run.ID, "error", err)
+	enqueueRunJobIndexDeletes(ctx, remove, oldJobRefs, jobRefs)
+	enqueuePendingAuditDeletes(ctx, remove, pendingDeletes)
+	if run.OrgID != "" && !active {
+		remove.SRem(ctx, runOrgActiveKey(run.OrgID), run.ID)
+	}
+	if _, err := remove.Exec(ctx); err != nil {
+		return fmt.Errorf("unindex run: %w", err)
 	}
 	return nil
 }
@@ -438,37 +517,76 @@ func (s *RedisStore) DeleteRun(ctx context.Context, runID string) error {
 	if err != nil {
 		return fmt.Errorf("load run for delete: %w", err)
 	}
-	pipe := s.client.TxPipeline()
-	pipe.Del(ctx, runKey(runID))
+	// Listings go before the record and the active-set entry after it, so a
+	// failure leaves the run counted, never uncounted while it still runs.
+	pipe := s.client.Pipeline()
 	pipe.ZRem(ctx, runAllIndexKey(), runID)
 	enqueueRunJobIndexDeletes(ctx, pipe, collectRunJobRefs(run), nil)
 	if run.WorkflowID != "" {
 		pipe.ZRem(ctx, runIndexKey(run.WorkflowID), runID)
 	}
-	if run.Status != "" {
-		pipe.ZRem(ctx, runStatusIndexKey(run.Status), runID)
-	}
-	if run.OrgID != "" {
-		pipe.SRem(ctx, runOrgActiveKey(run.OrgID), runID)
+	for _, status := range allRunStatuses {
+		pipe.ZRem(ctx, runStatusIndexKey(status), runID)
 	}
 	pipe.Del(ctx, runTimelineKey(runID))
-	_, err = pipe.Exec(ctx)
-	if err != nil {
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("unindex run: %w", err)
+	}
+	if err := s.client.Del(ctx, runKey(runID)).Err(); err != nil {
 		return fmt.Errorf("delete run: %w", err)
+	}
+	if run.OrgID != "" {
+		if err := s.client.SRem(ctx, runOrgActiveKey(run.OrgID), runID).Err(); err != nil {
+			return fmt.Errorf("delete run active entry: %w", err)
+		}
 	}
 	return nil
 }
 
-// CountActiveRuns returns the number of active runs for an org.
+// CountActiveRuns returns the number of active runs for an org. It counts the
+// active-set members whose run record exists with an active status, and drops
+// the others, which a failed delete or index update can leave behind.
 func (s *RedisStore) CountActiveRuns(ctx context.Context, orgID string) (int, error) {
 	if orgID == "" {
 		return 0, fmt.Errorf("org id required")
 	}
-	count, err := s.client.SCard(ctx, runOrgActiveKey(orgID)).Result()
+	activeKey := runOrgActiveKey(orgID)
+	ids, err := s.client.SMembers(ctx, activeKey).Result()
 	if err != nil {
 		return 0, fmt.Errorf("count active runs: %w", err)
 	}
-	return int(count), nil
+	pipe := s.client.Pipeline()
+	cmds := make([]*redis.StringCmd, len(ids))
+	for i, id := range ids {
+		cmds[i] = pipe.Get(ctx, runKey(id))
+	}
+	_, _ = pipe.Exec(ctx) // each command's error is checked below
+	count := 0
+	var stale []any
+	for i, cmd := range cmds {
+		data, err := cmd.Bytes()
+		if errors.Is(err, redis.Nil) {
+			stale = append(stale, ids[i])
+			continue
+		}
+		if err != nil {
+			return 0, fmt.Errorf("count active runs: %w", err)
+		}
+		var rec struct {
+			Status RunStatus `json:"status"`
+		}
+		if json.Unmarshal(data, &rec) == nil && !isActiveRunStatus(rec.Status) {
+			stale = append(stale, ids[i])
+			continue
+		}
+		count++
+	}
+	if len(stale) > 0 {
+		if err := s.client.SRem(ctx, activeKey, stale...).Err(); err != nil {
+			slog.Warn("workflow: stale active run cleanup failed", "org_id", orgID, "error", err)
+		}
+	}
+	return count, nil
 }
 
 // CountRunsSince returns the number of workflow runs updated on or after the
