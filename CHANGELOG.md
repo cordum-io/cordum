@@ -7,6 +7,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Approvals: an approve that fails after a policy-drift refresh, on a workflow-run lookup error
+  or a failed resolution write, leaves the stored safety decision unchanged, so the same approve
+  can be retried once the store recovers instead of answering 409 "job not awaiting approval"
+  (task-39fdea50).
+
 - MCP: the gateway's HTTP MCP endpoint now serves nine read tools instead of answering
   501 `read_only_unsupported`: listing jobs, runs, workflows, topics, agents and pending
   approvals, reading a run and its timeline, and verifying the audit chain. Each read runs through

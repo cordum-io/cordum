@@ -103,7 +103,7 @@ func TestApproveJobRefreshedSnapshotStillRequiresAudit(t *testing.T) {
 	require.Contains(t, rr.Body.String(), "approval not applied: its audit entry was not stored")
 	decision, err := s.jobStore.GetSafetyDecision(ctx, jobID)
 	require.NoError(t, err)
-	require.Equal(t, "snap-refreshed", decision.PolicySnapshot)
+	require.Equal(t, "snap-test", decision.PolicySnapshot, "a failed approve keeps the stored safety record")
 	after, err := s.jobStore.GetApprovalRecord(ctx, jobID)
 	require.NoError(t, err)
 	require.Equal(t, before, after)
