@@ -15,6 +15,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   once refused, which had kept workflow steps and DLQ retries from starting at
   a cap of 1 (task-8bab7c41).
 
+- Python SDK: normalize PATH-discovered generator paths in Git Bash (task-33ed4117)
+  when `MSYS_NO_PATHCONV=1`, preserving local-venv selection and WSL behavior.
+
 - Bus: on core NATS, `Subscribe` and `SubscribeWithContext` return after the server has
   registered the subscription, as `QueueRespond` does, and a failed flush fails the call
   (task-1d6b97fc).
