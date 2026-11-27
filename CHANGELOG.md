@@ -48,6 +48,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   another policy change answers 409, and snapshot capture fails when its audit entry
   cannot be stored (task-be32bb1b).
 
+- Packs: a pack install, uninstall or install rollback now stores its policy changes
+  and their policy audit entry together. For an install or uninstall, an entry that
+  cannot be stored leaves the policy, the config overlays and the pack registry
+  unchanged. An install or uninstall whose own audit entry cannot be stored answers
+  500 and says so (task-b2c7a413).
+
 - Installer: `tools/scripts/install.ps1` runs under Windows PowerShell 5.1, as its
   `#Requires -Version 5.1` line says. Native stderr from a successful gpg call no
   longer stops it, the version-floor write no longer needs .NET Core, and CI runs the
