@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { derivePolicyAccess } from "@/hooks/usePolicyAccess";
 
 describe("BundlePublishDialog contract", () => {
-  it("requires publish role to access publish flow", () => {
+  it("opens the publish flow only to the admin role", () => {
     const viewer = derivePolicyAccess({
       requiresAuth: true,
       roles: ["viewer"],
@@ -10,21 +10,21 @@ describe("BundlePublishDialog contract", () => {
     });
     expect(viewer.canPublish).toBe(false);
 
-    const publisher = derivePolicyAccess({
+    const admin = derivePolicyAccess({
       requiresAuth: true,
-      roles: ["publisher"],
-      principalRole: "publisher",
+      roles: ["admin"],
+      principalRole: "admin",
     });
-    expect(publisher.canPublish).toBe(true);
+    expect(admin.canPublish).toBe(true);
   });
 
-  it("distinguishes edit from publish roles", () => {
+  it("gives edit and publish to the admin role and neither to the editor role", () => {
     const editor = derivePolicyAccess({
       requiresAuth: true,
       roles: ["editor"],
       principalRole: "editor",
     });
-    expect(editor.canEdit).toBe(true);
+    expect(editor.canEdit).toBe(false);
     expect(editor.canPublish).toBe(false);
 
     const admin = derivePolicyAccess({
@@ -36,7 +36,7 @@ describe("BundlePublishDialog contract", () => {
     expect(admin.canPublish).toBe(true);
   });
 
-  it("allows rollback only for publish-capable roles", () => {
+  it("allows rollback only for the admin role", () => {
     const auditor = derivePolicyAccess({
       requiresAuth: true,
       roles: ["auditor"],
@@ -50,7 +50,7 @@ describe("BundlePublishDialog contract", () => {
       roles: ["secops"],
       principalRole: "secops",
     });
-    expect(secops.canPublish).toBe(true);
+    expect(secops.canPublish).toBe(false);
     expect(secops.isReadOnly).toBe(false);
   });
 });

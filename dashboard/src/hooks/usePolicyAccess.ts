@@ -3,9 +3,7 @@ import { useAuthConfig } from "./useAuthConfig";
 import { useConfigStore } from "../state/config";
 
 const READ_ONLY_ROLES = new Set(["viewer", "auditor", "readonly", "read_only"]);
-const EDIT_ROLES = new Set(["admin", "operator", "secops", "editor", "policy_editor", "owner"]);
-const PUBLISH_ROLES = new Set(["admin", "operator", "secops", "publisher", "policy_publisher", "owner"]);
-const RELEASE_ROLES = new Set(["admin", "operator", "secops", "release_manager", "owner"]);
+const ADMIN_ROLES = new Set(["admin"]);
 
 function normalizeRole(value: string): string {
   return value.trim().toLowerCase();
@@ -57,11 +55,11 @@ export function derivePolicyAccess(input: DerivePolicyAccessInput): PolicyAccess
     roles.every((role) => READ_ONLY_ROLES.has(role));
 
   return {
-    canEdit: !isReadOnly && hasAnyRole(EDIT_ROLES),
-    canPublish: !isReadOnly && hasAnyRole(PUBLISH_ROLES),
-    canRelease: !isReadOnly && hasAnyRole(RELEASE_ROLES),
-    canManageOutputRules: !isReadOnly && hasAnyRole(EDIT_ROLES),
-    canManageTenants: !isReadOnly && hasAnyRole(EDIT_ROLES),
+    canEdit: !isReadOnly && hasAnyRole(ADMIN_ROLES),
+    canPublish: !isReadOnly && hasAnyRole(ADMIN_ROLES),
+    canRelease: !isReadOnly && hasAnyRole(ADMIN_ROLES),
+    canManageOutputRules: !isReadOnly && hasAnyRole(ADMIN_ROLES),
+    canManageTenants: !isReadOnly && hasAnyRole(ADMIN_ROLES),
     isReadOnly,
     requiresAuth: input.requiresAuth,
     userRoles: roles,

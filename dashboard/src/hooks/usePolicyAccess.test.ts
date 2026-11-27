@@ -1,7 +1,40 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithQueryClient } from "./__tests__/test-utils";
-import { usePolicyAccess } from "./usePolicyAccess";
+import { derivePolicyAccess, usePolicyAccess } from "./usePolicyAccess";
 import type { AuthConfig } from "../api/types";
+
+const ALL_POLICY_ADMIN = {
+  canEdit: true,
+  canPublish: true,
+  canRelease: true,
+  canManageOutputRules: true,
+  canManageTenants: true,
+};
+const NO_POLICY_ADMIN = {
+  canEdit: false,
+  canPublish: false,
+  canRelease: false,
+  canManageOutputRules: false,
+  canManageTenants: false,
+};
+
+describe("derivePolicyAccess with auth required", () => {
+  it.each([
+    ["admin", ALL_POLICY_ADMIN],
+    ["operator", NO_POLICY_ADMIN],
+    ["secops", NO_POLICY_ADMIN],
+    ["editor", NO_POLICY_ADMIN],
+    ["policy_editor", NO_POLICY_ADMIN],
+    ["publisher", NO_POLICY_ADMIN],
+    ["policy_publisher", NO_POLICY_ADMIN],
+    ["release_manager", NO_POLICY_ADMIN],
+    ["owner", NO_POLICY_ADMIN],
+    ["viewer", NO_POLICY_ADMIN],
+    ["auditor", NO_POLICY_ADMIN],
+  ])("gives role %s the policy admin capabilities only if it is admin", (role, expected) => {
+    expect(derivePolicyAccess({ requiresAuth: true, roles: [role], principalRole: role })).toMatchObject(expected);
+  });
+});
 
 const { configState, authConfigState } = vi.hoisted(() => ({
   configState: {

@@ -51,6 +51,13 @@ describe("TenantsPage extraction contract", () => {
       roles: ["operator"],
       principalRole: "operator",
     });
-    expect(operatorAccess.canManageTenants).toBe(true);
+    expect(operatorAccess.canManageTenants).toBe(false);
+
+    const adminAccess = derivePolicyAccess({
+      requiresAuth: true,
+      roles: ["admin"],
+      principalRole: "admin",
+    });
+    expect(adminAccess.canManageTenants).toBe(true);
   });
 });

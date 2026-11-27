@@ -54,7 +54,14 @@ describe("OutputRulesPage extraction contract", () => {
       roles: ["operator"],
       principalRole: "operator",
     });
-    expect(operatorAccess.canManageOutputRules).toBe(true);
+    expect(operatorAccess.canManageOutputRules).toBe(false);
+
+    const adminAccess = derivePolicyAccess({
+      requiresAuth: true,
+      roles: ["admin"],
+      principalRole: "admin",
+    });
+    expect(adminAccess.canManageOutputRules).toBe(true);
   });
 
   it("renders explicit fail-mode guidance for operators", () => {
