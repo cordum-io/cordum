@@ -260,3 +260,42 @@ func requireNoTrace(t *testing.T, client redis.UniversalClient, marker string) {
 		t.Fatalf("trace of %q remains after cleanup: %v", marker, hits)
 	}
 }
+
+func TestRetentionProofDIC06(t *testing.T) {
+	t.Setenv("CORDUM_DECISION_LOG_TTL_SECONDS", "1")
+	mr, client, marker := newProofRedis(t)
+	ctx := context.Background()
+	s := NewRedisDecisionLogStoreFromClient(client)
+	const tenant = "tenant-dic06"
+	record := model.DecisionLogRecord{
+		Tenant: tenant, JobID: marker + "-job", RuleID: marker + "-rule", AgentID: marker + "-agent",
+		Topic: "job." + marker, Reason: "reason " + marker, Verdict: model.SafetyDeny,
+		Timestamp: time.Now().UTC().UnixMilli(),
+	}
+	if err := s.AppendDecision(ctx, record); err != nil {
+		t.Fatalf("AppendDecision: %v", err)
+	}
+	recordID := decisionRecordID(record)
+	page, err := s.QueryDecisions(ctx, model.DecisionQuery{Tenant: tenant, RuleID: record.RuleID, AgentID: record.AgentID})
+	if err != nil || len(page.Items) != 1 {
+		t.Fatalf("filtered QueryDecisions = %d items, %v; want the record", len(page.Items), err)
+	}
+	requireTrace(t, client, marker, "gov:dec:tenant-dic06:rec:",
+		"gov:dec:tenant-dic06:idx:rule:", "gov:dec:tenant-dic06:idx:agent:", "gov:dec:tenant-dic06:idx:topic:")
+	expireJustPast(t, mr, client, time.Second, recordID, "gov:dec:tenant-dic06:rec:", "gov:dec:tenant-dic06:idx:t:",
+		"gov:dec:tenant-dic06:idx:rule:", "gov:dec:tenant-dic06:idx:agent:", "gov:dec:tenant-dic06:idx:topic:",
+		"gov:dec:tenant-dic06:idx:verdict:deny:")
+	// The index trim cutoff reads the wall clock, not miniredis time.
+	time.Sleep(time.Until(time.UnixMilli(record.Timestamp).Add(time.Second + 50*time.Millisecond)))
+	if err := s.AppendDecision(ctx, model.DecisionLogRecord{
+		Tenant: tenant, JobID: "job-later", RuleID: "rule-later", AgentID: "agent-later",
+		Topic: "job.later", Verdict: model.SafetyDeny,
+	}); err != nil {
+		t.Fatalf("later AppendDecision: %v", err)
+	}
+	if _, err := s.QueryDecisions(ctx, model.DecisionQuery{Tenant: tenant}); err != nil {
+		t.Fatalf("unfiltered QueryDecisions: %v", err)
+	}
+	requireNoTrace(t, client, marker)
+	requireNoTrace(t, client, recordID)
+}
