@@ -42,36 +42,36 @@ that matrix alone does not establish route authorization or effect prevention.
 | policy evaluation | degraded | Required; not yet tested: policy denies remain denies. | pending PR2-06-KERNEL |
 | policy evaluation | invalid | Required; not yet tested: policy denies remain denies. | pending PR2-06-KERNEL |
 | policy evaluation | missing | Required; not yet tested: policy denies remain denies. | pending PR2-06-KERNEL |
-| approvals | valid | Required; not yet tested: approval cannot override a deny; no prohibited mutation. | pending PR2-06-GATEWAY, pending PR2-06-RUNNER |
-| approvals | warning | Required; not yet tested: approval cannot override a deny; no prohibited mutation. | pending PR2-06-GATEWAY, pending PR2-06-RUNNER |
-| approvals | grace | Required; not yet tested: approval cannot override a deny; no prohibited mutation. | pending PR2-06-GATEWAY, pending PR2-06-RUNNER |
-| approvals | degraded | Required; not yet tested: approval cannot override a deny; no prohibited mutation. | pending PR2-06-GATEWAY, pending PR2-06-RUNNER |
-| approvals | invalid | Required; not yet tested: approval cannot override a deny; no prohibited mutation. | pending PR2-06-GATEWAY, pending PR2-06-RUNNER |
-| approvals | missing | Required; not yet tested: approval cannot override a deny; no prohibited mutation. | pending PR2-06-GATEWAY, pending PR2-06-RUNNER |
-| audit | valid | Required; not yet tested: decision evidence is still written. | pending PR2-06-GATEWAY, pending PR2-06-KERNEL |
-| audit | warning | Required; not yet tested: decision evidence is still written. | pending PR2-06-GATEWAY, pending PR2-06-KERNEL |
-| audit | grace | Required; not yet tested: decision evidence is still written. | pending PR2-06-GATEWAY, pending PR2-06-KERNEL |
-| audit | degraded | Required; not yet tested: decision evidence is still written. | pending PR2-06-GATEWAY, pending PR2-06-KERNEL |
-| audit | invalid | Required; not yet tested: decision evidence is still written. | pending PR2-06-GATEWAY, pending PR2-06-KERNEL |
-| audit | missing | Required; not yet tested: decision evidence is still written. | pending PR2-06-GATEWAY, pending PR2-06-KERNEL |
-| protected operations | valid | Required; not yet tested: denied requests cause no publication or protected mutation. | pending PR2-06-GATEWAY |
-| protected operations | warning | Required; not yet tested: denied requests cause no publication or protected mutation. | pending PR2-06-GATEWAY |
-| protected operations | grace | Required; not yet tested: denied requests cause no publication or protected mutation. | pending PR2-06-GATEWAY |
-| protected operations | degraded | Required; not yet tested: denied requests cause no publication or protected mutation. | pending PR2-06-GATEWAY |
-| protected operations | invalid | Required; not yet tested: denied requests cause no publication or protected mutation. | pending PR2-06-GATEWAY |
-| protected operations | missing | Required; not yet tested: denied requests cause no publication or protected mutation. | pending PR2-06-GATEWAY |
+| approvals | valid | Required; not yet tested: approval cannot override a deny; no prohibited mutation. | `TestLicenseBehaviorGateway_Approvals/valid`, `TestLicenseBehaviorGateway_RBACLoss/valid/jobs.approve`, pending PR2-06-RUNNER |
+| approvals | warning | Required; not yet tested: approval cannot override a deny; no prohibited mutation. | `TestLicenseBehaviorGateway_Approvals/warning`, pending PR2-06-RUNNER |
+| approvals | grace | Required; not yet tested: approval cannot override a deny; no prohibited mutation. | `TestLicenseBehaviorGateway_Approvals/grace`, `TestLicenseBehaviorGateway_RBACLoss/grace/jobs.approve`, pending PR2-06-RUNNER |
+| approvals | degraded | Required; not yet tested: approval cannot override a deny; no prohibited mutation. | `TestLicenseBehaviorGateway_Approvals/degraded`, `TestLicenseBehaviorGateway_RBACLoss/degraded/jobs.approve`, pending PR2-06-RUNNER |
+| approvals | invalid | Required; not yet tested: approval cannot override a deny; no prohibited mutation. | `TestLicenseBehaviorGateway_Approvals/invalid`, `TestLicenseBehaviorGateway_RBACLoss/invalid/jobs.approve`, pending PR2-06-RUNNER |
+| approvals | missing | Required; not yet tested: approval cannot override a deny; no prohibited mutation. | `TestLicenseBehaviorGateway_Approvals/missing`, `TestLicenseBehaviorGateway_RBACLoss/missing/jobs.approve`, pending PR2-06-RUNNER |
+| audit | valid | Required; not yet tested: decision evidence is still written. | `TestLicenseBehaviorGateway_Audit/valid`, pending PR2-06-KERNEL |
+| audit | warning | Required; not yet tested: decision evidence is still written. | `TestLicenseBehaviorGateway_Audit/warning`, pending PR2-06-KERNEL |
+| audit | grace | Required; not yet tested: decision evidence is still written. | `TestLicenseBehaviorGateway_Audit/grace`, pending PR2-06-KERNEL |
+| audit | degraded | Required; not yet tested: decision evidence is still written. | `TestLicenseBehaviorGateway_Audit/degraded`, pending PR2-06-KERNEL |
+| audit | invalid | Required; not yet tested: decision evidence is still written. | `TestLicenseBehaviorGateway_Audit/invalid`, pending PR2-06-KERNEL |
+| audit | missing | Required; not yet tested: decision evidence is still written. | `TestLicenseBehaviorGateway_Audit/missing`, pending PR2-06-KERNEL |
+| protected operations | valid | Required: denied requests cause no publication or protected mutation. | `TestLicenseBehaviorGateway_ProtectedOperations/valid`, `TestLicenseBehaviorGateway_RBACLoss/valid/jobs.write` |
+| protected operations | warning | Required: denied requests cause no publication or protected mutation. | `TestLicenseBehaviorGateway_ProtectedOperations/warning` |
+| protected operations | grace | Required: denied requests cause no publication or protected mutation. | `TestLicenseBehaviorGateway_ProtectedOperations/grace`, `TestLicenseBehaviorGateway_RBACLoss/grace/jobs.write` |
+| protected operations | degraded | Required: denied requests cause no publication or protected mutation. | `TestLicenseBehaviorGateway_ProtectedOperations/degraded`, `TestLicenseBehaviorGateway_RBACLoss/degraded/jobs.write` |
+| protected operations | invalid | Required: denied requests cause no publication or protected mutation. | `TestLicenseBehaviorGateway_ProtectedOperations/invalid`, `TestLicenseBehaviorGateway_RBACLoss/invalid/jobs.write` |
+| protected operations | missing | Required: denied requests cause no publication or protected mutation. | `TestLicenseBehaviorGateway_ProtectedOperations/missing`, `TestLicenseBehaviorGateway_RBACLoss/missing/jobs.write` |
 | runner | valid | Required; not yet tested: denied work is not dispatched or started. | pending PR2-06-RUNNER |
 | runner | warning | Required; not yet tested: denied work is not dispatched or started. | pending PR2-06-RUNNER |
 | runner | grace | Required; not yet tested: denied work is not dispatched or started. | pending PR2-06-RUNNER |
 | runner | degraded | Required; not yet tested: denied work is not dispatched or started. | pending PR2-06-RUNNER |
 | runner | invalid | Required; not yet tested: denied work is not dispatched or started. | pending PR2-06-RUNNER |
 | runner | missing | Required; not yet tested: denied work is not dispatched or started. | pending PR2-06-RUNNER |
-| administration | valid | Required; not yet tested: recovery permissions do not replace authorization. | `TestLicenseBreakGlassMatrix`, pending PR2-06-GATEWAY |
-| administration | warning | Required; not yet tested: recovery permissions do not replace authorization. | `TestLicenseBreakGlassMatrix`, pending PR2-06-GATEWAY |
-| administration | grace | Required; not yet tested: recovery permissions do not replace authorization. | `TestLicenseBreakGlassMatrix`, pending PR2-06-GATEWAY |
-| administration | degraded | Required; not yet tested: recovery permissions do not replace authorization. | `TestLicenseBreakGlassMatrix`, pending PR2-06-GATEWAY |
-| administration | invalid | Required; not yet tested: recovery permissions do not replace authorization. | `TestLicenseBreakGlassMatrix`, pending PR2-06-GATEWAY |
-| administration | missing | Required; not yet tested: recovery permissions do not replace authorization. | `TestLicenseBreakGlassMatrix`, pending PR2-06-GATEWAY |
+| administration | valid | Required: recovery permissions do not replace authorization. | `TestLicenseBreakGlassMatrix`, `TestLicenseBehaviorGateway_Administration/valid`, `TestLicenseBehaviorGateway_RBACLoss/valid/roles.write`, `TestLicenseBehaviorGateway_RBACLossConfigWrite/valid`, `TestLicenseBehaviorGateway_RBACLossCustomRoleRead/valid` |
+| administration | warning | Required: recovery permissions do not replace authorization. | `TestLicenseBreakGlassMatrix`, `TestLicenseBehaviorGateway_Administration/warning` |
+| administration | grace | Required: recovery permissions do not replace authorization. | `TestLicenseBreakGlassMatrix`, `TestLicenseBehaviorGateway_Administration/grace`, `TestLicenseBehaviorGateway_RBACLoss/grace/roles.write` |
+| administration | degraded | Required: recovery permissions do not replace authorization. | `TestLicenseBreakGlassMatrix`, `TestLicenseBehaviorGateway_Administration/degraded`, `TestLicenseBehaviorGateway_RBACLoss/degraded/roles.write`, `TestLicenseBehaviorGateway_RBACLossConfigWrite/degraded`, `TestLicenseBehaviorGateway_CommunityFallback/degraded` |
+| administration | invalid | Required: recovery permissions do not replace authorization. | `TestLicenseBreakGlassMatrix`, `TestLicenseBehaviorGateway_Administration/invalid`, `TestLicenseBehaviorGateway_RBACLoss/invalid/roles.write`, `TestLicenseBehaviorGateway_RBACLossConfigWrite/invalid`, `TestLicenseBehaviorGateway_CommunityFallback/invalid` |
+| administration | missing | Required: recovery permissions do not replace authorization. | `TestLicenseBreakGlassMatrix`, `TestLicenseBehaviorGateway_Administration/missing`, `TestLicenseBehaviorGateway_RBACLoss/missing/roles.write`, `TestLicenseBehaviorGateway_RBACLossConfigWrite/missing`, `TestLicenseBehaviorGateway_RBACLossCustomRoleRead/missing`, `TestLicenseBehaviorGateway_CommunityFallback/missing`, `TestLicenseBehaviorGateway_MemoryRateLimit` |
 
 ## Protections outside the Community tier
 
