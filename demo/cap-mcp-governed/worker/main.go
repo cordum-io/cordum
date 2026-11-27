@@ -1,7 +1,7 @@
 // Package main is the cap-mcp-governed demo worker.
 //
-// It is a CAP v2.17.0 worker that, for every job, opens an MCP session
-// against a Cordum gateway, reads its own job resource
+// It is a CAP v2.17.0 worker that, for every job, sends session-less MCP
+// calls to a Cordum gateway: it initializes, reads its own job resource
 // (cordum://jobs/<job_id>), calls the read-only cordum_status tool and then
 // requests the governed cordum_create_workflow mutation. When the gateway
 // answers JSON-RPC -32099 (approval required) the worker polls the approval
@@ -12,7 +12,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -136,7 +135,7 @@ type worker struct {
 	base context.Context
 }
 
-// handle runs one job: validate, open the session, read, status, create,
+// handle runs one job: validate, initialize, read, status, create,
 // and on -32099 wait for a human decision and retry the same bytes once.
 func (w *worker) handle(rc runtime.Context, in jobInput) (jobOutput, error) {
 	jobID := rc.Job.GetJobId()
@@ -146,7 +145,7 @@ func (w *worker) handle(rc runtime.Context, in jobInput) (jobOutput, error) {
 	}
 	ctx, cancel := context.WithTimeout(w.base, w.cfg.JobTimeout)
 	defer cancel()
-	s := &session{cfg: w.cfg, base: w.base, ctx: ctx, id: rand.Text()}
+	s := &session{cfg: w.cfg, base: w.base, ctx: ctx}
 	if err := s.open(jobID); err != nil {
 		return jobOutput{}, err
 	}
@@ -198,7 +197,9 @@ func buildArgs(jobID string, in jobInput) ([]byte, error) {
 	return args, nil
 }
 
-// session is one job's MCP session. JSON-RPC ids count up from 1. gated is
+// session is one job's MCP client state. Its calls are session-less POSTs:
+// the gateway accepts only session ids it issued over SSE, and the worker
+// opens no SSE stream. JSON-RPC ids count up from 1. gated is
 // set once the gateway asked for approval; from then on the job deadline
 // reports as mcp_approval_timeout. retryAfter is the Retry-After header of
 // the last non-200 response.
@@ -206,7 +207,6 @@ type session struct {
 	cfg        config
 	base       context.Context // worker lifetime
 	ctx        context.Context // job deadline, derived from base
-	id         string
 	nextID     int
 	gated      bool
 	retryAfter string
@@ -277,7 +277,6 @@ func (s *session) do(method, path string, body []byte) (int, []byte, error) {
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-API-Key", s.cfg.APIKey)
 	req.Header.Set("X-Tenant-ID", s.cfg.TenantID)
-	req.Header.Set("X-MCP-Session-ID", s.id)
 	resp, err := s.cfg.Client.Do(req)
 	if err != nil {
 		return 0, nil, s.interrupted()
