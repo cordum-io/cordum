@@ -36,24 +36,24 @@ that matrix alone does not establish route authorization or effect prevention.
 
 | Class | State | Required behavior | Tests |
 | --- | --- | --- | --- |
-| policy evaluation | valid | Required; not yet tested: policy denies remain denies. | pending PR2-06-KERNEL |
-| policy evaluation | warning | Required; not yet tested: policy denies remain denies. | pending PR2-06-KERNEL |
-| policy evaluation | grace | Required; not yet tested: policy denies remain denies. | pending PR2-06-KERNEL |
-| policy evaluation | degraded | Required; not yet tested: policy denies remain denies. | pending PR2-06-KERNEL |
-| policy evaluation | invalid | Required; not yet tested: policy denies remain denies. | pending PR2-06-KERNEL |
-| policy evaluation | missing | Required; not yet tested: policy denies remain denies. | pending PR2-06-KERNEL |
+| policy evaluation | valid | Required: policy denies remain denies. | `TestLicenseBehaviorKernel_BaseDeny/valid`, `TestLicenseBehaviorKernel_CustomBundleDeny/valid`, `TestLicenseBehaviorKernel_InvariantsDeny/valid`, `TestLicenseBehaviorKernel_VelocityDeny/valid` |
+| policy evaluation | warning | Required: policy denies remain denies. | `TestLicenseBehaviorKernel_BaseDeny/warning`, `TestLicenseBehaviorKernel_CustomBundleDeny/warning`, `TestLicenseBehaviorKernel_InvariantsDeny/warning`, `TestLicenseBehaviorKernel_VelocityDeny/warning` |
+| policy evaluation | grace | Required: policy denies remain denies. | `TestLicenseBehaviorKernel_BaseDeny/grace`, `TestLicenseBehaviorKernel_CustomBundleDeny/grace`, `TestLicenseBehaviorKernel_InvariantsDeny/grace`, `TestLicenseBehaviorKernel_VelocityDeny/grace` |
+| policy evaluation | degraded | Required; not yet tested: policy denies remain denies. | `TestLicenseBehaviorKernel_BaseDeny/degraded`, open finding PR2-06-F4, open finding PR2-06-F5, open finding PR2-06-F6 |
+| policy evaluation | invalid | Required; not yet tested: policy denies remain denies. | `TestLicenseBehaviorKernel_BaseDeny/invalid`, open finding PR2-06-F4, open finding PR2-06-F5, open finding PR2-06-F6 |
+| policy evaluation | missing | Required; not yet tested: policy denies remain denies. | `TestLicenseBehaviorKernel_BaseDeny/missing`, open finding PR2-06-F4, open finding PR2-06-F5, open finding PR2-06-F6 |
 | approvals | valid | Required; not yet tested: approval cannot override a deny; no prohibited mutation. | `TestLicenseBehaviorGateway_Approvals/valid`, `TestLicenseBehaviorGateway_RBACLoss/valid/jobs.approve`, pending PR2-06-RUNNER |
 | approvals | warning | Required; not yet tested: approval cannot override a deny; no prohibited mutation. | `TestLicenseBehaviorGateway_Approvals/warning`, pending PR2-06-RUNNER |
 | approvals | grace | Required; not yet tested: approval cannot override a deny; no prohibited mutation. | `TestLicenseBehaviorGateway_Approvals/grace`, `TestLicenseBehaviorGateway_RBACLoss/grace/jobs.approve`, pending PR2-06-RUNNER |
 | approvals | degraded | Required; not yet tested: approval cannot override a deny; no prohibited mutation. | `TestLicenseBehaviorGateway_Approvals/degraded`, `TestLicenseBehaviorGateway_RBACLoss/degraded/jobs.approve`, pending PR2-06-RUNNER |
 | approvals | invalid | Required; not yet tested: approval cannot override a deny; no prohibited mutation. | `TestLicenseBehaviorGateway_Approvals/invalid`, `TestLicenseBehaviorGateway_RBACLoss/invalid/jobs.approve`, pending PR2-06-RUNNER |
 | approvals | missing | Required; not yet tested: approval cannot override a deny; no prohibited mutation. | `TestLicenseBehaviorGateway_Approvals/missing`, `TestLicenseBehaviorGateway_RBACLoss/missing/jobs.approve`, pending PR2-06-RUNNER |
-| audit | valid | Required; not yet tested: decision evidence is still written. | `TestLicenseBehaviorGateway_Audit/valid`, pending PR2-06-KERNEL |
-| audit | warning | Required; not yet tested: decision evidence is still written. | `TestLicenseBehaviorGateway_Audit/warning`, pending PR2-06-KERNEL |
-| audit | grace | Required; not yet tested: decision evidence is still written. | `TestLicenseBehaviorGateway_Audit/grace`, pending PR2-06-KERNEL |
-| audit | degraded | Required; not yet tested: decision evidence is still written. | `TestLicenseBehaviorGateway_Audit/degraded`, pending PR2-06-KERNEL |
-| audit | invalid | Required; not yet tested: decision evidence is still written. | `TestLicenseBehaviorGateway_Audit/invalid`, pending PR2-06-KERNEL |
-| audit | missing | Required; not yet tested: decision evidence is still written. | `TestLicenseBehaviorGateway_Audit/missing`, pending PR2-06-KERNEL |
+| audit | valid | Required: decision evidence is still written. | `TestLicenseBehaviorGateway_Audit/valid`, `TestLicenseBehaviorKernel_DecisionRecord/valid` |
+| audit | warning | Required: decision evidence is still written. | `TestLicenseBehaviorGateway_Audit/warning`, `TestLicenseBehaviorKernel_DecisionRecord/warning` |
+| audit | grace | Required: decision evidence is still written. | `TestLicenseBehaviorGateway_Audit/grace`, `TestLicenseBehaviorKernel_DecisionRecord/grace` |
+| audit | degraded | Required: decision evidence is still written. | `TestLicenseBehaviorGateway_Audit/degraded`, `TestLicenseBehaviorKernel_DecisionRecord/degraded` |
+| audit | invalid | Required: decision evidence is still written. | `TestLicenseBehaviorGateway_Audit/invalid`, `TestLicenseBehaviorKernel_DecisionRecord/invalid` |
+| audit | missing | Required: decision evidence is still written. | `TestLicenseBehaviorGateway_Audit/missing`, `TestLicenseBehaviorKernel_DecisionRecord/missing` |
 | protected operations | valid | Required: denied requests cause no publication or protected mutation. | `TestLicenseBehaviorGateway_ProtectedOperations/valid`, `TestLicenseBehaviorGateway_RBACLoss/valid/jobs.write` |
 | protected operations | warning | Required: denied requests cause no publication or protected mutation. | `TestLicenseBehaviorGateway_ProtectedOperations/warning` |
 | protected operations | grace | Required: denied requests cause no publication or protected mutation. | `TestLicenseBehaviorGateway_ProtectedOperations/grace`, `TestLicenseBehaviorGateway_RBACLoss/grace/jobs.write` |
