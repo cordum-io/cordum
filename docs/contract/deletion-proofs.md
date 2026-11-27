@@ -1,6 +1,6 @@
 # Deletion and legal-hold proof map
 
-Status: requirements map; cleanup and legal-hold proofs pending the named slices.
+Status: closed; no proof is pending, and the contract test rejects pending cells.
 Reviewed source: `9de7911274f1574d94cf9c850bd73a88dc2cc123` (58 inventory entries).
 Tags: retention, deletion, legal-hold, contract.
 
@@ -110,10 +110,8 @@ live-key TTL and stream MaxAge do not erase those copies or recipient downloads.
 - Categories are `retention cleanup`, `explicit delete only`, or `no cleanup path`.
 - `no cleanup path` applies exactly when inventory deletion is `none`.
 - Retention and legal-hold Proof cells contain comma-separated references: a
-  backticked existing `Test...` function (optionally `/subtest`),
-  `pending PR2-08-EDGE`, `pending PR2-08-JOBS`, `pending PR2-08-DATA`,
-  `pending PR2-08-SERVICES`, or `open finding PR2-08-F<n>`.
+  backticked existing `Test...` function (optionally `/subtest`) or
+  `open finding PR2-08-F<n>`.
 - Other Proof cells start `none: ` and give the inventory reason.
-- DI-C34 is jointly owned by EDGE and DATA. SERVICES and SERVICES-B fill the
-  same SERVICES label. Replace pending cells only with reviewed proof references.
+- DI-C34 is jointly owned by EDGE and DATA.
 - `TestRetentionProofMapContract` checks ids, categories, references and hold coverage.
