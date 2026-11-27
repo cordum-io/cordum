@@ -386,6 +386,68 @@ func TestEvaluatorRecordsObservabilityForInlineApprovalWait(t *testing.T) {
 	}
 }
 
+// With inline wait on, agentd's decision event records what the hook applied.
+// An unresolved wait, or no wait at all, records the first gateway response.
+func TestEvaluatorInlineApprovalEvidenceRecordsHookOutcome(t *testing.T) {
+	t.Parallel()
+
+	const ref = "edge_appr_evidence"
+	const firstReason = "Cordum approval required. Action was not run."
+	consumed := func(constraints map[string]any) *EvaluateResponse {
+		return &EvaluateResponse{Decision: string(edgecore.DecisionAllow), PolicySnapshot: "snap-eval", Reason: "consumed", Constraints: constraints}
+	}
+	for _, tc := range []struct {
+		name     string
+		ref      string
+		wait     ApprovalWaitStatus
+		consume  *EvaluateResponse
+		decision edgecore.EdgeDecision
+		status   edgecore.ActionStatus
+		reason   string
+	}{
+		{"consumed allow", ref, ApprovalWaitApproved, consumed(nil),
+			edgecore.DecisionAllow, edgecore.ActionStatusOK, "reviewer note"},
+		{"consumed allow with sandbox constraint", ref, ApprovalWaitApproved, consumed(map[string]any{"sandbox": map[string]any{"isolated": true}}),
+			edgecore.DecisionDeny, edgecore.ActionStatusBlocked, edgecore.UnenforceableConstraintReason([]string{"sandbox"})},
+		{"rejected", ref, ApprovalWaitRejected, nil,
+			edgecore.DecisionDeny, edgecore.ActionStatusBlocked, "approval rejected: reviewer note for " + ref + "; action was not run"},
+		{"consume fails", ref, ApprovalWaitApproved, nil,
+			edgecore.DecisionDeny, edgecore.ActionStatusBlocked, "approval " + ref + " approved but could not be consumed; action was not run"},
+		{"wait times out", ref, ApprovalWaitTimeout, nil,
+			edgecore.DecisionRequireApproval, edgecore.ActionStatusBlocked, firstReason},
+		{"no approval ref", "", ApprovalWaitApproved, nil,
+			edgecore.DecisionRequireApproval, edgecore.ActionStatusBlocked, firstReason},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			writer := &captureEventWriter{}
+			evaluator := NewEvaluator(EvaluatorConfig{
+				Client: &approvalConsumeStubClient{
+					requireResp: &EvaluateResponse{Decision: string(edgecore.DecisionRequireApproval), PolicySnapshot: "snap-eval", ApprovalRef: tc.ref, TerminalMessage: firstReason},
+					consumeResp: tc.consume,
+				},
+				EventWriter:    writer,
+				State:          evaluatorTestState(edgecore.PolicyModeEnforce),
+				ApprovalWaiter: &fakeApprovalWaiter{result: ApprovalWaitResult{Status: tc.wait, Reason: "reviewer note"}},
+				ApprovalConfig: ApprovalDecisionConfig{InlineWaitEnabled: true, InlineWaitTimeout: time.Second, PolicyMode: edgecore.PolicyModeEnforce},
+				HookTimeout:    2 * time.Second,
+			})
+			if _, err := evaluator.EvaluateHook(context.Background(), evaluatorMetricsRequest()); err != nil {
+				t.Fatalf("EvaluateHook: %v", err)
+			}
+			if len(writer.events) != 1 {
+				t.Fatalf("events = %d, want 1", len(writer.events))
+			}
+			got := writer.events[0]
+			if got.Decision != tc.decision || got.Status != tc.status || got.DecisionReason != tc.reason || got.ApprovalRef != tc.ref {
+				t.Fatalf("event = (%q, %q, %q, %q), want (%q, %q, %q, %q)",
+					got.Decision, got.Status, got.DecisionReason, got.ApprovalRef, tc.decision, tc.status, tc.reason, tc.ref)
+			}
+		})
+	}
+}
+
 func TestLocalServerUsesConfiguredEvaluator(t *testing.T) {
 	t.Parallel()
 

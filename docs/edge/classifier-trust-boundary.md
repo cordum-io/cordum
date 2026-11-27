@@ -47,7 +47,7 @@ classifier-owned. `reservedPolicyLabelPrefixes` in
 |----------------|-------------|---------------------------------------------------------|
 | `edge.*`       | classifier  | `baseClassificationLabels` + `mapLabelsForPolicy` for `edge.session_id`, `edge.execution_id`, `edge.event_id`, `edge.layer`, `edge.kind`, `edge.action_name` |
 | `hook.*`       | classifier  | `baseClassificationLabels` for `hook.event`, `hook.tool_name`. |
-| `mcp.*`        | classifier  | `classifyMCPEvent` for `mcp.server`, `mcp.tool`, `mcp.action`. |
+| `mcp*`         | classifier  | `classifyMCPEvent` for `mcp.server`, `mcp.tool`, `mcp.action`. The prefix has no dot: the Safety Kernel also reads the alias names (`mcp_server`, `mcpServer`, `mcp_tool`, ...), so a request label with any of them is dropped too. |
 | `llm.*`        | classifier  | `classifyLLMEvent` for `llm.provider`, `llm.model`. |
 | `runtime.*`    | classifier  | `classifyRuntimeEvent` for `runtime.event`, `runtime.process`, `runtime.host`. |
 | `agent.*`      | classifier  | `baseClassificationLabels` for `agent.product`. |
@@ -57,6 +57,10 @@ classifier-owned. `reservedPolicyLabelPrefixes` in
 | `action.*`     | classifier  | Reserved for future use; defensive — pre-EDGE-069 leak vector. |
 | `classifier.*` | classifier  | EDGE-069 step 5 — `classifier.complete`, `classifier.missing_fields` for partial-classification fail-closed. |
 | `_*`           | Cordum services | System labels, for example `_delegation.*`, `_action.descriptor_json`, `_content.*`. The Safety Kernel reads them as gateway-verified. Edge has no path that verifies them, so a request or session label with a `_` prefix is always dropped (metric `namespace="_"`). GHSA-j33m-mr27-pmw3. |
+| `agent_id`     | gateway     | The Safety Kernel loads this agent identity for `agent_risk_tiers` and `agent_data_classifications` rules. `handleEdgeEvaluate` sets it from the worker link of the credential, as job submit does. A request or session label is dropped (metric `namespace="agent_id"`). |
+| `secrets_present` | Cordum services | The Safety Kernel reads it as the secret check of the gateway. On Edge the classifier `secrets` risk tag decides; a request or session label is dropped. |
+| `workflow`, `workflow_id`, `workflow_run_id`, `workflow.*`, `run_id`, `step_id` | workflow engine | The workflow policy scope. A request or session label is dropped (metric `namespace="workflow"`), and so are the `workflow_run_id` and `job_id` fields of a session: they are stored as evidence for correlation, and they do not select workflow or job override rules. |
+| `job_id`, `job.id`, `session_id` | gateway | The job policy scope. The scope of an Edge request is `policy.attachment_id`, which the gateway sets from the session. A request or session label is dropped (metric `namespace="job"`). |
 
 Anything OUTSIDE these namespaces is request-controlled and passes
 through untouched (subject to length/UTF-8/secret-string sanitisation

@@ -66,6 +66,7 @@ if [[ -z "${API_KEY}" ]]; then
 fi
 ORG_ID=${CORDUM_ORG_ID:-${CORDUM_TENANT_ID:-default}}
 TENANT_ID=${CORDUM_TENANT_ID:-${ORG_ID}}
+GUARDRAILS_WORKER_ID=demo-guardrails-worker
 
 CURL_TLS_OPTS=()
 TLS_CA="${CORDUM_TLS_CA:-}"
@@ -207,6 +208,7 @@ curl -sS "${CURL_TLS_OPTS[@]}" "${API_BASE}/api/v1/status" -H "X-API-Key: ${API_
 
 echo "[guardrails] starting demo worker"
 (cd "${ROOT_DIR}/examples/demo-guardrails/worker" && \
+  WORKER_ID="${GUARDRAILS_WORKER_ID}" \
   NATS_URL="${NATS_URL}" \
   REDIS_URL="${REDIS_URL}" \
   NATS_TLS_CA="${NATS_TLS_CA:-}" \
@@ -219,6 +221,14 @@ echo "[guardrails] starting demo worker"
   REDIS_TLS_INSECURE="${REDIS_TLS_INSECURE:-}" \
   go run .) >"${WORKER_LOG}" 2>&1 &
 WORKER_PID=$!
+
+if ! curl -fsS "${CURL_TLS_OPTS[@]}" --max-time 10 -X POST "${API_BASE}/api/v1/workers/credentials" \
+  -H "X-API-Key: ${API_KEY}" -H "X-Tenant-ID: ${TENANT_ID}" \
+  -H "Content-Type: application/json" \
+  -d "{\"worker_id\":\"${GUARDRAILS_WORKER_ID}\"}" >/dev/null; then
+  echo "could not issue worker credential for ${GUARDRAILS_WORKER_ID}" >&2
+  exit 1
+fi
 
 echo "[guardrails] waiting for worker heartbeat"
 worker_ready=0

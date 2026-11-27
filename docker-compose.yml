@@ -80,6 +80,7 @@ services:
       - CONTEXT_ENGINE_ADDR=:50070
       - CONTEXT_ENGINE_TLS_CERT=/etc/cordum/tls/server/tls.crt
       - CONTEXT_ENGINE_TLS_KEY=/etc/cordum/tls/server/tls.key
+      - CONTEXT_ENGINE_TLS_CLIENT_CA=/etc/cordum/tls/ca/ca.crt
     volumes:
       - ./certs:/etc/cordum/tls:ro
     ports:
@@ -124,10 +125,13 @@ services:
       - SAFETY_KERNEL_ADDR=:50051
       - SAFETY_KERNEL_TLS_CERT=/etc/cordum/tls/server/tls.crt
       - SAFETY_KERNEL_TLS_KEY=/etc/cordum/tls/server/tls.key
+      - SAFETY_KERNEL_TLS_CLIENT_CA=/etc/cordum/tls/ca/ca.crt
       - SAFETY_POLICY_PATH=/etc/cordum/safety.yaml
       - SAFETY_POLICY_RELOAD_INTERVAL=${SAFETY_POLICY_RELOAD_INTERVAL:-60s}
       - CORDUM_POLICY_SIGNING_KEY_ID=${CORDUM_POLICY_SIGNING_KEY_ID:-dev-local}
       - CORDUM_POLICY_DEV_SIGNING_SEED=${CORDUM_POLICY_DEV_SIGNING_SEED:-cordum-local-policy-signing-v1}
+      # Dev audit-publisher seed: the kernel signs its sys.audit.export tokens with it (same value as the api-gateway).
+      - CORDUM_AUDIT_DEV_SIGNING_SEED=${CORDUM_AUDIT_DEV_SIGNING_SEED:-cordum-local-audit-publisher-v1}
       - CORDUM_LICENSE_TOKEN=${CORDUM_LICENSE_TOKEN:-}
       - CORDUM_LICENSE_PUBLIC_KEY=${CORDUM_LICENSE_PUBLIC_KEY:-}
     volumes:
@@ -190,6 +194,8 @@ services:
       - REDIS_TLS_SERVER_NAME=redis
       - SAFETY_KERNEL_ADDR=safety-kernel:50051
       - SAFETY_KERNEL_TLS_CA=/etc/cordum/tls/ca/ca.crt
+      - SAFETY_KERNEL_TLS_CLIENT_CERT=/etc/cordum/tls/client/tls.crt
+      - SAFETY_KERNEL_TLS_CLIENT_KEY=/etc/cordum/tls/client/tls.key
       - CONTEXT_ENGINE_TLS_CA=/etc/cordum/tls/ca/ca.crt
       - OUTPUT_POLICY_ENABLED=${OUTPUT_POLICY_ENABLED:-true}
       - POLICY_CHECK_FAIL_MODE=${POLICY_CHECK_FAIL_MODE:-closed}
@@ -199,6 +205,9 @@ services:
       - WORKER_SNAPSHOT_INTERVAL=5s
       - CORDUM_LICENSE_TOKEN=${CORDUM_LICENSE_TOKEN:-}
       - CORDUM_LICENSE_PUBLIC_KEY=${CORDUM_LICENSE_PUBLIC_KEY:-}
+      # Control-plane dev key: the scheduler signs its sys.audit.export tokens with it (same values as the api-gateway).
+      - CORDUM_POLICY_SIGNING_KEY_ID=${CORDUM_POLICY_SIGNING_KEY_ID:-dev-local}
+      - CORDUM_POLICY_DEV_SIGNING_SEED=${CORDUM_POLICY_DEV_SIGNING_SEED:-cordum-local-policy-signing-v1}
     volumes:
       - ./config/pools.yaml:/etc/cordum/pools.yaml:ro
       - ./config/timeouts.yaml:/etc/cordum/timeouts.yaml:ro
@@ -264,6 +273,8 @@ services:
       - REDIS_TLS_SERVER_NAME=redis
       - SAFETY_KERNEL_ADDR=safety-kernel:50051
       - SAFETY_KERNEL_TLS_CA=/etc/cordum/tls/ca/ca.crt
+      - SAFETY_KERNEL_TLS_CLIENT_CERT=/etc/cordum/tls/client/tls.crt
+      - SAFETY_KERNEL_TLS_CLIENT_KEY=/etc/cordum/tls/client/tls.key
       - OUTPUT_POLICY_ENABLED=${OUTPUT_POLICY_ENABLED:-true}
       - CONTEXT_ENGINE_TLS_CA=/etc/cordum/tls/ca/ca.crt
       - GATEWAY_HTTP_TLS_CERT=/etc/cordum/tls/server/tls.crt
@@ -289,6 +300,8 @@ services:
       - CORDUM_LICENSE_PUBLIC_KEY=${CORDUM_LICENSE_PUBLIC_KEY:-}
       - CORDUM_POLICY_SIGNING_KEY_ID=${CORDUM_POLICY_SIGNING_KEY_ID:-dev-local}
       - CORDUM_POLICY_DEV_SIGNING_SEED=${CORDUM_POLICY_DEV_SIGNING_SEED:-cordum-local-policy-signing-v1}
+      # Dev audit-publisher seed: the gateway derives the safety kernel's and cordum-mcp's audit trust from it.
+      - CORDUM_AUDIT_DEV_SIGNING_SEED=${CORDUM_AUDIT_DEV_SIGNING_SEED:-cordum-local-audit-publisher-v1}
       - CORDUM_MCP_DESTRUCTIVE_TOOL_GLOBS=${CORDUM_MCP_DESTRUCTIVE_TOOL_GLOBS:-}
       - CORDUM_TELEMETRY_MODE=off
       # Unset by default — the audit chain engages unconditionally at gateway boot. Set this to
@@ -394,6 +407,8 @@ services:
       - REDIS_TLS_SERVER_NAME=redis
       - SAFETY_KERNEL_ADDR=safety-kernel:50051
       - SAFETY_KERNEL_TLS_CA=/etc/cordum/tls/ca/ca.crt
+      - SAFETY_KERNEL_TLS_CLIENT_CERT=/etc/cordum/tls/client/tls.crt
+      - SAFETY_KERNEL_TLS_CLIENT_KEY=/etc/cordum/tls/client/tls.key
       - OUTPUT_POLICY_ENABLED=${OUTPUT_POLICY_ENABLED:-true}
       # CAP runtime profile (see scheduler service for semantics).
       - CORDUM_CAP_PROFILE=${CORDUM_CAP_PROFILE:-compat}

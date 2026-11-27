@@ -593,6 +593,26 @@ has_mock_bank_worker() {
   echo "${workers}" | jq -e '[(.items // [])[] | select(.pool == "demo-mock-bank")] | length > 0' >/dev/null 2>&1
 }
 
+issue_mock_bank_worker_credentials() {
+  local worker_id code
+  local worker_ids=(
+    megacorp-transfer-agent-01
+    megacorp-transfer-agent-02
+    megacorp-compliance-scanner
+    megacorp-audit-recorder
+    megacorp-validator-01
+    megacorp-validator-02
+    megacorp-executor-01
+  )
+  for worker_id in "${worker_ids[@]}"; do
+    if ! code="$(api_code POST /workers/credentials "${JSON_HEADERS[@]}" -d "{\"worker_id\":\"${worker_id}\"}")" ||
+      [[ "${code}" != 200 && "${code}" != 201 ]]; then
+      echo "could not issue a worker credential for ${worker_id} (status=${code})" >&2
+      return 1
+    fi
+  done
+}
+
 MOCK_BANK_PID_FILE="${MOCK_BANK_PID_FILE:-${TMPDIR:-/tmp}/production-gate-mock-bank.${BASHPID:-$$}.pid}"
 
 # Recover the PID created by this production_gate process. The PID file is
@@ -624,6 +644,7 @@ ensure_mock_bank_worker() {
   fi
 
   if [[ -z "${MOCK_BANK_WORKER_PID:-}" ]]; then
+    issue_mock_bank_worker_credentials || return 1
     if [[ "${CORDUM_PRODUCTION_GATE_REUSE_MOCK_BANK_WORKER:-0}" =~ ^(1|true|TRUE|yes|YES)$ ]] && has_mock_bank_worker; then
       log "mock-bank worker already registered (external)"
       return 0

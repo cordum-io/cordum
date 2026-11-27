@@ -102,13 +102,8 @@ func (s *server) handleDeleteDLQ(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if s.jobStore != nil {
-		if tenant, _ := s.jobStore.GetTenant(r.Context(), jobID); tenant != "" {
-			if err := s.requireTenantAccess(r, tenant); err != nil {
-				writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
-				return
-			}
-		}
+	if !s.requireJobTenantAccess(w, r, jobID) {
+		return
 	}
 	if err := s.dlqStore.Delete(r.Context(), jobID); err != nil {
 		slog.Error("dlq delete failed", "error", err, "job_id", jobID) // #nosec -- job id is validated and used for diagnostics.
@@ -116,6 +111,7 @@ func (s *server) handleDeleteDLQ(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dlqDeleteTopic, _ := s.jobStore.GetTopic(r.Context(), jobID)
+	// Must-complete: the entry is already deleted, which ends its retry path; a lost audit entry is logged.
 	s.appendAuditEntryNamed(r.Context(), "delete", "dlq", jobID, dlqDeleteTopic, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "delete dlq entry "+jobID)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -251,8 +247,18 @@ func (s *server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The entry is stored before dispatch: a retry whose entry was not stored is
+	// set FAILED, so the pending replayer never dispatches it, and the DLQ entry stays.
+	dlqRetryTopic, _ := s.jobStore.GetTopic(r.Context(), jobID)
+	actorID, role := policybundles.PolicyActorID(r), policybundles.PolicyRole(r)
+	if err := s.appendNamedAuditEntry(r.Context(), "retry", "dlq", jobID, dlqRetryTopic, actorID, role, "retry dlq entry "+jobID); err != nil {
+		_ = s.jobStore.SetState(r.Context(), newJobID, model.JobStateFailed)
+		writeErrorJSON(w, http.StatusInternalServerError, "retry not dispatched: its audit entry was not stored")
+		return
+	}
 	if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
 		slog.Error("dlq retry publish failed", "error", err, "job_id", newJobID) // #nosec -- job id is generated and safe for logs.
+		s.appendAuditEntryNamed(r.Context(), "retry_failed", "dlq", jobID, dlqRetryTopic, actorID, role, "retry dlq entry "+jobID+" not dispatched: publish failed")
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to retry dlq entry")
 		return
 	}
@@ -260,8 +266,6 @@ func (s *server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
 	if err := s.dlqStore.Delete(r.Context(), jobID); err != nil {
 		slog.Error("dlq delete after retry failed", "job_id", jobID, "error", err) // #nosec -- job id is validated and used for diagnostics.
 	}
-	dlqRetryTopic, _ := s.jobStore.GetTopic(r.Context(), jobID)
-	s.appendAuditEntryNamed(r.Context(), "retry", "dlq", jobID, dlqRetryTopic, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "retry dlq entry "+jobID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]string{"job_id": newJobID})
 }

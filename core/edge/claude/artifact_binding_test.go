@@ -35,12 +35,15 @@ func artifactWriteFiles(t *testing.T, dir string, files map[string]string) {
 }
 
 func TestArtifactBindingOnlyForPreToolUseBash(t *testing.T) {
-	for _, input := range []HookInput{
+	inputs := []HookInput{
 		{HookEventName: "PostToolUse", ToolName: "Bash", ToolInput: map[string]any{"command": "ls"}},
-		{HookEventName: "PreToolUse", ToolName: "Write", ToolInput: map[string]any{"file_path": "a.txt"}},
-		{HookEventName: "PreToolUse", ToolName: "Read", ToolInput: map[string]any{"file_path": "a.txt"}},
 		{HookEventName: "PostToolUse", ToolName: "PowerShell", ToolInput: map[string]any{"command": "ls"}},
-	} {
+	}
+	// The tools that cannot run code are listed by name, whatever their input holds.
+	for _, tool := range []string{"Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Glob", "Grep", "LS", "WebFetch", "WebSearch", "TodoWrite"} {
+		inputs = append(inputs, HookInput{HookEventName: "PreToolUse", ToolName: tool, ToolInput: map[string]any{"file_path": "a.txt", "command": "ls"}})
+	}
+	for _, input := range inputs {
 		if labels := artifactBindingLabels(context.Background(), input, map[string]string{}, ""); labels != nil {
 			t.Fatalf("%s %s got binding labels %v", input.HookEventName, input.ToolName, labels)
 		}
@@ -48,10 +51,22 @@ func TestArtifactBindingOnlyForPreToolUseBash(t *testing.T) {
 }
 
 func TestArtifactBindingUnmodeledCommandTools(t *testing.T) {
-	for _, tool := range []string{"PowerShell", "Monitor", "mcp__shell__run"} {
-		t.Run(tool, func(t *testing.T) {
-			input := artifactHookInput("", "kubectl apply -f manifest.yaml")
-			input.ToolName = tool
+	cwd := t.TempDir()
+	artifactWriteFiles(t, cwd, map[string]string{"deploy.sh": "echo deploy\n"})
+	command := map[string]any{"command": "bash ./deploy.sh"}
+	for _, tc := range []struct {
+		tool  string
+		input map[string]any
+	}{
+		{"PowerShell", command}, {"Monitor", command}, {"mcp__shell__run", command},
+		{"bash", command}, // tool names match exactly
+		{"mcp__ide__executeCode", map[string]any{"code": "import os; os.system('./deploy.sh')"}},
+		{"mcp__terminal__run", map[string]any{"cmd": "./deploy.sh"}},
+		{"read_file", map[string]any{"filePath": "deploy.sh"}}, // Copilot's tools are not on the Claude Code list
+		{"AnUnknownTool", map[string]any{}},
+	} {
+		t.Run(tc.tool, func(t *testing.T) {
+			input := HookInput{HookEventName: "PreToolUse", ToolName: tc.tool, CWD: cwd, ToolInput: tc.input}
 			labels := artifactBindingLabels(context.Background(), input, map[string]string{}, "")
 			if len(labels) != 2 || labels["artifact.binding"] != "unbound" || labels["artifact.unbound_reason"] != "unrecognized" {
 				t.Fatalf("labels = %v, want only unbound with reason unrecognized", labels)
@@ -72,7 +87,7 @@ func TestArtifactBindingUnmodeledCommandTools(t *testing.T) {
 
 func TestArtifactBindingUnboundReasons(t *testing.T) {
 	cwd := t.TempDir()
-	artifactWriteFiles(t, cwd, map[string]string{"build.mk": "all:\n", "sub/keep": ""})
+	artifactWriteFiles(t, cwd, map[string]string{"build.mk": "all:\n", "sub/keep": "", "deploy.sh": "echo deploy\n"})
 	many := make([]string, artifactMaxFiles+1)
 	for i := range many {
 		many[i] = fmt.Sprintf("f%02d.txt", i)
@@ -96,6 +111,8 @@ func TestArtifactBindingUnboundReasons(t *testing.T) {
 		{"too many files", "cat " + strings.Join(many, " "), "", "limit"},
 		{"file too large", "cat big.bin", "", "limit"},
 		{"kube context unknown", "kubectl get pods", "", "kube-context"},
+		{"interpreter name matches exactly", "Bash ./deploy.sh", "", "unrecognized"},
+		{"kubectl name matches exactly", "KUBECTL get pods", "", "unrecognized"},
 		{"build family", "make -f build.mk", "build", "implicit-inputs"},
 		{"other reasons win over family", "go test ./... | tee out", "test", "shell-syntax"},
 	}
@@ -111,6 +128,44 @@ func TestArtifactBindingUnboundReasons(t *testing.T) {
 			}
 			if tc.want == "implicit-inputs" && labels["artifact.digest"] == "" {
 				t.Fatalf("implicit-inputs still binds the files it names: %v", labels)
+			}
+		})
+	}
+}
+
+func TestArtifactBindingAdmitsOnlyPlainBytes(t *testing.T) {
+	cwd := t.TempDir()
+	artifactWriteFiles(t, cwd, map[string]string{"manifest.yaml": "kind: ConfigMap\n", "other.yaml": "kind: ConfigMap\n",
+		"settings.txt": "a=b\n", "kc.yaml": "current-context: dev\ncontexts:\n- name: dev\n  context:\n    namespace: dev-ns\n"})
+	env := map[string]string{"KUBECONFIG": filepath.Join(cwd, "kc.yaml")}
+	labels := func(command string) map[string]string {
+		return artifactBindingLabels(context.Background(), artifactHookInput(cwd, command), env, "unknown")
+	}
+	if got := labels("kubectl apply -f manifest.yaml --context dev"); got["artifact.binding"] != "bound" {
+		t.Fatalf("control: labels = %v, want bound", got)
+	}
+	cases := map[string]string{
+		"CR after -f":              "kubectl apply -f manifest.yaml\r --context dev",
+		"CR after -fX":             "kubectl apply -fmanifest.yaml\r -n dev-ns",
+		"CR after --filename=":     "kubectl apply --filename=manifest.yaml\r -n dev-ns",
+		"CR in a comma list":       "kubectl apply -f other.yaml,manifest.yaml\r -n dev-ns",
+		"CR after --from-file":     "kubectl create configmap cm --from-file=k=settings.txt\r -n dev-ns",
+		"CR after --from-env-file": "kubectl create configmap cm --from-env-file=settings.txt\r -n dev-ns",
+	}
+	// The allowed set is spelled out here, not read from the code under test.
+	const plain = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 \t-_./,:=@+"
+	for b := range 256 {
+		if strings.IndexByte(plain, byte(b)) < 0 {
+			cases[fmt.Sprintf("byte=0x%02x", b)] = "kubectl apply -f manifest.yaml" + string([]byte{byte(b)}) + " --context dev"
+		}
+	}
+	for _, r := range []rune{0xa0, 0x2028, 0xfeff} {
+		cases[fmt.Sprintf("U+%04X", r)] = "kubectl apply -f manifest.yaml" + string(r) + " --context dev"
+	}
+	for name, command := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := labels(command); len(got) != 2 || got["artifact.binding"] != "unbound" || got["artifact.unbound_reason"] != "shell-syntax" {
+				t.Fatalf("labels = %v, want only unbound with reason shell-syntax", got)
 			}
 		})
 	}
@@ -200,7 +255,7 @@ func TestArtifactBindingKubeTarget(t *testing.T) {
 	kubeconfig := "current-context: dev\ncontexts:\n- name: dev\n  context:\n    namespace: dev-ns\n" +
 		"- name: staging\n  context:\n    namespace: staging-ns\n"
 	artifactWriteFiles(t, cwd, map[string]string{
-		"kc.yaml": kubeconfig, "sub/kubectl": kubeconfig,
+		"kc.yaml": kubeconfig, "sub/kubectl": kubeconfig, "manifest.yaml": "kind: ConfigMap\n",
 		"a.yaml": "contexts:\n- name: x\n  context:\n    namespace: ns-a\n",
 		"b.yaml": "current-context: x\ncontexts:\n- name: x\n  context:\n    namespace: ns-b\n",
 	})
@@ -226,7 +281,6 @@ func TestArtifactBindingKubeTarget(t *testing.T) {
 			"KUBECONFIG": filepath.Join(cwd, "a.yaml") + string(os.PathListSeparator) + filepath.Join(cwd, "b.yaml"),
 		}, "x", "ns-a"},
 		{"HOME default, no namespace", "kubectl get pods", map[string]string{"HOME": home}, "home", "default"},
-		{"USERPROFILE fallback", "kubectl get pods", map[string]string{"USERPROFILE": home}, "home", "default"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -237,6 +291,71 @@ func TestArtifactBindingKubeTarget(t *testing.T) {
 			labels := artifactBindingLabels(context.Background(), artifactHookInput(cwd, tc.command), tc.env, "unknown")
 			if labels["artifact.binding"] != want || labels["kube.context"] != tc.context || labels["kube.namespace"] != tc.namespace {
 				t.Fatalf("labels = %v, want %s %s/%s", labels, want, tc.context, tc.namespace)
+			}
+		})
+	}
+}
+
+// TestArtifactBindingKubeconfigMustDecode pins the kubeconfigs the binding
+// reads as kubectl does, and leaves the target unknown for the rest: a
+// missing file client-go may first fill from .kube/.kubeconfig, YAML that
+// kubectl's yaml v2 reads differently from yaml.v3 (the last of a repeated
+// key, a merge key after the key it overrides, an alias, a tag), a home
+// kubectl may not pick, and a namespace kubectl takes from the pod it runs in.
+func TestArtifactBindingKubeconfigMustDecode(t *testing.T) {
+	cwd, home := t.TempDir(), t.TempDir()
+	kubeconfig := "current-context: dev\ncontexts:\n- name: dev\n  context:\n    namespace: dev-ns\n"
+	artifactWriteFiles(t, cwd, map[string]string{"a.yaml": kubeconfig, "b.yaml": kubeconfig, "empty.yaml": "", "dir/keep": "",
+		"big.yaml": "", "repeat.yaml": kubeconfig + "current-context: prod\n", "merge.yaml": kubeconfig + "<<: {current-context: prod}\n",
+		"alias.yaml": "current-context: &c dev\ncontexts:\n- name: *c\n  context:\n    namespace: dev-ns\n", "tag.yaml": "current-context: !!str dev\n",
+		"no-namespace.yaml": "current-context: dev\n"})
+	artifactWriteFiles(t, home, map[string]string{".kube/config": kubeconfig})
+	if err := os.Truncate(filepath.Join(cwd, "big.yaml"), artifactMaxFileBytes+1); err != nil {
+		t.Fatal(err)
+	}
+	list := func(names ...string) map[string]string {
+		for i, name := range names {
+			names[i] = filepath.Join(cwd, name)
+		}
+		return map[string]string{"KUBECONFIG": strings.Join(names, string(os.PathListSeparator))}
+	}
+	pod := func(name string) map[string]string {
+		env := list(name)
+		env["KUBERNETES_SERVICE_HOST"] = "10.96.0.1"
+		return env
+	}
+	type kubeCase struct {
+		name, command string
+		env           map[string]string
+		want          string
+	}
+	cases := []kubeCase{
+		{"decodable files", "kubectl get pods", list("a.yaml", "b.yaml"), "dev/dev-ns"},
+		{"an empty file", "kubectl get pods", list("empty.yaml", "b.yaml"), "dev/dev-ns"},
+		{"a missing file", "kubectl get pods", list("missing.yaml", "b.yaml"), "kube-context"},
+		{"a directory", "kubectl get pods", list("dir", "b.yaml"), "kube-context"},
+		{"an oversized file", "kubectl get pods", list("big.yaml", "b.yaml"), "kube-context"},
+		{"a repeated key", "kubectl get pods", list("repeat.yaml", "b.yaml"), "kube-context"},
+		{"a merge key", "kubectl get pods", list("merge.yaml"), "kube-context"},
+		{"an alias", "kubectl get pods", list("alias.yaml"), "kube-context"},
+		{"a tag", "kubectl get pods", list("tag.yaml"), "kube-context"},
+		{"HOME without a kubeconfig", "kubectl get pods --context dev", map[string]string{"HOME": cwd}, "kube-context"},
+		{"no HOME", "kubectl get pods", map[string]string{"USERPROFILE": home}, "kube-context"},
+		{"in a pod, a context with no namespace", "kubectl get pods", pod("no-namespace.yaml"), "kube-context"},
+		{"in a pod, a context with a namespace", "kubectl get pods", pod("a.yaml"), "dev/dev-ns"},
+	}
+	if runtime.GOOS != "windows" { // a Windows list separator is not a plain byte
+		cases = append(cases, kubeCase{"--kubeconfig names one file", "kubectl get pods --kubeconfig=a.yaml:b.yaml", map[string]string{}, "kube-context"})
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			labels := artifactBindingLabels(context.Background(), artifactHookInput(cwd, tc.command), tc.env, "unknown")
+			got := labels["artifact.unbound_reason"]
+			if labels["artifact.binding"] == "bound" {
+				got = labels["kube.context"] + "/" + labels["kube.namespace"]
+			}
+			if got != tc.want {
+				t.Fatalf("%s %v: target = %q, want %q", tc.command, tc.env, got, tc.want)
 			}
 		})
 	}
@@ -277,6 +396,43 @@ func TestArtifactBindingFollowsFlagSpellings(t *testing.T) {
 			}
 			if digest("v1") == digest("v2") {
 				t.Fatalf("the digest must change when %s changes", tc.file)
+			}
+		})
+	}
+}
+
+// TestArtifactBindingModelInputsMustBeHashed checks that a modeled program is
+// bound only when the digest holds each file it reads, named as the program
+// resolves the name.
+func TestArtifactBindingModelInputsMustBeHashed(t *testing.T) {
+	cwd := t.TempDir()
+	artifactWriteFiles(t, cwd, map[string]string{"manifest.yaml": "kind: ConfigMap\n", "other.yaml": "kind: ConfigMap\n",
+		"settings.txt": "a=b\n", "deploy.js": "", "deploy.sh": "", "deploy.py": "", "sub/keep": "",
+		"kc.yaml": "current-context: dev\ncontexts:\n- name: dev\n  context: {}\n"})
+	env := map[string]string{"KUBECONFIG": filepath.Join(cwd, "kc.yaml")}
+	const cm = "kubectl create configmap cm "
+	for _, tc := range []struct{ command, reason string }{
+		{"kubectl apply -f missing.yaml", "unrecognized"},
+		{"kubectl apply -f manifest.yaml,missing.yaml", "unrecognized"},
+		{"kubectl apply -f manifest.yaml -f missing.yaml", "unrecognized"},
+		{cm + "--from-file=k=missing.txt", "unrecognized"},
+		{cm + "--from-file=settings.txt,=x", "unrecognized"},
+		{cm + "--from-file=k=", "unrecognized"},
+		{cm + "--from-file=a=b=c", "unrecognized"},
+		{cm + "--from-file==x", "shell-syntax"},
+		{cm + "--from-env-file=missing.env", "unrecognized"},
+		{"node sub/../deploy.js", "unrecognized"},
+		{"bash sub/../deploy.sh", "unrecognized"},
+		{"python3 sub/../deploy.py", "unrecognized"},
+		{"kubectl apply -f manifest.yaml -f other.yaml", ""},
+		{cm + "--from-file=settings.txt --from-file=k=other.yaml", ""},
+		{cm + "--from-env-file=settings.txt", ""},
+		{"node ./deploy.js", ""},
+	} {
+		t.Run(tc.command, func(t *testing.T) {
+			labels := artifactBindingLabels(context.Background(), artifactHookInput(cwd, tc.command), env, "unknown")
+			if (labels["artifact.binding"] == "bound") != (tc.reason == "") || labels["artifact.unbound_reason"] != tc.reason {
+				t.Fatalf("labels = %v, want unbound reason %q", labels, tc.reason)
 			}
 		})
 	}

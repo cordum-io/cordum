@@ -197,8 +197,13 @@ type BuildWindowRequest struct {
 	LogicalPayload  []byte                 `protobuf:"bytes,4,opt,name=logical_payload,json=logicalPayload,proto3" json:"logical_payload,omitempty"`
 	MaxInputTokens  int32                  `protobuf:"varint,5,opt,name=max_input_tokens,json=maxInputTokens,proto3" json:"max_input_tokens,omitempty"`
 	MaxOutputTokens int32                  `protobuf:"varint,6,opt,name=max_output_tokens,json=maxOutputTokens,proto3" json:"max_output_tokens,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Server-owned tenant of the memory, set by the context-engine caller
+	// from the job's tenant (JobRequest.tenant_id). It MUST NOT be set by
+	// external clients. Stored memory (history, summary, chunks) is used
+	// only when it is set.
+	TenantId      string `protobuf:"bytes,7,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *BuildWindowRequest) Reset() {
@@ -271,6 +276,13 @@ func (x *BuildWindowRequest) GetMaxOutputTokens() int32 {
 		return x.MaxOutputTokens
 	}
 	return 0
+}
+
+func (x *BuildWindowRequest) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
 }
 
 type BuildWindowResponse struct {
@@ -507,14 +519,15 @@ const file_context_proto_rawDesc = "" +
 	"\rcontext.proto\x12\tcordum.v1\"<\n" +
 	"\fModelMessage\x12\x12\n" +
 	"\x04role\x18\x01 \x01(\tR\x04role\x12\x18\n" +
-	"\acontent\x18\x02 \x01(\tR\acontent\"\xf2\x01\n" +
+	"\acontent\x18\x02 \x01(\tR\acontent\"\x8f\x02\n" +
 	"\x12BuildWindowRequest\x12\x1b\n" +
 	"\tmemory_id\x18\x01 \x01(\tR\bmemoryId\x12*\n" +
 	"\x04mode\x18\x02 \x01(\x0e2\x16.cordum.v1.ContextModeR\x04mode\x12\x14\n" +
 	"\x05model\x18\x03 \x01(\tR\x05model\x12'\n" +
 	"\x0flogical_payload\x18\x04 \x01(\fR\x0elogicalPayload\x12(\n" +
 	"\x10max_input_tokens\x18\x05 \x01(\x05R\x0emaxInputTokens\x12*\n" +
-	"\x11max_output_tokens\x18\x06 \x01(\x05R\x0fmaxOutputTokens\"\x92\x01\n" +
+	"\x11max_output_tokens\x18\x06 \x01(\x05R\x0fmaxOutputTokens\x12\x1b\n" +
+	"\ttenant_id\x18\a \x01(\tR\btenantId\"\x92\x01\n" +
 	"\x13BuildWindowResponse\x123\n" +
 	"\bmessages\x18\x01 \x03(\v2\x17.cordum.v1.ModelMessageR\bmessages\x12!\n" +
 	"\finput_tokens\x18\x02 \x01(\x05R\vinputTokens\x12#\n" +

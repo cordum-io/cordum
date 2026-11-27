@@ -360,13 +360,24 @@ func (s *server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	tenant := ""
 	if s.workflowStore != nil {
-		if run, err := s.workflowStore.GetRun(r.Context(), runID); err == nil && run != nil {
-			if err := s.requireTenantAccess(r, run.OrgID); err != nil {
-				writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
-				return
-			}
+		run, err := s.workflowStore.GetRun(r.Context(), runID)
+		if err != nil && !errors.Is(err, redis.Nil) {
+			writeErrorJSON(w, http.StatusServiceUnavailable, "workflow run lookup unavailable")
+			return
 		}
+		if run != nil {
+			tenant = run.OrgID
+		}
+	}
+	if !s.jobTenantAllowed(r, tenant) {
+		if strings.TrimSpace(tenant) == "" {
+			writeErrorJSON(w, http.StatusNotFound, "run not found")
+		} else {
+			writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
+		}
+		return
 	}
 
 	// Serialize workflow run mutations with the same lock used by the workflow-engine reconciler.
@@ -848,6 +859,7 @@ func (s *server) publishApprovalRepair(ctx context.Context, repaired *store.Appr
 		packet := approvalRejectionPacket(
 			repaired.TraceID, repaired.JobID, errorMessage, request.GetIdentity(),
 		)
+		s.attachServiceToken(packet)
 		if err := s.bus.Publish(capsdk.SubjectDLQ, packet); err != nil {
 			return err
 		}
@@ -862,6 +874,23 @@ func (s *server) publishApprovalRepair(ctx context.Context, repaired *store.Appr
 		slog.Warn("mark repaired approval publish complete failed", "job_id", repaired.JobID, "error", err)
 	}
 	return nil
+}
+
+// approvalTenantResult returns the job tenant and a result when the caller
+// may not take the approval action, or nil when the tenant check permits it.
+func (s *server) approvalTenantResult(ctx context.Context, r *http.Request, action, jobID string) (string, *handlerResult) {
+	tenant, err := s.jobStore.GetTenant(ctx, jobID)
+	if err != nil && !errors.Is(err, redis.Nil) {
+		slog.Error("approval tenant lookup failed, denying access", "action", action, "job_id", jobID, "error", err)
+		return "", &handlerResult{http.StatusServiceUnavailable, "tenant lookup unavailable"}
+	}
+	if s.jobTenantAllowed(r, tenant) {
+		return tenant, nil
+	}
+	if strings.TrimSpace(tenant) == "" {
+		return tenant, &handlerResult{http.StatusNotFound, "job not found"}
+	}
+	return tenant, &handlerResult{http.StatusForbidden, "tenant access denied"}
 }
 
 func (s *server) handleRepairApproval(w http.ResponseWriter, r *http.Request) {
@@ -882,13 +911,9 @@ func (s *server) handleRepairApproval(w http.ResponseWriter, r *http.Request) {
 
 	var result handlerResult
 	lockErr := s.withApprovalLock(r.Context(), jobID, func(ctx context.Context) error {
-		if tenant, tenantErr := s.jobStore.GetTenant(ctx, jobID); tenantErr != nil {
-			slog.Warn("repair: tenant lookup failed", "job_id", jobID, "error", tenantErr)
-		} else if tenant != "" {
-			if err := s.requireTenantAccess(r, tenant); err != nil {
-				result = handlerResult{http.StatusForbidden, "tenant access denied"}
-				return nil
-			}
+		if _, res := s.approvalTenantResult(ctx, r, "repair", jobID); res != nil {
+			result = *res
+			return nil
 		}
 
 		snapshot, plan, err := s.approvalRepairPlan(ctx, jobID)
@@ -1031,6 +1056,11 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	tenant, res := s.approvalTenantResult(r.Context(), r, "approve", jobID)
+	if res != nil {
+		writeApprovalHandlerResult(w, res.status, res.body, "json encode approval error failed")
+		return
+	}
 
 	// Acquire distributed lock so concurrent approve/reject requests are
 	// serialised. Uses the same key prefix as the scheduler engine.
@@ -1095,21 +1125,6 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 
-		// Fail closed on a tenant-lookup error to prevent cross-tenant approval,
-		// matching handleApprovalContext. Proceeding without the check (the old
-		// behavior) let a Redis blip skip tenant isolation on a mutating action.
-		tenant, tenantErr := s.jobStore.GetTenant(ctx, jobID)
-		if tenantErr != nil {
-			slog.Error("approve: tenant lookup failed, denying access", "job_id", jobID, "error", tenantErr)
-			result = handlerResult{http.StatusServiceUnavailable, "tenant lookup unavailable"}
-			return nil
-		}
-		if tenant != "" {
-			if err := s.requireTenantAccess(r, tenant); err != nil {
-				result = handlerResult{http.StatusForbidden, "tenant access denied"}
-				return nil
-			}
-		}
 		req, err := s.jobStore.GetJobRequest(ctx, jobID)
 		if errors.Is(err, redis.Nil) {
 			result = handlerResult{http.StatusNotFound, "job request not found"}
@@ -1209,6 +1224,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 			isWorkflowGate = true
 		}
 		policySnapshot := strings.TrimSpace(safetyRecord.PolicySnapshot)
+		var refreshedSafety *model.SafetyDecisionRecord
 		if isWorkflowGate {
 			if policySnapshot == "" {
 				policySnapshot = "workflow-gate"
@@ -1325,12 +1341,14 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 					pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS,
 					pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN:
 					// Fresh policy still admits this request (possibly with
-					// approval). Persist the FULL re-evaluated decision so
+					// approval). Store the FULL re-evaluated decision so
 					// the scheduler's fast-path sees the current rule / reason /
 					// constraints, not a hybrid of old decision + new snapshot.
 					// ApprovalRef and JobHash are preserved (approval identity
 					// is still this job); ApprovalRevision is bumped so
-					// downstream consumers can detect the drift.
+					// downstream consumers can detect the drift. ResolveApproval
+					// stores it with the approval, so a failed approve leaves
+					// the old record in place and can be retried.
 					// Informational: approval continues and records its own required audit entry below.
 					s.appendAuditEntryNamed(ctx, "approve_snapshot_refreshed", "job", jobID, "", policybundles.PolicyActorID(r), policybundles.PolicyRole(r),
 						fmt.Sprintf("policy snapshot refreshed during approval (was=%s now=%s decision=%s rule=%s)",
@@ -1345,16 +1363,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 					safetyRecord.ApprovalRequired = freshDecision == pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN
 					safetyRecord.CheckedAt = time.Now().UnixMicro()
 					safetyRecord.ApprovalRevision++
-					if err := s.jobStore.SetSafetyDecision(ctx, jobID, safetyRecord); err != nil {
-						// Persisting the re-evaluated decision is on the
-						// critical path — continuing would ship a job whose
-						// stored safety record still reflects the pre-drift
-						// policy. Fail closed and let the caller retry.
-						s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policybundles.PolicyActorID(r), policybundles.PolicyRole(r),
-							fmt.Sprintf("failed to persist refreshed safety decision: %v", err))
-						result = handlerResult{http.StatusServiceUnavailable, "failed to persist refreshed safety decision"}
-						return nil
-					}
+					refreshedSafety = &safetyRecord
 				default:
 					// DENY / THROTTLE / UNSPECIFIED — the drifted policy no
 					// longer permits this request at all. Fail closed and
@@ -1412,7 +1421,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 		// Store the audit entry first: a persisted approval can be dispatched by the pending replayer.
 		approveAgentID, approveAgentName, approveAgentRiskTier := "", "", ""
 		if req != nil && req.Labels != nil {
-			approveAgentID, approveAgentName, approveAgentRiskTier = s.resolveAgentForAudit(ctx, req.Labels["agent_id"])
+			approveAgentID, approveAgentName, approveAgentRiskTier = s.resolveAgentForAudit(ctx, tenant, req.Labels["agent_id"])
 		}
 		approveActorID, approveIdentitySource, approveIdentityLabel := policybundles.PolicyActorIdentity(r)
 		if err := s.appendApprovalDecisionAudit(ctx, "approve", jobID, req.GetTopic(), approveActorID, policybundles.PolicyRole(r), approveIdentitySource, approveIdentityLabel, reason, note, approveAgentID, approveAgentName, approveAgentRiskTier); err != nil {
@@ -1420,15 +1429,16 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 		resolved, err := s.jobStore.ResolveApproval(ctx, store.ApprovalResolutionParams{
-			JobID:          jobID,
-			Decision:       model.ApprovalDecisionApprove,
-			ResultState:    model.JobStatePending,
-			ApprovedBy:     approvedBy,
-			ApprovedRole:   approvalRole,
-			Reason:         reason,
-			Note:           note,
-			PolicySnapshot: policySnapshot,
-			LabelUpdates:   labelUpdates,
+			JobID:           jobID,
+			Decision:        model.ApprovalDecisionApprove,
+			ResultState:     model.JobStatePending,
+			ApprovedBy:      approvedBy,
+			ApprovedRole:    approvalRole,
+			Reason:          reason,
+			Note:            note,
+			PolicySnapshot:  policySnapshot,
+			LabelUpdates:    labelUpdates,
+			RefreshedSafety: refreshedSafety,
 		})
 		if err != nil {
 			s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, req.GetTopic(), approveActorID, approvalRole, fmt.Sprintf("approval resolution failed: %v", err))
@@ -1516,6 +1526,11 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	tenant, res := s.approvalTenantResult(r.Context(), r, "reject", jobID)
+	if res != nil {
+		writeApprovalHandlerResult(w, res.status, res.body, "json encode approval error failed")
+		return
+	}
 
 	var result handlerResult
 	lockErr := s.withApprovalLock(r.Context(), jobID, func(ctx context.Context) error {
@@ -1557,22 +1572,6 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 			}
 			result = handlerResult{http.StatusConflict, approvalConflictPayload(http.StatusConflict, conflictCode, conflictMessage)}
 			return nil
-		}
-		// Fail closed on a tenant-lookup error to prevent cross-tenant
-		// rejection, matching handleApproveJob. Proceeding without the check
-		// (the old behavior) let a Redis blip skip tenant isolation on a
-		// mutating action.
-		tenant, tenantErr := s.jobStore.GetTenant(ctx, jobID)
-		if tenantErr != nil {
-			slog.Error("reject: tenant lookup failed, denying access", "job_id", jobID, "error", tenantErr)
-			result = handlerResult{http.StatusServiceUnavailable, "tenant lookup unavailable"}
-			return nil
-		}
-		if tenant != "" {
-			if err := s.requireTenantAccess(r, tenant); err != nil {
-				result = handlerResult{http.StatusForbidden, "tenant access denied"}
-				return nil
-			}
 		}
 		req, reqErr := s.jobStore.GetJobRequest(ctx, jobID)
 		if errors.Is(reqErr, redis.Nil) {
@@ -1672,6 +1671,7 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 			errorMessage = reason
 		}
 		packet := approvalRejectionPacket(resolved.TraceID, jobID, errorMessage, req.GetIdentity())
+		s.attachServiceToken(packet)
 		if err := s.bus.Publish(capsdk.SubjectDLQ, packet); err != nil {
 			slog.Error("publish dlq on approval reject failed", "job_id", jobID, "error", err)
 		} else {
@@ -1697,7 +1697,7 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 			"reason", reason)
 		rejectAgentID, rejectAgentName, rejectAgentRiskTier := "", "", ""
 		if resolved.Request != nil && resolved.Request.Labels != nil {
-			rejectAgentID, rejectAgentName, rejectAgentRiskTier = s.resolveAgentForAudit(ctx, resolved.Request.Labels["agent_id"])
+			rejectAgentID, rejectAgentName, rejectAgentRiskTier = s.resolveAgentForAudit(ctx, tenant, resolved.Request.Labels["agent_id"])
 		}
 		rejectActorID, rejectIdentitySource, rejectIdentityLabel := policybundles.PolicyActorIdentity(r)
 		// Rejection reduces authority and must complete; appendPolicyAudit logs persistence failures at ERROR.

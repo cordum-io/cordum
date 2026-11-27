@@ -96,6 +96,10 @@ type DayCount struct {
 // Assurance maps every assurance state to the number of observed sessions in
 // it, derived when the report is built from each session's facts and current
 // heartbeat.
+//
+// TopCommandClasses counts the command.class label that the Edge classifier
+// puts on shell commands. An event without one, such as a file or MCP tool
+// call, counts in TopTools only.
 type Report struct {
 	ID                string                      `json:"id"`
 	TenantID          string                      `json:"tenant_id"`
@@ -271,7 +275,11 @@ func (a *aggregator) count(ev edge.AgentActionEvent) {
 		a.approvals[ev.Timestamp.UTC().Format(dayLayout)]++
 	}
 	a.tools[redactName(ev.ToolName)]++
-	a.classes[redactName(ev.ActionName)]++
+	// The class is the classifier's label. ActionName is bash.exec for every
+	// shell command, and agentd evidence names its decision there instead.
+	if class := strings.TrimSpace(ev.Labels["command.class"]); class != "" {
+		a.classes[redactName(class)]++
+	}
 }
 
 // redactName returns name unchanged unless the Edge redactor finds a secret

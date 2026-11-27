@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"errors"
 	"io"
 	"path/filepath"
 	"slices"
@@ -20,10 +21,10 @@ type artifactKubeconfig struct {
 	} `yaml:"contexts"`
 }
 
-// artifactIsKubectl reports the kubectl program. A word with '=' is an
-// assignment or a value (KUBECONFIG=dir/kubectl), not the program.
+// artifactIsKubectl reports the kubectl program by its exact name. A word with
+// '=' is an assignment or a value (KUBECONFIG=dir/kubectl), not the program.
 func artifactIsKubectl(field string) bool {
-	name := strings.ToLower(filepath.Base(field))
+	name := filepath.Base(field)
 	return !strings.Contains(field, "=") && (name == "kubectl" || name == "kubectl.exe")
 }
 
@@ -39,18 +40,19 @@ var artifactKubectlShorthands = map[byte]string{'n': "namespace", 'f': "filename
 
 // artifactKubectlArgs reads kubectl's arguments as pflag v1.0.9 does
 // (parseArgs, parseLongArg, parseSingleShortArg). It returns the last value of
-// each modeled flag, by long name, and whether every argument is recognized:
-// only modeled flags, a value for each value flag, no file value of - (stdin),
-// and the subcommand apply with no other positional, create or get. An
-// unmodeled flag is read as a switch, so the target flags after it still
-// parse. kubectl picks its subcommand before it parses flags (cobra
-// stripFlags), and that lookup reads the word after a bare -R or --recursive
-// as their value and the word after -Rf or -Rn as a command. So a switch
-// before the subcommand, and a cluster whose later letter takes the next
-// word, are unrecognized.
-func artifactKubectlArgs(args []string) (map[string]string, bool) {
+// each modeled flag, by long name, every path the file flags name (pflag
+// appends each occurrence), and whether every argument is recognized: only
+// modeled flags, a value for each value flag, file values
+// artifactKubectlFiles accepts, and the subcommand apply with no other
+// positional, create or get. An unmodeled flag is read as a switch, so the
+// target flags after it still parse. kubectl picks its subcommand before it
+// parses flags (cobra stripFlags), and that lookup reads the word after a bare
+// -R or --recursive as their value and the word after -Rf or -Rn as a
+// command. So a switch before the subcommand, and a cluster whose later letter
+// takes the next word, are unrecognized.
+func artifactKubectlArgs(args []string) (map[string]string, []string, bool) {
 	values, ok := map[string]string{}, true
-	var positionals []string
+	var positionals, files []string
 	set := func(name, value string, written bool) {
 		kind, known := artifactKubectlFlags[name]
 		switch {
@@ -63,7 +65,10 @@ func artifactKubectlArgs(args []string) (map[string]string, bool) {
 				value, args = args[0], args[1:]
 			}
 			values[name] = value
-			ok = ok && (kind != "files" || !slices.Contains(strings.Split(value, ","), "-"))
+			if kind == "files" {
+				paths, valid := artifactKubectlFiles(name, value)
+				files, ok = append(files, paths...), ok && valid
+			}
 		}
 	}
 	for len(args) > 0 {
@@ -83,7 +88,28 @@ func artifactKubectlArgs(args []string) (map[string]string, bool) {
 			ok = artifactKubectlCluster(arg, set) && ok
 		}
 	}
-	return values, ok && artifactKubectlSubcommand(positionals)
+	return values, files, ok && artifactKubectlSubcommand(positionals)
+}
+
+// artifactKubectlFiles returns the paths in a file flag's value. pflag splits
+// the value with encoding/csv, which on plain bytes is a split at ','.
+// --from-file reads each item as kubectl's ParseFileSource does: a path, or
+// key=path with one '=' that neither starts nor ends the item. It reports
+// false for an item kubectl rejects and for - (stdin).
+func artifactKubectlFiles(name, value string) ([]string, bool) {
+	paths := strings.Split(value, ",")
+	for i, item := range paths {
+		if key, path, found := strings.Cut(item, "="); found && name == "from-file" {
+			if key == "" || path == "" || strings.Contains(path, "=") {
+				return nil, false
+			}
+			paths[i] = path
+		}
+		if paths[i] == "-" {
+			return nil, false
+		}
+	}
+	return paths, true
 }
 
 // artifactKubectlCluster reads a cluster of short flags as
@@ -128,23 +154,29 @@ func artifactKubectlSubcommand(positionals []string) bool {
 // an empty context when it cannot tell. --kubeconfig, --context and
 // --namespace/-n on the command line win, as does a KUBECONFIG= assignment
 // before kubectl; otherwise the kubeconfig files decide, merged as kubectl
-// merges them.
+// merges them. --kubeconfig names one file and KUBECONFIG a list; with
+// neither, kubectl reads .kube/config under HOME, joined as client-go joins
+// it. Without HOME it reads .kube/config under its cwd, or on Windows under
+// another home, so the target is unknown.
 func artifactKubeTarget(fields []string, cwd string, env map[string]string) (string, string) {
-	kubeconfig := envValue(env, "KUBECONFIG")
+	paths := filepath.SplitList(envValue(env, "KUBECONFIG"))
 	at := slices.IndexFunc(fields, artifactIsKubectl)
 	for _, field := range fields[:at] {
 		if value, ok := strings.CutPrefix(field, "KUBECONFIG="); ok {
-			kubeconfig = value
+			paths = filepath.SplitList(value)
 		}
 	}
-	flags, _ := artifactKubectlArgs(fields[at+1:])
+	flags, _, _ := artifactKubectlArgs(fields[at+1:])
 	if flags["kubeconfig"] != "" {
-		kubeconfig = flags["kubeconfig"] // an empty --kubeconfig is not an explicit path
+		paths = []string{flags["kubeconfig"]} // an empty --kubeconfig is not an explicit path
+	}
+	if home := envValue(env, "HOME"); len(paths) == 0 && home != "" {
+		paths = []string{filepath.Join(home, ".kube", "config")}
 	}
 	kubeContext, namespace := flags["context"], flags["namespace"]
-	current, namespaces := artifactKubeconfigs(kubeconfig, cwd, env)
+	current, namespaces := artifactKubeconfigs(paths, cwd)
 	if namespaces == nil {
-		return "", "" // a special file can change the target even with --context
+		return "", "" // no file, or one kubectl may read differently, can change the target even with --context
 	}
 	if kubeContext == "" {
 		kubeContext = current
@@ -152,25 +184,27 @@ func artifactKubeTarget(fields []string, cwd string, env map[string]string) (str
 	if namespace == "" {
 		namespace = namespaces[kubeContext]
 	}
+	if namespace == "" && envValue(env, "KUBERNETES_SERVICE_HOST") != "" {
+		return "", "" // in a pod kubectl takes POD_NAMESPACE or the service account's namespace
+	}
 	if namespace == "" {
 		namespace = "default"
 	}
 	return kubeContext, namespace
 }
 
-// artifactKubeconfigs reads the kubeconfig files kubectl would read: the
-// KUBECONFIG list, or ~/.kube/config. The first file that sets current-context
-// wins, and so does the first definition of each context.
-func artifactKubeconfigs(kubeconfig, cwd string, env map[string]string) (string, map[string]string) {
-	paths := filepath.SplitList(kubeconfig)
+// artifactKubeconfigs reads the kubeconfig files kubectl would read. The first
+// file that sets current-context wins, and so does the first definition of
+// each context. Each file must be a readable regular file holding plain YAML
+// that yaml.v3 decodes, or no YAML document (an empty config); otherwise it
+// returns no namespaces and the target is unknown. kubectl skips a missing
+// file, but client-go first copies an older .kube/.kubeconfig into a missing
+// .kube/config. kubectl's YAML reader (yaml v2) keeps the last value of a
+// repeated key, which yaml.v3 rejects, and applies a merge key after the keys
+// before it, where yaml.v3 keeps those keys.
+func artifactKubeconfigs(paths []string, cwd string) (string, map[string]string) {
 	if len(paths) == 0 {
-		home := envValue(env, "HOME")
-		if home == "" {
-			home = envValue(env, "USERPROFILE")
-		}
-		if home != "" {
-			paths = []string{artifactPath(home, ".kube/config")}
-		}
+		return "", nil
 	}
 	current, namespaces := "", map[string]string{}
 	for _, path := range paths {
@@ -183,13 +217,17 @@ func artifactKubeconfigs(kubeconfig, cwd string, env map[string]string) (string,
 		}
 		file, reason := artifactOpen(path)
 		if reason != "" {
+			return "", nil
+		}
+		var node yaml.Node
+		err := yaml.NewDecoder(io.LimitReader(file, artifactMaxFileBytes)).Decode(&node)
+		_ = file.Close()
+		if errors.Is(err, io.EOF) {
 			continue
 		}
 		var config artifactKubeconfig
-		err := yaml.NewDecoder(io.LimitReader(file, artifactMaxFileBytes)).Decode(&config)
-		_ = file.Close()
-		if err != nil {
-			continue
+		if err != nil || !artifactPlainYAML(&node) || node.Decode(&config) != nil {
+			return "", nil
 		}
 		if current == "" {
 			current = config.CurrentContext
@@ -201,4 +239,13 @@ func artifactKubeconfigs(kubeconfig, cwd string, env map[string]string) (string,
 		}
 	}
 	return current, namespaces
+}
+
+// artifactPlainYAML reports YAML with no alias, merge key or explicit tag,
+// which yaml v2 and yaml.v3 can read differently.
+func artifactPlainYAML(node *yaml.Node) bool {
+	if node.Kind == yaml.AliasNode || node.Tag == "!!merge" || node.Style&yaml.TaggedStyle != 0 {
+		return false
+	}
+	return !slices.ContainsFunc(node.Content, func(child *yaml.Node) bool { return !artifactPlainYAML(child) })
 }
