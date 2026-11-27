@@ -472,6 +472,12 @@ curl -sS --cacert ./certs/ca/ca.crt -X POST https://localhost:8081/api/v1/users 
 
 All endpoints require admin role.
 
+A managed key authenticates as its own principal, its `id`. A job it submits records that `id`
+as its principal and actor, in the production profile too. Where `X-Principal-Id` is honored
+(outside production, or with `CORDUM_ALLOW_HEADER_PRINCIPAL=true`), the header replaces it as
+an asserted principal, kept for attribution only. Keys created before this change also take
+their `id` as principal; a stored key without an `id` is refused.
+
 ### GET `/api/v1/auth/keys`
 
 - Auth: required + admin
@@ -3080,7 +3086,7 @@ The following routes are registered in the gateway (`registerRoute` calls). Gene
 
 <!-- BEGIN:rest-routes -->
 
-_Generated from `core/controlplane/gateway/gateway.go`, `core/controlplane/gateway/handlers_mcp.go` (registration order) — do not edit by hand; run `make docs-tables`. 229 routes._
+_Generated from `core/controlplane/gateway/gateway.go`, `core/controlplane/gateway/handlers_mcp.go` (registration order) — do not edit by hand; run `make docs-tables`. 231 routes._
 
 | Method | Path |
 |--------|------|
@@ -3165,6 +3171,8 @@ _Generated from `core/controlplane/gateway/gateway.go`, `core/controlplane/gatew
 | GET | `/api/v1/edge/sessions/{session_id}` |
 | POST | `/api/v1/edge/sessions/{session_id}/heartbeat` |
 | POST | `/api/v1/edge/sessions/{session_id}/end` |
+| POST | `/api/v1/edge/calibration-reports` |
+| GET | `/api/v1/edge/calibration-reports/{id}` |
 | POST | `/api/v1/edge/executions` |
 | GET | `/api/v1/edge/executions` |
 | GET | `/api/v1/edge/executions/{execution_id}` |

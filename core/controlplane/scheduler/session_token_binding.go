@@ -117,11 +117,14 @@ func (i *SessionTokenIssuer) newBoundClaims(binding SessionBinding) (SessionToke
 	return claims, claims.Validate()
 }
 
-// VerifyBound rejects legacy sessions that do not carry worker proof bindings.
+// VerifyBound requires worker proof bindings and a non-reserved worker subject.
 func (i *SessionTokenIssuer) VerifyBound(ctx context.Context, token string, checkActive bool) (SessionTokenClaims, error) {
 	claims, err := i.Verify(ctx, token, checkActive)
 	if err != nil {
 		return SessionTokenClaims{}, err
+	}
+	if servicetoken.IsReservedIdentity(claims.Subject) {
+		return SessionTokenClaims{}, fmt.Errorf("%w: bound session requires a non-reserved worker subject", ErrSessionTokenMalformed)
 	}
 	if err := claims.validateBound(); err != nil {
 		return SessionTokenClaims{}, err

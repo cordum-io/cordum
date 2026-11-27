@@ -162,3 +162,29 @@ func TestEdgeCalibrationReportRejectsWithoutWrite(t *testing.T) {
 		})
 	}
 }
+
+func TestEdgeCalibrationReportIncludesShadowVerdicts(t *testing.T) {
+	s, h, base := newEdgeCalibrationFixture(t)
+	for i, ev := range []struct{ tenant, bundle, rule, verdict string }{
+		{edgeRouteTenant, "bundle-a", "shadow-deny", "deny"},
+		{edgeRouteTenant, "bundle-a", "shadow-deny", "deny"},
+		{edgeRouteTenant, "bundle-b", "shadow-approve", "require_approval"},
+		{edgeRouteOtherTenant, "bundle-a", "foreign-shadow-rule", "deny"},
+	} {
+		e := shadowEvent(int64(i+1), base.Add(time.Duration(i+1)*time.Second), ev.tenant, ev.bundle, "", "stricter", "allow", ev.verdict)
+		e.Extra["shadow_rule_id"] = ev.rule
+		seedShadowEventViaGatewayClient(t, s, ev.tenant, e)
+	}
+	code, body := postEdgeCalibration(t, h, edgeRouteTestAPIKey, edgeRouteTenant, edgeCalibrationWindow(base.Add(-time.Hour), base.Add(time.Hour)))
+	if code != http.StatusCreated {
+		t.Fatalf("POST status = %d, want 201 body=%s", code, body)
+	}
+	want := []calibration.ShadowRuleCount{
+		{BundleID: "bundle-a", RuleID: "shadow-deny", Deny: 2},
+		{BundleID: "bundle-b", RuleID: "shadow-approve", RequireApproval: 1},
+	}
+	if got := decodeEdgeCalibrationReport(t, body).ShadowRules; !reflect.DeepEqual(got, want) {
+		t.Fatalf("shadow_rules = %+v, want %+v", got, want)
+	}
+	assertBodyOmits(t, body, "foreign-shadow-rule")
+}

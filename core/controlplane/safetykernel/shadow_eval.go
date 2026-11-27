@@ -2,6 +2,7 @@ package safetykernel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -12,8 +13,10 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/auth/servicetoken"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/policyshadow"
 )
 
@@ -44,21 +47,25 @@ const shadowEvalDefaultRefresh = 15 * time.Second
 // absent} falls back to a no-op evaluator — the kernel still boots
 // and serves the active policy. Logs emitted at INFO describe the
 // final state so operators can grep for "safety-kernel: shadow
-// evaluation" and see whether it's live.
-func setupShadowEvaluation(srv *server, loader *policyLoader, natsBus *bus.NatsBus) (*ShadowLoader, *ShadowEvaluator) {
+// evaluation" and see whether it's live. The error is the audit sender's:
+// it is returned before SetShadowEvaluator, so a refused kernel serves nothing.
+func setupShadowEvaluation(srv *server, loader *policyLoader, natsBus *bus.NatsBus) (*ShadowLoader, *ShadowEvaluator, error) {
 	if srv == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if envTruthy(os.Getenv(envShadowEvalDisabled)) {
 		slog.Info("safety-kernel: shadow evaluation disabled by env", "var", envShadowEvalDisabled)
-		return nil, nil
+		return nil, nil, nil
 	}
 	if loader == nil || loader.configSvc == nil {
 		slog.Info("safety-kernel: shadow evaluation disabled — configsvc unavailable")
-		return nil, nil
+		return nil, nil, nil
+	}
+	auditSender, err := chooseShadowAuditSender(natsBus)
+	if err != nil {
+		return nil, nil, err
 	}
 	store := policyshadow.NewStore(loader.configSvc)
-	auditSender := chooseShadowAuditSender(natsBus)
 	tenantsFn := func() []string {
 		srv.mu.RLock()
 		defer srv.mu.RUnlock()
@@ -89,7 +96,7 @@ func setupShadowEvaluation(srv *server, loader *policyLoader, natsBus *bus.NatsB
 		"queue_size", shadowEvalDefaultQueueSize,
 		"audit_transport", auditSenderName(auditSender),
 	)
-	return shadowLoader, shadowEvaluator
+	return shadowLoader, shadowEvaluator, nil
 }
 
 // shadowEvalDefault* are the production pool sizes. 64 workers × 1000
@@ -119,19 +126,38 @@ func envTruthy(v string) bool {
 // cordum_shadow_eval_total, but emits no shadow_eval audit events and counts
 // no drop for them (audit is disabled, nothing failed to publish). Events that
 // fail to publish are counted as newShadowAuditSender describes.
-func chooseShadowAuditSender(natsBus *bus.NatsBus) audit.AuditSender {
+func chooseShadowAuditSender(natsBus *bus.NatsBus) (audit.AuditSender, error) {
 	if natsBus == nil {
-		return nil
+		return nil, nil
 	}
 	return newShadowAuditSender(natsBus)
 }
 
-func newShadowAuditSender(b audit.AuditBus) audit.AuditSender {
-	// The publisher has no fallback. An event that fails to publish is logged,
-	// counted in cordum_audit_events_dropped_total{reason="no_fallback"}, and
-	// discarded; it is never republished. A forwarding fallback would
-	// double-count, because the gateway's NATS consumer also reads the bus.
-	return audit.NewNATSAuditPublisher(b, nil)
+// newShadowAuditSender builds the shadow audit publisher. With a key, every
+// event carries a service token minted as servicetoken.IdentitySafetyKernel.
+// Without one, production refuses and other profiles publish without a token.
+//
+// The publisher has no fallback. An event that fails to publish is logged,
+// counted in cordum_audit_events_dropped_total{reason="no_fallback"}, and
+// discarded; it is never republished. A forwarding fallback would
+// double-count, because the gateway's NATS consumer also reads the bus.
+func newShadowAuditSender(b audit.AuditBus) (audit.AuditSender, error) {
+	key, kid, err := audit.LoadPublisherKeyFromEnv(servicetoken.IdentitySafetyKernel)
+	switch {
+	case err == nil:
+		mint := func() (string, error) {
+			return servicetoken.MintService(key, kid, servicetoken.IdentitySafetyKernel, time.Now())
+		}
+		return audit.NewNATSAuditPublisher(b, nil, audit.WithServiceToken(mint)), nil
+	case !errors.Is(err, audit.ErrPublisherKeyNotConfigured):
+		return nil, err
+	case env.IsProduction():
+		return nil, fmt.Errorf("safety-kernel: production shadow audit publishing requires %s or %s: %w",
+			audit.EnvPublisherSigningKey, audit.EnvPublisherSigningKeyPath, err)
+	}
+	slog.Warn("safety-kernel: shadow audit events are published without a service token",
+		"variable", audit.EnvPublisherSigningKey)
+	return audit.NewNATSAuditPublisher(b, nil), nil
 }
 
 // auditSenderName is used only for the boot log; tells operators

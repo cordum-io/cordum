@@ -305,6 +305,52 @@ func Run(cfg *config.Config) error {
 	return RunWithEntitlements(cfg, nil)
 }
 
+func serverTransportCredentials(ctx context.Context) (grpc.ServerOption, error) {
+	serverCreds := grpc.Creds(insecure.NewCredentials())
+	cert := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_TLS_CERT"))
+	key := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_TLS_KEY"))
+	clientCA := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_TLS_CLIENT_CA"))
+	if clientCA != "" && (cert == "" || key == "") {
+		return nil, fmt.Errorf("SAFETY_KERNEL_TLS_CLIENT_CA requires SAFETY_KERNEL_TLS_CERT and SAFETY_KERNEL_TLS_KEY")
+	}
+	if env.IsProduction() && cert == "" {
+		return nil, fmt.Errorf("safety kernel tls required in production")
+	}
+	if env.IsProduction() && clientCA == "" {
+		return nil, fmt.Errorf("SAFETY_KERNEL_TLS_CLIENT_CA required in production")
+	}
+	if cert != "" || key != "" {
+		if cert == "" || key == "" {
+			return nil, fmt.Errorf("safety kernel tls requires both SAFETY_KERNEL_TLS_CERT and SAFETY_KERNEL_TLS_KEY")
+		}
+		reloader, err := tlsreload.NewCertReloader(cert, key, "safety-kernel")
+		if err != nil {
+			return nil, fmt.Errorf("safety kernel tls keypair: %w", err)
+		}
+		tlsCfg := &tls.Config{
+			GetCertificate: reloader.GetCertificate,
+			MinVersion:     tls.VersionTLS12,
+		}
+		if env.TLSMinVersion() == tls.VersionTLS13 {
+			tlsCfg.MinVersion = tls.VersionTLS13
+		}
+		if clientCA != "" {
+			pem, err := os.ReadFile(clientCA) // #nosec G304 -- the client CA path is configured by the operator.
+			if err != nil {
+				return nil, fmt.Errorf("read SAFETY_KERNEL_TLS_CLIENT_CA: %w", err)
+			}
+			tlsCfg.ClientCAs = x509.NewCertPool()
+			if !tlsCfg.ClientCAs.AppendCertsFromPEM(pem) {
+				return nil, fmt.Errorf("SAFETY_KERNEL_TLS_CLIENT_CA contains no certificates")
+			}
+			tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
+		}
+		go reloader.WatchLoop(ctx, 30*time.Second)
+		serverCreds = grpc.Creds(credentials.NewTLS(tlsCfg))
+	}
+	return serverCreds, nil
+}
+
 // RunWithEntitlements starts the Safety Kernel with an optional shared
 // entitlement resolver. Nil falls back to community defaults.
 func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementResolver) error {
@@ -347,29 +393,9 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 		return fmt.Errorf("listen %s: %w", cfg.SafetyKernelAddr, err)
 	}
 
-	serverCreds := grpc.Creds(insecure.NewCredentials())
-	cert := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_TLS_CERT"))
-	key := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_TLS_KEY"))
-	if cert != "" || key != "" {
-		if cert == "" || key == "" {
-			return fmt.Errorf("safety kernel tls requires both SAFETY_KERNEL_TLS_CERT and SAFETY_KERNEL_TLS_KEY")
-		}
-		reloader, err := tlsreload.NewCertReloader(cert, key, "safety-kernel")
-		if err != nil {
-			return fmt.Errorf("safety kernel tls keypair: %w", err)
-		}
-		go reloader.WatchLoop(context.Background(), 30*time.Second)
-		tlsCfg := &tls.Config{
-			GetCertificate: reloader.GetCertificate,
-			MinVersion:     tls.VersionTLS12,
-		}
-		if env.TLSMinVersion() == tls.VersionTLS13 {
-			tlsCfg.MinVersion = tls.VersionTLS13
-		}
-		serverCreds = grpc.Creds(credentials.NewTLS(tlsCfg))
-	}
-	if env.IsProduction() && cert == "" {
-		return fmt.Errorf("safety kernel tls required in production")
+	serverCreds, err := serverTransportCredentials(context.Background())
+	if err != nil {
+		return err
 	}
 
 	cacheMax := resolveDecisionCacheMax()
@@ -451,10 +477,15 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	// Phase-2 shadow dual-evaluation: constructs the shadow loader +
 	// evaluator and attaches them to srv via SetShadowEvaluator so
 	// evaluate() can Submit active decisions without a nil-panic. When
-	// configsvc or NATS is unavailable setupShadowEvaluation returns
-	// (nil, nil) and the kernel still boots with shadow eval as a no-op
-	// — see shadow_eval.go for the fallback chain.
-	shadowLoader, shadowEvaluator := setupShadowEvaluation(srv, loader, natsBus)
+	// shadow eval is disabled or configsvc is unavailable it returns nils
+	// and the kernel still boots with shadow eval as a no-op. With NATS,
+	// a malformed audit publisher key, or none under the production
+	// profile, is an error and the kernel refuses to start — see
+	// shadow_eval.go for the fallback chain.
+	shadowLoader, shadowEvaluator, err := setupShadowEvaluation(srv, loader, natsBus)
+	if err != nil {
+		return fmt.Errorf("safety-kernel: shadow evaluation: %w", err)
+	}
 	if shadowEvaluator != nil {
 		defer shadowEvaluator.Close()
 	}
@@ -482,28 +513,7 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	// Report this kernel's loader configuration on the same lifecycle.
 	startPolicySignatureReporter(lifecycleCtx, &wg, resultClient)
 
-	grpcServer := grpc.NewServer(
-		serverCreds,
-		grpc.StatsHandler(otelgrpc.NewServerHandler()),
-		grpc.KeepaliveParams(keepalive.ServerParameters{
-			MaxConnectionAge:      env.DurationOr(envGRPCServerMaxConnectionAge, 2*time.Hour),
-			MaxConnectionAgeGrace: env.DurationOr(envGRPCServerMaxConnectionGrace, 30*time.Second),
-			Time:                  env.DurationOr(envGRPCServerKeepaliveTime, 30*time.Second),
-			Timeout:               env.DurationOr(envGRPCServerKeepaliveTimeout, 10*time.Second),
-		}),
-		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-			MinTime:             env.DurationOr(envGRPCServerEnforcementMinTime, 15*time.Second),
-			PermitWithoutStream: true,
-		}),
-	)
-	pb.RegisterSafetyKernelServer(grpcServer, srv)
-	pb.RegisterOutputPolicyServiceServer(grpcServer, srv)
-	healthSrv := health.NewServer()
-	healthpb.RegisterHealthServer(grpcServer, healthSrv)
-	healthSrv.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
-	if env.Bool(env.EnvGRPCReflection) {
-		reflection.Register(grpcServer)
-	}
+	grpcServer := newGRPCServer(srv, serverCreds)
 
 	// Admin HTTP server for health probes (Docker/K8s).
 	adminAddr := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_ADMIN_ADDR"))
@@ -598,6 +608,32 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 		return fmt.Errorf("grpc serve: %w", serveErr)
 	}
 	return nil
+}
+
+func newGRPCServer(srv *server, serverCreds grpc.ServerOption) *grpc.Server {
+	grpcServer := grpc.NewServer(
+		serverCreds,
+		grpc.StatsHandler(otelgrpc.NewServerHandler()),
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			MaxConnectionAge:      env.DurationOr(envGRPCServerMaxConnectionAge, 2*time.Hour),
+			MaxConnectionAgeGrace: env.DurationOr(envGRPCServerMaxConnectionGrace, 30*time.Second),
+			Time:                  env.DurationOr(envGRPCServerKeepaliveTime, 30*time.Second),
+			Timeout:               env.DurationOr(envGRPCServerKeepaliveTimeout, 10*time.Second),
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             env.DurationOr(envGRPCServerEnforcementMinTime, 15*time.Second),
+			PermitWithoutStream: true,
+		}),
+	)
+	pb.RegisterSafetyKernelServer(grpcServer, srv)
+	pb.RegisterOutputPolicyServiceServer(grpcServer, srv)
+	healthSrv := health.NewServer()
+	healthpb.RegisterHealthServer(grpcServer, healthSrv)
+	healthSrv.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
+	if env.Bool(env.EnvGRPCReflection) {
+		reflection.Register(grpcServer)
+	}
+	return grpcServer
 }
 
 func (s *server) currentEntitlements() licensing.Entitlements {
@@ -720,7 +756,7 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	s.mu.RUnlock()
 
 	workflowID, scopedJobID := resolvePolicyScope(req)
-	evalPolicy := scopedPolicyForRequest(policy, global, workflowID, scopedJobID, topic, req.GetLabels())
+	evalPolicy := scopedPolicyForRequest(policy, global, workflowID, scopedJobID, topic)
 	inputRules = selectInputRulesForScope(inputRules, workflowID, scopedJobID)
 
 	// Bypass decision cache when the active policy has effective velocity rules.

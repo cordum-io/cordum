@@ -127,6 +127,7 @@ func (s *server) handlePolicyCheck(w http.ResponseWriter, r *http.Request, mode 
 	}
 
 	// Audit: log every policy dry-run call for enumeration detection.
+	// Informational: the check changes no state, so a lost entry is logged and the answer still returned.
 	s.appendAuditEntryNamed(r.Context(), "policy."+mode, "policy", req.Topic,
 		req.Topic, policybundles.PolicyActorID(r), policybundles.PolicyRole(r),
 		"policy "+mode+" by "+policybundles.PolicyActorID(r))

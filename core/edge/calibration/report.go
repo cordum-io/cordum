@@ -1,7 +1,8 @@
 // Package calibration builds a calibration report from the Edge evidence
 // store: the decisions recorded on Edge events of one tenant's observe-mode
-// sessions, over a time window and a scope. No action input is copied into
-// the report; every name taken from an event is redacted first.
+// sessions, over a time window and a scope, what candidate shadow bundles
+// would have decided, and the assurance state of the observed sessions. No
+// action input is copied into the report; every name is redacted first.
 package calibration
 
 import (
@@ -32,23 +33,43 @@ const (
 type Source interface {
 	ListSessions(ctx context.Context, q edge.ListSessionsQuery) (edge.SessionPage, error)
 	ListEvents(ctx context.Context, q edge.ListEventsQuery) (edge.EventPage, error)
+	HeartbeatAlive(ctx context.Context, tenantID, sessionID string) (bool, error)
 }
 
 var _ Source = edge.Store(nil)
 
+// ShadowVerdict is one decision a candidate shadow bundle would have made.
+type ShadowVerdict struct {
+	BundleID, RuleID, Verdict string
+	At                        time.Time
+}
+
 // Request selects the sessions and events a report counts. Repos and Labels
 // narrow the sessions when set; RuleIDs are the rules checked for never_fired.
+// Shadow holds the tenant's shadow verdicts; ShadowTruncated marks a shadow
+// scan that a cap stopped early.
 type Request struct {
-	TenantID     string
-	Since, Until time.Time
-	Repos        []string
-	Labels       map[string]string
-	RuleIDs      []string
+	TenantID        string
+	Since, Until    time.Time
+	Repos           []string
+	Labels          map[string]string
+	RuleIDs         []string
+	Shadow          []ShadowVerdict
+	ShadowTruncated bool
 }
 
 // RuleCount is the number of deny and require-approval decisions recorded
 // for one rule id.
 type RuleCount struct {
+	RuleID          string `json:"rule_id"`
+	Deny            int    `json:"deny"`
+	RequireApproval int    `json:"require_approval"`
+}
+
+// ShadowRuleCount is the number of deny and require-approval decisions a
+// candidate shadow bundle would have made for one rule id.
+type ShadowRuleCount struct {
+	BundleID        string `json:"bundle_id"`
 	RuleID          string `json:"rule_id"`
 	Deny            int    `json:"deny"`
 	RequireApproval int    `json:"require_approval"`
@@ -67,23 +88,35 @@ type DayCount struct {
 }
 
 // Report is the calibration report. EventsScanned counts the distinct events
-// of the window that were counted; Truncated is set when a scan cap stopped
-// the scan early.
+// of the window that were counted; Truncated is set when a scan cap, the
+// caller's shadow scan included, stopped a scan early.
+//
+// ShadowRules covers the whole tenant and window: shadow results carry no
+// session, repository or label, so Repos and Labels do not narrow it.
+// Assurance maps every assurance state to the number of observed sessions in
+// it, derived when the report is built from each session's facts and current
+// heartbeat.
+//
+// TopCommandClasses counts the command.class label that the Edge classifier
+// puts on shell commands. An event without one, such as a file or MCP tool
+// call, counts in TopTools only.
 type Report struct {
-	ID                string            `json:"id"`
-	TenantID          string            `json:"tenant_id"`
-	Since             time.Time         `json:"since"`
-	Until             time.Time         `json:"until"`
-	Repos             []string          `json:"repos,omitempty"`
-	Labels            map[string]string `json:"labels,omitempty"`
-	SessionsObserved  int               `json:"sessions_observed"`
-	EventsScanned     int               `json:"events_scanned"`
-	Truncated         bool              `json:"truncated"`
-	Rules             []RuleCount       `json:"rules"`
-	NeverFired        []string          `json:"never_fired"`
-	TopTools          []NameCount       `json:"top_tools"`
-	TopCommandClasses []NameCount       `json:"top_command_classes"`
-	ApprovalsPerDay   []DayCount        `json:"approvals_per_day"`
+	ID                string                      `json:"id"`
+	TenantID          string                      `json:"tenant_id"`
+	Since             time.Time                   `json:"since"`
+	Until             time.Time                   `json:"until"`
+	Repos             []string                    `json:"repos,omitempty"`
+	Labels            map[string]string           `json:"labels,omitempty"`
+	SessionsObserved  int                         `json:"sessions_observed"`
+	EventsScanned     int                         `json:"events_scanned"`
+	Truncated         bool                        `json:"truncated"`
+	Rules             []RuleCount                 `json:"rules"`
+	NeverFired        []string                    `json:"never_fired"`
+	TopTools          []NameCount                 `json:"top_tools"`
+	TopCommandClasses []NameCount                 `json:"top_command_classes"`
+	ApprovalsPerDay   []DayCount                  `json:"approvals_per_day"`
+	ShadowRules       []ShadowRuleCount           `json:"shadow_rules"`
+	Assurance         map[edge.AssuranceState]int `json:"assurance"`
 }
 
 type aggregator struct {
@@ -95,6 +128,7 @@ type aggregator struct {
 	tools     map[string]int
 	classes   map[string]int
 	approvals map[string]int
+	assurance map[edge.AssuranceState]int
 	observed  int
 	truncated bool
 }
@@ -114,6 +148,10 @@ func Build(ctx context.Context, src Source, req Request) (Report, error) {
 	a := &aggregator{
 		req: req, sessions: map[string]bool{}, events: map[string]bool{}, fired: map[string]bool{},
 		rules: map[string]*RuleCount{}, tools: map[string]int{}, classes: map[string]int{}, approvals: map[string]int{},
+		assurance: map[edge.AssuranceState]int{
+			edge.AssuranceStateCompatibility: 0, edge.AssuranceStateHookMediated: 0, edge.AssuranceStateExecutorEnforced: 0,
+			edge.AssuranceStateUnsupported: 0, edge.AssuranceStateStale: 0,
+		},
 	}
 	if err := a.scanSessions(ctx, src); err != nil {
 		return Report{}, err
@@ -147,7 +185,12 @@ func (a *aggregator) scanSessions(ctx context.Context, src Source) error {
 			if !a.inScope(s) {
 				continue
 			}
-			if err := a.scanEvents(ctx, src, s.SessionID); err != nil || a.truncated {
+			before := len(a.events)
+			err := a.scanEvents(ctx, src, s.SessionID)
+			if err == nil && len(a.events) > before {
+				err = a.observe(ctx, src, s)
+			}
+			if err != nil || a.truncated {
 				return err
 			}
 		}
@@ -176,13 +219,19 @@ func (a *aggregator) inScope(s edge.EdgeSession) bool {
 	return true
 }
 
+// observe counts s, a session with at least one counted event, and its
+// assurance state.
+func (a *aggregator) observe(ctx context.Context, src Source, s edge.EdgeSession) error {
+	alive, err := src.HeartbeatAlive(ctx, a.req.TenantID, s.SessionID)
+	if err != nil {
+		return fmt.Errorf("calibration: session heartbeat: %w", err)
+	}
+	a.observed++
+	a.assurance[edge.DeriveAssuranceState(s, alive)]++
+	return nil
+}
+
 func (a *aggregator) scanEvents(ctx context.Context, src Source, sessionID string) error {
-	before := len(a.events)
-	defer func() {
-		if len(a.events) > before {
-			a.observed++
-		}
-	}()
 	q := edge.ListEventsQuery{TenantID: a.req.TenantID, SessionID: sessionID, Since: a.req.Since, Until: a.req.Until, Limit: pageLimit}
 	for {
 		page, err := src.ListEvents(ctx, q)
@@ -226,7 +275,11 @@ func (a *aggregator) count(ev edge.AgentActionEvent) {
 		a.approvals[ev.Timestamp.UTC().Format(dayLayout)]++
 	}
 	a.tools[redactName(ev.ToolName)]++
-	a.classes[redactName(ev.ActionName)]++
+	// The class is the classifier's label. ActionName is bash.exec for every
+	// shell command, and agentd evidence names its decision there instead.
+	if class := strings.TrimSpace(ev.Labels["command.class"]); class != "" {
+		a.classes[redactName(class)]++
+	}
 }
 
 // redactName returns name unchanged unless the Edge redactor finds a secret
@@ -246,9 +299,10 @@ func (a *aggregator) report() Report {
 	rep := Report{
 		TenantID: a.req.TenantID, Since: a.req.Since.UTC(), Until: a.req.Until.UTC(),
 		Repos: a.req.Repos, Labels: a.req.Labels,
-		SessionsObserved: a.observed, EventsScanned: len(a.events), Truncated: a.truncated,
+		SessionsObserved: a.observed, EventsScanned: len(a.events), Truncated: a.truncated || a.req.ShadowTruncated,
 		Rules: []RuleCount{}, NeverFired: []string{},
 		TopTools: top(a.tools), TopCommandClasses: top(a.classes), ApprovalsPerDay: []DayCount{},
+		ShadowRules: shadowRules(a.req), Assurance: a.assurance,
 	}
 	for _, rc := range a.rules {
 		rep.Rules = append(rep.Rules, *rc)
@@ -268,6 +322,39 @@ func (a *aggregator) report() Report {
 		rep.ApprovalsPerDay = append(rep.ApprovalsPerDay, DayCount{Day: day, Count: a.approvals[day]})
 	}
 	return rep
+}
+
+// shadowRules counts the deny and require-approval verdicts in req.Shadow
+// with At in [Since, Until), per bundle and rule, matching verdicts
+// case-insensitively.
+func shadowRules(req Request) []ShadowRuleCount {
+	counts := map[[2]string]*ShadowRuleCount{}
+	for _, v := range req.Shadow {
+		deny := strings.EqualFold(v.Verdict, string(edge.DecisionDeny))
+		if v.At.Before(req.Since) || !v.At.Before(req.Until) ||
+			(!deny && !strings.EqualFold(v.Verdict, string(edge.DecisionRequireApproval))) {
+			continue
+		}
+		key := [2]string{redactName(v.BundleID), redactName(v.RuleID)}
+		sc := counts[key]
+		if sc == nil {
+			sc = &ShadowRuleCount{BundleID: key[0], RuleID: key[1]}
+			counts[key] = sc
+		}
+		if deny {
+			sc.Deny++
+		} else {
+			sc.RequireApproval++
+		}
+	}
+	out := make([]ShadowRuleCount, 0, len(counts))
+	for _, sc := range counts {
+		out = append(out, *sc)
+	}
+	slices.SortFunc(out, func(x, y ShadowRuleCount) int {
+		return cmp.Or(strings.Compare(x.BundleID, y.BundleID), strings.Compare(x.RuleID, y.RuleID))
+	})
+	return out
 }
 
 func top(counts map[string]int) []NameCount {

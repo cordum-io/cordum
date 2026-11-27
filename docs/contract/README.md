@@ -39,7 +39,6 @@ marked with a status that does not claim one.
   the freeze:
   - `core/controlplane/scheduler/engine.go:1696` (scheduler throttle requeue)
   - `core/controlplane/scheduler/engine.go:1823` (`budgets.max_concurrent_jobs` limit)
-  - `core/edge/agentd/approval_waiter.go:93` (agentd throttle mapping)
 
 ## Gate commands
 
