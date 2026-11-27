@@ -85,8 +85,9 @@ func (a *busTapAuth) refuse(tap, reason string) {
 
 // busTapResultFromDispatchedWorker reports whether the taps may act on p's job
 // result. A worker session's result counts only for a job recorded under the
-// session's tenant whose dispatch record, when it has one, names that worker
-// and tenant. Claims-less packets (off mode, warn without a token, an audit
+// session's tenant whose dispatch record names that worker and tenant. Outside
+// the production profile, a job with no dispatch record is bound by its tenant
+// alone. Claims-less packets (off mode, warn without a token, an audit
 // publisher token), packets without a result and reserved service identities
 // are not checked here.
 func (s *server) busTapResultFromDispatchedWorker(ctx context.Context, p *pb.BusPacket, c *scheduler.SessionTokenClaims) bool {
@@ -104,7 +105,7 @@ func (s *server) busTapResultFromDispatchedWorker(ctx context.Context, p *pb.Bus
 		return false
 	}
 	if dispatchWorker == "" && dispatchTenant == "" {
-		return true
+		return !s.capProfile.IsProduction()
 	}
 	return dispatchWorker == worker && dispatchTenant == tenant
 }
