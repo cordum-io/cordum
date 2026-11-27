@@ -7,8 +7,9 @@ approves or rejects anything itself.
 
 ## Sequence
 
-Each job opens its own MCP session (`X-MCP-Session-ID`, random per job) on
-`POST <gateway>/mcp/message` and sends, in this order:
+Each job's calls are session-less POSTs to `POST <gateway>/mcp/message`: the
+gateway accepts only session ids it issued over SSE, and the worker opens none.
+Each job sends, in this order:
 
 1. `initialize` (protocol version `2024-11-05`), then `notifications/initialized`.
 2. `resources/read` of `cordum://jobs/<job_id>`, the job it is running.
