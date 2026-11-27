@@ -5,6 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+- Decision-log index keys expire with `CORDUM_DECISION_LOG_TTL_SECONDS`, refreshed
+  at each append, in the store and the cordumctl governance helper (task-f6a68292).
+
 ### Fixed
 
 - Packs: `POST /api/v1/packs/install` no longer ends without a response when the
@@ -184,6 +187,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   An unchanged setting leaves the streams as they are. If the server refuses
   the update, bus init logs the error and the stream keeps its MaxAge. The
   DI-C21 retention proof is `TestRetentionProofDIC21` (PR2-08, task-5c098d99).
+- Eval run index keys follow `CORDUM_EVAL_RUN_TTL_SECONDS`. Each eval run create
+  sets the TTL of the tenant's `eval:run:<tenant>:idx:t` key and of the run's
+  `idx:ds:<dataset>` key to the run TTL, and removes from both keys the runs whose
+  record has expired. A run whose record is present keeps its index entries. The
+  DI-C37 store retention proof is `TestRetentionProofDIC37` (PR2-08,
+  task-397716a3).
 - Job index and event keys follow `JOB_META_TTL`. On each scan the scheduler
   reconciler removes a job's id from the `job:index:<state>` sets and
   `job:recent`, and deletes its `job:events:<id>` list, once the job's
