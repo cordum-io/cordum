@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -129,11 +130,10 @@ func ListAllInstances(ctx context.Context, rdb redis.UniversalClient) (map[strin
 
 func scanInstances(ctx context.Context, rdb redis.UniversalClient, pattern string) ([]InstanceInfo, error) {
 	var keys []string
-	iter := rdb.Scan(ctx, 0, pattern, 100).Iterator()
-	for iter.Next(ctx) {
-		keys = append(keys, iter.Val())
-	}
-	if err := iter.Err(); err != nil {
+	if err := redisutil.ScanKeys(ctx, rdb, pattern, 100, func(batch []string) error {
+		keys = append(keys, batch...)
+		return nil
+	}); err != nil {
 		return nil, fmt.Errorf("scan instance keys: %w", err)
 	}
 	if len(keys) == 0 {

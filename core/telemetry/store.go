@@ -99,15 +99,22 @@ func (s *Store) SaveSnapshot(ctx context.Context, payload TelemetryPayload) erro
 	snapshotKey := snapshotKey(payload.CollectedAt)
 	cutoff := time.Now().UTC().Add(-s.retention)
 
-	pipe := s.client.TxPipeline()
-	pipe.Set(ctx, snapshotLatestKey, data, 0)
-	pipe.Set(ctx, snapshotKey, data, s.retention)
-	pipe.ZAdd(ctx, historyKey, redis.Z{
-		Score:  float64(payload.CollectedAt.Unix()),
-		Member: snapshotKey,
-	})
-	pipe.ZRemRangeByScore(ctx, historyKey, "-inf", strconv.FormatInt(cutoff.Unix(), 10))
-	if _, err := pipe.Exec(ctx); err != nil {
+	// One key per write, because a cluster refuses a MULTI across slots. The
+	// snapshot goes first, so history never lists a snapshot that was not written.
+	if err := s.client.Set(ctx, snapshotKey, data, s.retention).Err(); err != nil {
+		return fmt.Errorf("save telemetry snapshot: %w", err)
+	}
+	if _, err := s.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.ZAdd(ctx, historyKey, redis.Z{
+			Score:  float64(payload.CollectedAt.Unix()),
+			Member: snapshotKey,
+		})
+		pipe.ZRemRangeByScore(ctx, historyKey, "-inf", strconv.FormatInt(cutoff.Unix(), 10))
+		return nil
+	}); err != nil {
+		return fmt.Errorf("save telemetry snapshot: %w", err)
+	}
+	if err := s.client.Set(ctx, snapshotLatestKey, data, 0).Err(); err != nil {
 		return fmt.Errorf("save telemetry snapshot: %w", err)
 	}
 
@@ -244,8 +251,16 @@ func (s *Store) trimHistory(ctx context.Context) error {
 	}
 	pipe := s.client.TxPipeline()
 	pipe.ZRem(ctx, historyKey, toAnySlice(keys)...)
-	pipe.Del(ctx, keys...)
 	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("trim telemetry history: %w", err)
+	}
+	// One DEL per snapshot key: a cluster refuses a DEL of keys in different
+	// slots, and a plain pipeline sends each DEL to its own key's node.
+	dels := s.client.Pipeline()
+	for _, key := range keys {
+		dels.Del(ctx, key)
+	}
+	if _, err := dels.Exec(ctx); err != nil {
 		return fmt.Errorf("trim telemetry history: %w", err)
 	}
 	return nil

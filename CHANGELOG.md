@@ -11,6 +11,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   on Redis Cluster instead of failing with `CROSSSLOT`. The key record is written before its lookup
   indexes, and a revoked key stays refused even if its prefix index entry outlives the revoke.
 
+- Copilot and telemetry: copilot transcript appends and telemetry snapshot saves now work on Redis Cluster instead of failing with `CROSSSLOT`. Each session or snapshot is written before the index or history entry that lists it.
+
 - `cordumctl governance backfill-decisions` and `tail` now work on Redis Cluster: the helper takes
   the cluster seeds from `REDIS_CLUSTER_ADDRESSES`, as the services do, scans every master for
   jobs, and writes each decision record before its indexes. Artifact `Put` now works on Redis
