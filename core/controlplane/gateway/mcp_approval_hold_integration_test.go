@@ -785,12 +785,11 @@ func TestConsumedApproval_SingleUseAndBound(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 const (
-	pgToolName  = "cordum_pg_gated_counter"
-	pgAgentID   = "agent-pg-alice"
-	pgSessionID = "pg-sess-1"
-	pgArgsA     = `{"target":"prod","count":3}`
-	pgArgsB     = `{"target":"prod","count":4}`
-	pgArgsC     = `{"target":"prod","count":5}`
+	pgToolName = "cordum_pg_gated_counter"
+	pgAgentID  = "agent-pg-alice"
+	pgArgsA    = `{"target":"prod","count":3}`
+	pgArgsB    = `{"target":"prod","count":4}`
+	pgArgsC    = `{"target":"prod","count":5}`
 )
 
 type pgReply struct {
@@ -811,6 +810,8 @@ type pgHarness struct {
 	calls  atomic.Int64
 	sawRef atomic.Int64
 	rpcID  atomic.Int64
+	// sessionID is the SSE session pg-alice opened; every MCP call names it.
+	sessionID string
 }
 
 // pgWidePoolClient opens a second client on the gateway's Redis DB. The
@@ -887,6 +888,7 @@ func pgNewPolicyGateServer(t *testing.T) *pgHarness {
 	}
 	h.srv = httptest.NewServer(apiKeyMiddleware(s.auth, mux))
 	t.Cleanup(h.srv.Close)
+	h.sessionID = openMCPSSE(t, h.srv.URL, "key-pg-alice", "")
 	return h
 }
 
@@ -900,12 +902,12 @@ func (h *pgHarness) post(key, path, body string, mcpCall bool) (*http.Response, 
 	req.Header.Set("X-Tenant-ID", "default")
 	if mcpCall {
 		req.Header.Set("X-Agent-Id", pgAgentID)
-		req.Header.Set("X-MCP-Session-ID", pgSessionID)
+		req.Header.Set("X-MCP-Session-ID", h.sessionID)
 	}
 	return h.client.Do(req)
 }
 
-// call issues tools/call for the counting tool as alice on pgSessionID, with
+// call issues tools/call for the counting tool as alice on h.sessionID, with
 // a distinct JSON-RPC id per request. Goroutine-safe: reports with t.Errorf.
 func (h *pgHarness) call(t *testing.T, args string) pgReply {
 	t.Helper()
@@ -1005,12 +1007,12 @@ func TestPolicyGateEdgeResume_HTTPExecutesExactlyOnce(t *testing.T) {
 			if err != nil || !found || approval == nil {
 				t.Fatalf("GetApproval(%s) = %+v, %v, %v", refA, approval, found, err)
 			}
-			if approval.SessionID != pgSessionID || approval.ExecutionID != "mcp-"+pgSessionID || approval.EventID == pgAgentID {
+			if approval.SessionID != h.sessionID || approval.ExecutionID != "mcp-"+h.sessionID || approval.EventID == pgAgentID {
 				t.Fatalf("approval binds session=%q execution=%q event=%q; want the transport session and a pre-event id",
 					approval.SessionID, approval.ExecutionID, approval.EventID)
 			}
 			var pre *edge.AgentActionEvent
-			for _, e := range pgPreEvents(t, h.store, "default", pgSessionID, "mcp-"+pgSessionID) {
+			for _, e := range pgPreEvents(t, h.store, "default", h.sessionID, "mcp-"+h.sessionID) {
 				if e.EventID == approval.EventID {
 					pre = &e
 				}
