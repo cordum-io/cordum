@@ -54,6 +54,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 	// "admin" and "user" roles. Keep both in sync to avoid role asymmetry.
 	if err := s.requireRoleGRPC(ctx, "admin", "user"); err != nil {
 		actorID, _, _, role := grpcAuditActor(ctx)
+		// Refusal record: the call returns the permission error.
 		s.appendAuditEntryNamed(ctx, "submit_denied", "job", "", "", actorID, role, "job submit denied: "+err.Error())
 		return nil, err
 	}

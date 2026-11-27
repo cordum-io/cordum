@@ -206,9 +206,12 @@ func (s *server) handleCreateEvalDataset(w http.ResponseWriter, r *http.Request)
 		"actor", policybundles.PolicyActorID(r),
 		"role", policybundles.PolicyRole(r),
 	)
-	s.appendAuditEntryNamed(r.Context(), "create", "eval_dataset", created.ID, created.Name,
+	if err := s.appendNamedAuditEntry(r.Context(), "create", "eval_dataset", created.ID, created.Name,
 		policybundles.PolicyActorID(r), policybundles.PolicyRole(r),
-		"create eval dataset "+created.Name+" v"+strconv.Itoa(created.Version))
+		"create eval dataset "+created.Name+" v"+strconv.Itoa(created.Version)); err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "eval dataset created but its audit entry was not stored")
+		return
+	}
 
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, created)
@@ -296,9 +299,12 @@ func (s *server) handleUpdateEvalDataset(w http.ResponseWriter, r *http.Request)
 		"actor", policybundles.PolicyActorID(r),
 		"role", policybundles.PolicyRole(r),
 	)
-	s.appendAuditEntryNamed(r.Context(), "update", "eval_dataset", created.ID, created.Name,
+	if err := s.appendNamedAuditEntry(r.Context(), "update", "eval_dataset", created.ID, created.Name,
 		policybundles.PolicyActorID(r), policybundles.PolicyRole(r),
-		"create successor version for eval dataset "+created.Name+" v"+strconv.Itoa(created.Version))
+		"create successor version for eval dataset "+created.Name+" v"+strconv.Itoa(created.Version)); err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "eval dataset updated but its audit entry was not stored")
+		return
+	}
 
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, created)
@@ -541,9 +547,12 @@ func (s *server) handleDeleteEvalDataset(w http.ResponseWriter, r *http.Request)
 		"actor", policybundles.PolicyActorID(r),
 		"role", policybundles.PolicyRole(r),
 	)
-	s.appendAuditEntryNamed(r.Context(), "delete", "eval_dataset", id, existing.Name,
+	if err := s.appendNamedAuditEntry(r.Context(), "delete", "eval_dataset", id, existing.Name,
 		policybundles.PolicyActorID(r), policybundles.PolicyRole(r),
-		"force-delete eval dataset "+existing.Name+" v"+strconv.Itoa(existing.Version))
+		"force-delete eval dataset "+existing.Name+" v"+strconv.Itoa(existing.Version)); err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "eval dataset deleted but its audit entry was not stored")
+		return
+	}
 
 	w.WriteHeader(http.StatusNoContent)
 }
