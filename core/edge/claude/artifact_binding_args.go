@@ -11,10 +11,10 @@ import (
 
 var artifactInterpreters = []string{"sh", "bash", "zsh", "dash", "python", "node", "perl", "ruby"}
 
-// artifactIsInterpreter reports a shell or script interpreter under any
-// spelling of its program: a path, a version suffix (python3.12) or .exe.
+// artifactIsInterpreter reports a shell or script interpreter by its exact
+// program name, after a path, a version suffix (python3.12) or .exe.
 func artifactIsInterpreter(field string) bool {
-	name := strings.TrimSuffix(strings.ToLower(filepath.Base(field)), ".exe")
+	name := strings.TrimSuffix(filepath.Base(field), ".exe")
 	return slices.Contains(artifactInterpreters, strings.TrimRight(name, "0123456789."))
 }
 

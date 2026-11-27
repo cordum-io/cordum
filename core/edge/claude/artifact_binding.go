@@ -30,10 +30,15 @@ const (
 	artifactMaxFiles      = 16
 	artifactMaxFileBytes  = 8 << 20
 	artifactBindingBudget = time.Second
-	// artifactShellSyntax makes the shell, not the command line, decide what
-	// a command reads.
-	artifactShellSyntax = "'\"\\;&|<>`$(){}*?[~\n#!^"
+	// artifactPlainBytes are the only bytes a bound command holds. Any other
+	// byte (a quote, a control character such as CR, a non-ASCII byte) lets
+	// the shell, or a parser below it, read the command differently.
+	artifactPlainBytes = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 \t-_./,:=@+"
 )
+
+// artifactNoCodeTools are the Claude Code tools that cannot run code. They get
+// no binding labels; every other tool but Bash is unbound.
+var artifactNoCodeTools = []string{"Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Glob", "Grep", "LS", "WebFetch", "WebSearch", "TodoWrite"}
 
 // artifactInputs is what the binding digest covers. Files maps each resolved
 // path to the sha256 of its content; json.Marshal sorts the keys.
@@ -44,17 +49,15 @@ type artifactInputs struct {
 	KubeNamespace string            `json:"kube_namespace,omitempty"`
 }
 
-// artifactBindingLabels returns binding labels for PreToolUse commands. Only
-// Bash is modeled; other command tools are unbound. Non-command hooks get no
-// labels. family is the call's command.family label.
+// artifactBindingLabels returns binding labels for PreToolUse calls. Only the
+// Bash tool is modeled; every other tool is unbound, whatever its input holds,
+// except artifactNoCodeTools, which get no labels. Other hooks get no labels.
+// family is the call's command.family label.
 func artifactBindingLabels(ctx context.Context, input HookInput, env map[string]string, family string) map[string]string {
-	if input.HookEventName != "PreToolUse" {
+	if input.HookEventName != "PreToolUse" || slices.Contains(artifactNoCodeTools, input.ToolName) {
 		return nil
 	}
-	if !strings.EqualFold(input.ToolName, "Bash") {
-		if _, runs := input.ToolInput["command"]; !runs {
-			return nil
-		}
+	if input.ToolName != "Bash" {
 		return map[string]string{"artifact.binding": "unbound", "artifact.unbound_reason": "unrecognized"}
 	}
 	command, _ := input.ToolInput["command"].(string)
@@ -143,11 +146,11 @@ func artifactWithinBudget(ctx context.Context, collect func() (*artifactInputs, 
 // reason when they cannot be determined, and the inputs with the
 // artifactRecognized reason when they can.
 func artifactCollect(command, cwd string, env map[string]string) (*artifactInputs, string) {
-	if strings.ContainsAny(command, artifactShellSyntax) {
+	if strings.Trim(command, artifactPlainBytes) != "" {
 		return nil, "shell-syntax"
 	}
-	// Bash splits words on space and tab only (newline is rejected above), so
-	// a field here is the word bash will see.
+	// Bash splits words on space and tab only, so a field here is the word
+	// bash will see.
 	fields := strings.FieldsFunc(command, func(r rune) bool { return r == ' ' || r == '\t' })
 	if slices.ContainsFunc(fields, artifactZshEquals) {
 		return nil, "shell-syntax"

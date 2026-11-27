@@ -54,7 +54,7 @@ func TestArtifactBindingWindowsDriveNames(t *testing.T) {
 	artifactWriteFiles(t, cwd, map[string]string{"manifest.yaml": "kind: ConfigMap\n", "kc.yaml": "current-context: dev\n"})
 	env := map[string]string{"KUBECONFIG": filepath.Join(cwd, "kc.yaml")}
 	abs := filepath.ToSlash(filepath.Join(cwd, "manifest.yaml"))
-	if strings.ContainsAny(abs, artifactShellSyntax) {
+	if strings.Trim(abs, artifactPlainBytes) != "" {
 		t.Skipf("the temp dir %s needs shell quoting", abs)
 	}
 	for _, tc := range []struct{ command, reason string }{

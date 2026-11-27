@@ -20,10 +20,10 @@ type artifactKubeconfig struct {
 	} `yaml:"contexts"`
 }
 
-// artifactIsKubectl reports the kubectl program. A word with '=' is an
-// assignment or a value (KUBECONFIG=dir/kubectl), not the program.
+// artifactIsKubectl reports the kubectl program by its exact name. A word with
+// '=' is an assignment or a value (KUBECONFIG=dir/kubectl), not the program.
 func artifactIsKubectl(field string) bool {
-	name := strings.ToLower(filepath.Base(field))
+	name := filepath.Base(field)
 	return !strings.Contains(field, "=") && (name == "kubectl" || name == "kubectl.exe")
 }
 

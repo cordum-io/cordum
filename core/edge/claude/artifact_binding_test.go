@@ -35,12 +35,15 @@ func artifactWriteFiles(t *testing.T, dir string, files map[string]string) {
 }
 
 func TestArtifactBindingOnlyForPreToolUseBash(t *testing.T) {
-	for _, input := range []HookInput{
+	inputs := []HookInput{
 		{HookEventName: "PostToolUse", ToolName: "Bash", ToolInput: map[string]any{"command": "ls"}},
-		{HookEventName: "PreToolUse", ToolName: "Write", ToolInput: map[string]any{"file_path": "a.txt"}},
-		{HookEventName: "PreToolUse", ToolName: "Read", ToolInput: map[string]any{"file_path": "a.txt"}},
 		{HookEventName: "PostToolUse", ToolName: "PowerShell", ToolInput: map[string]any{"command": "ls"}},
-	} {
+	}
+	// The tools that cannot run code are listed by name, whatever their input holds.
+	for _, tool := range []string{"Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Glob", "Grep", "LS", "WebFetch", "WebSearch", "TodoWrite"} {
+		inputs = append(inputs, HookInput{HookEventName: "PreToolUse", ToolName: tool, ToolInput: map[string]any{"file_path": "a.txt", "command": "ls"}})
+	}
+	for _, input := range inputs {
 		if labels := artifactBindingLabels(context.Background(), input, map[string]string{}, ""); labels != nil {
 			t.Fatalf("%s %s got binding labels %v", input.HookEventName, input.ToolName, labels)
 		}
@@ -48,10 +51,22 @@ func TestArtifactBindingOnlyForPreToolUseBash(t *testing.T) {
 }
 
 func TestArtifactBindingUnmodeledCommandTools(t *testing.T) {
-	for _, tool := range []string{"PowerShell", "Monitor", "mcp__shell__run"} {
-		t.Run(tool, func(t *testing.T) {
-			input := artifactHookInput("", "kubectl apply -f manifest.yaml")
-			input.ToolName = tool
+	cwd := t.TempDir()
+	artifactWriteFiles(t, cwd, map[string]string{"deploy.sh": "echo deploy\n"})
+	command := map[string]any{"command": "bash ./deploy.sh"}
+	for _, tc := range []struct {
+		tool  string
+		input map[string]any
+	}{
+		{"PowerShell", command}, {"Monitor", command}, {"mcp__shell__run", command},
+		{"bash", command}, // tool names match exactly
+		{"mcp__ide__executeCode", map[string]any{"code": "import os; os.system('./deploy.sh')"}},
+		{"mcp__terminal__run", map[string]any{"cmd": "./deploy.sh"}},
+		{"read_file", map[string]any{"filePath": "deploy.sh"}}, // Copilot's tools are not on the Claude Code list
+		{"AnUnknownTool", map[string]any{}},
+	} {
+		t.Run(tc.tool, func(t *testing.T) {
+			input := HookInput{HookEventName: "PreToolUse", ToolName: tc.tool, CWD: cwd, ToolInput: tc.input}
 			labels := artifactBindingLabels(context.Background(), input, map[string]string{}, "")
 			if len(labels) != 2 || labels["artifact.binding"] != "unbound" || labels["artifact.unbound_reason"] != "unrecognized" {
 				t.Fatalf("labels = %v, want only unbound with reason unrecognized", labels)
@@ -72,7 +87,7 @@ func TestArtifactBindingUnmodeledCommandTools(t *testing.T) {
 
 func TestArtifactBindingUnboundReasons(t *testing.T) {
 	cwd := t.TempDir()
-	artifactWriteFiles(t, cwd, map[string]string{"build.mk": "all:\n", "sub/keep": ""})
+	artifactWriteFiles(t, cwd, map[string]string{"build.mk": "all:\n", "sub/keep": "", "deploy.sh": "echo deploy\n"})
 	many := make([]string, artifactMaxFiles+1)
 	for i := range many {
 		many[i] = fmt.Sprintf("f%02d.txt", i)
@@ -96,6 +111,8 @@ func TestArtifactBindingUnboundReasons(t *testing.T) {
 		{"too many files", "cat " + strings.Join(many, " "), "", "limit"},
 		{"file too large", "cat big.bin", "", "limit"},
 		{"kube context unknown", "kubectl get pods", "", "kube-context"},
+		{"interpreter name matches exactly", "Bash ./deploy.sh", "", "unrecognized"},
+		{"kubectl name matches exactly", "KUBECTL get pods", "", "unrecognized"},
 		{"build family", "make -f build.mk", "build", "implicit-inputs"},
 		{"other reasons win over family", "go test ./... | tee out", "test", "shell-syntax"},
 	}
@@ -111,6 +128,44 @@ func TestArtifactBindingUnboundReasons(t *testing.T) {
 			}
 			if tc.want == "implicit-inputs" && labels["artifact.digest"] == "" {
 				t.Fatalf("implicit-inputs still binds the files it names: %v", labels)
+			}
+		})
+	}
+}
+
+func TestArtifactBindingAdmitsOnlyPlainBytes(t *testing.T) {
+	cwd := t.TempDir()
+	artifactWriteFiles(t, cwd, map[string]string{"manifest.yaml": "kind: ConfigMap\n", "other.yaml": "kind: ConfigMap\n",
+		"settings.txt": "a=b\n", "kc.yaml": "current-context: dev\ncontexts:\n- name: dev\n  context:\n    namespace: dev-ns\n"})
+	env := map[string]string{"KUBECONFIG": filepath.Join(cwd, "kc.yaml")}
+	labels := func(command string) map[string]string {
+		return artifactBindingLabels(context.Background(), artifactHookInput(cwd, command), env, "unknown")
+	}
+	if got := labels("kubectl apply -f manifest.yaml --context dev"); got["artifact.binding"] != "bound" {
+		t.Fatalf("control: labels = %v, want bound", got)
+	}
+	cases := map[string]string{
+		"CR after -f":              "kubectl apply -f manifest.yaml\r --context dev",
+		"CR after -fX":             "kubectl apply -fmanifest.yaml\r -n dev-ns",
+		"CR after --filename=":     "kubectl apply --filename=manifest.yaml\r -n dev-ns",
+		"CR in a comma list":       "kubectl apply -f other.yaml,manifest.yaml\r -n dev-ns",
+		"CR after --from-file":     "kubectl create configmap cm --from-file=k=settings.txt\r -n dev-ns",
+		"CR after --from-env-file": "kubectl create configmap cm --from-env-file=settings.txt\r -n dev-ns",
+	}
+	// The allowed set is spelled out here, not read from the code under test.
+	const plain = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 \t-_./,:=@+"
+	for b := range 256 {
+		if strings.IndexByte(plain, byte(b)) < 0 {
+			cases[fmt.Sprintf("byte=0x%02x", b)] = "kubectl apply -f manifest.yaml" + string([]byte{byte(b)}) + " --context dev"
+		}
+	}
+	for _, r := range []rune{0xa0, 0x2028, 0xfeff} {
+		cases[fmt.Sprintf("U+%04X", r)] = "kubectl apply -f manifest.yaml" + string(r) + " --context dev"
+	}
+	for name, command := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := labels(command); len(got) != 2 || got["artifact.binding"] != "unbound" || got["artifact.unbound_reason"] != "shell-syntax" {
+				t.Fatalf("labels = %v, want only unbound with reason shell-syntax", got)
 			}
 		})
 	}
