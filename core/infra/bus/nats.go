@@ -540,6 +540,9 @@ func (b *NatsBus) SubscribeWithContext(subject, queue string, handler func(conte
 	if err != nil {
 		return fmt.Errorf("subscribe %s: %w", subject, err)
 	}
+	if err := b.flushSubscribe(sub, subject); err != nil {
+		return err
+	}
 	if !b.trackSub(sub) {
 		_ = sub.Drain()
 		return errors.New("bus is draining")
@@ -880,6 +883,9 @@ func (b *NatsBus) subscribe(subject, queue string, handler func(*pb.BusPacket) e
 		if err != nil {
 			return nil, fmt.Errorf("subscribe %s: %w", subject, err)
 		}
+		if err := b.flushSubscribe(sub, subject); err != nil {
+			return nil, err
+		}
 		if !b.trackSub(sub) {
 			_ = sub.Drain()
 			return nil, errors.New("bus is draining")
@@ -890,11 +896,26 @@ func (b *NatsBus) subscribe(subject, queue string, handler func(*pb.BusPacket) e
 	if err != nil {
 		return nil, fmt.Errorf("subscribe %s: %w", subject, err)
 	}
+	if err := b.flushSubscribe(sub, subject); err != nil {
+		return nil, err
+	}
 	if !b.trackSub(sub) {
 		_ = sub.Drain()
 		return nil, errors.New("bus is draining")
 	}
 	return sub, nil
+}
+
+// flushSubscribe returns once the server has registered a core-NATS
+// subscription. Subscribe only queues it in the client buffer, so a publish from
+// another connection could arrive first and be dropped. On error the
+// subscription is drained and must not be used.
+func (b *NatsBus) flushSubscribe(sub *nats.Subscription, subject string) error {
+	if err := b.nc.Flush(); err != nil {
+		_ = sub.Drain()
+		return fmt.Errorf("subscribe %s flush: %w", subject, err)
+	}
+	return nil
 }
 
 // trackSub appends a subscription unless shutdown has started.
