@@ -10,6 +10,7 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -35,6 +36,7 @@ type Block struct {
 	Line   int
 	Kinds  []string
 	Attrs  map[string]string
+	Expect []string
 	Lines  []Line
 	Header []string
 	Rows   []Row
@@ -47,7 +49,7 @@ const minReasonLen = 10
 
 var (
 	markerRe   = regexp.MustCompile(`^\s*<!--\s*docscheck:(.*?)-->\s*$`)
-	tokenRe    = regexp.MustCompile(`([A-Za-z_]+)="([^"]*)"|(\S+)`)
+	tokenRe    = regexp.MustCompile(`([A-Za-z_]+)=(?:"([^"]*)"|'([^']*)')|(\S+)`)
 	fenceRe    = regexp.MustCompile("^\\s{0,3}(`{3,}|~{3,})")
 	sepRe      = regexp.MustCompile(`^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?$`)
 	knownKinds = map[string]bool{"env": true, "endpoints": true, "command": true, "skip": true}
@@ -129,14 +131,19 @@ func parseMarker(body string, b *Block) error {
 	for _, tok := range tokenRe.FindAllStringSubmatch(body, -1) {
 		switch {
 		case tok[1] != "":
-			if tok[1] != "reason" {
+			value := tok[2] + tok[3]
+			switch tok[1] {
+			case "expect":
+				b.Expect = append(b.Expect, value)
+			case "reason", "exit":
+				b.Attrs[tok[1]] = strings.TrimSpace(value)
+			default:
 				return fmt.Errorf("unknown docscheck key %q", tok[1])
 			}
-			b.Attrs[tok[1]] = strings.TrimSpace(tok[2])
-		case knownKinds[tok[3]]:
-			b.Kinds = append(b.Kinds, tok[3])
+		case knownKinds[tok[4]]:
+			b.Kinds = append(b.Kinds, tok[4])
 		default:
-			return fmt.Errorf("unknown docscheck kind %q", tok[3])
+			return fmt.Errorf("unknown docscheck kind %q", tok[4])
 		}
 	}
 	if len(b.Kinds) == 0 {
@@ -145,7 +152,44 @@ func parseMarker(body string, b *Block) error {
 	if b.Has("skip") && utf8.RuneCountInString(b.Attrs["reason"]) < minReasonLen {
 		return errors.New(`skip needs reason="..." of at least 10 characters`)
 	}
+	if b.Has("command") {
+		exit, err := strconv.Atoi(b.Attrs["exit"])
+		if err != nil || exit < 0 || exit > 255 {
+			return errors.New(`command needs exit="0" through exit="255"`)
+		}
+	} else if _, ok := b.Attrs["exit"]; ok || len(b.Expect) > 0 {
+		return errors.New("exit and expect need command")
+	}
 	return nil
+}
+
+// UnmarkedCommandBlocks returns shell fence openings not marked command or skip.
+func UnmarkedCommandBlocks(path string) ([]Line, error) {
+	blocks, err := Parse(path)
+	if err != nil {
+		return nil, err
+	}
+	marked := make(map[int]bool)
+	for _, b := range blocks {
+		marked[b.Line-1] = b.Has("command") || b.Has("skip")
+	}
+	lines, err := readLines(path)
+	if err != nil {
+		return nil, err
+	}
+	var unmarked []Line
+	for i := 0; i < len(lines); i++ {
+		fence := fenceRe.FindStringSubmatch(lines[i])
+		if fence == nil {
+			continue
+		}
+		info := strings.Fields(strings.TrimPrefix(strings.TrimSpace(lines[i]), fence[1]))
+		if len(info) > 0 && slices.Contains([]string{"bash", "sh", "shell"}, info[0]) && !marked[i+1] {
+			unmarked = append(unmarked, Line{No: i + 1, Text: lines[i]})
+		}
+		i, _ = fenceEnd(lines, i, fence[1])
+	}
+	return unmarked, nil
 }
 
 // fenceEnd returns the index of the line closing the fence opened at start,

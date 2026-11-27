@@ -190,7 +190,9 @@ func roleGatePermissionChecks(t *testing.T, f *roleGateFixture) {
 }
 
 // roleGateSubmit sends SubmitJob through the gRPC auth interceptor: admin, user and
-// operator submit; secops is refused and publishes nothing.
+// operator keys and JWTs submit; secops is refused and publishes nothing. Every
+// session token is refused as Unauthenticated before the role gate, since the gRPC
+// API takes no user session, and publishes nothing.
 func roleGateSubmit(t *testing.T, f *roleGateFixture) {
 	intercept := apiKeyUnaryInterceptor(f.s.auth)
 	submit := func(ctx context.Context, req any) (any, error) {
@@ -201,14 +203,16 @@ func roleGateSubmit(t *testing.T, f *roleGateFixture) {
 		ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(c.header, c.value))
 		published := f.published()
 		_, err := intercept(ctx, &pb.SubmitJobRequest{Prompt: "roleGate", Topic: "job.default", OrgId: "default"}, &grpc.UnaryServerInfo{}, submit)
-		if !strings.HasPrefix(cred, "secops/") {
+		session := strings.HasSuffix(cred, "/session")
+		if !session && !strings.HasPrefix(cred, "secops/") {
 			if err != nil {
 				t.Errorf("SubmitJob = %v, want success", err)
 			}
 			return
 		}
-		if status.Code(err) != codes.PermissionDenied || f.published() != published {
-			t.Errorf("SubmitJob = %v with %d published, want PermissionDenied with none", err, f.published()-published)
+		want := map[bool]codes.Code{true: codes.Unauthenticated, false: codes.PermissionDenied}[session]
+		if status.Code(err) != want || f.published() != published {
+			t.Errorf("SubmitJob = %v with %d published, want %s with none", err, f.published()-published, want)
 		}
 	})
 }

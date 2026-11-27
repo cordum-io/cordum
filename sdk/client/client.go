@@ -330,7 +330,7 @@ func (c *Client) doJSONWithHeaders(ctx context.Context, method, path string, bod
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		// Limit error body read to 1 MiB to prevent OOM from oversized responses.

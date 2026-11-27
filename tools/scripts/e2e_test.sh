@@ -359,6 +359,48 @@ to_cordumctl_path() {
   printf '%s' "${path}"
 }
 
+check_grpc_mtls() {
+  local service="$1" port="$2" with_cert="$3" success="$4" python_bin=python3
+  command -v "${python_bin}" >/dev/null 2>&1 || python_bin=python
+  if "${python_bin}" - "${service}" "${port}" "${with_cert}" \
+    "$(to_cordumctl_path "${TLS_CA}")" "$(to_cordumctl_path "${CLIENT_CERT}")" \
+    "$(to_cordumctl_path "${CLIENT_KEY}")" "${success}" <<'PY_MTLS'
+import socket
+import ssl
+import sys
+
+service, port, with_cert, ca, cert, key, success = sys.argv[1:]
+with_cert = with_cert == "true"
+case = "with client certificate" if with_cert else "without client certificate"
+try:
+    ctx = ssl.create_default_context(cafile=ca)
+    ctx.set_alpn_protocols(["h2"])
+    if with_cert:
+        ctx.load_cert_chain(cert, key)
+    try:
+        with socket.create_connection(("localhost", int(port)), timeout=5) as raw:
+            with ctx.wrap_socket(raw, server_hostname="localhost") as conn:
+                conn.sendall(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
+                data = conn.recv(1)
+    except ssl.SSLError as err:
+        if with_cert or not any(reason in str(err).upper() for reason in ("CERTIFICATE_REQUIRED", "BAD_CERTIFICATE")):
+            raise
+        data = b""
+    if bool(data) != with_cert:
+        raise RuntimeError("unexpected server response")
+except Exception as err:
+    print(f"MTLS FAIL {service} {case}: {err}")
+    sys.exit(1)
+print(success)
+PY_MTLS
+  then
+    PASS=$((PASS+1))
+  else
+    red "MTLS FAIL ${service} client-certificate=${with_cert}: probe failed"
+    FAIL=$((FAIL+1))
+  fi
+}
+
 run_cordumctl_pack_list() {
   cordumctl_common_flags
   cordumctl_cmd pack list "${CORDUMCTL_FLAGS[@]}"
@@ -419,6 +461,15 @@ wait_for_hello_topic_registry() {
 # Start hello-worker for Phase 4 job dispatch (topic=job.hello-pack.echo)
 # ---------------------------------------------------------------------------
 wait_for_ready
+if [[ -f "${TLS_CA}" && -f "${CLIENT_CERT}" && -f "${CLIENT_KEY}" ]]; then
+  check_grpc_mtls safety-kernel 50051 false "MTLS PASS safety-kernel without client certificate: refused"
+  check_grpc_mtls safety-kernel 50051 true "MTLS PASS safety-kernel with client certificate: served"
+  check_grpc_mtls context-engine 50400 false "MTLS PASS context-engine without client certificate: refused"
+  check_grpc_mtls context-engine 50400 true "MTLS PASS context-engine with client certificate: served"
+else
+  echo "MTLS SKIP no client certificates"
+  SKIP=$((SKIP+4))
+fi
 bold "[setup] Starting hello-worker for job.hello-pack.echo"
 yellow "  hello-worker bus schemes: nats=${BUS_SCHEME}, redis=${REDIS_SCHEME}"
 HELLO_LOG="${CORDUM_E2E_HELLO_WORKER_LOG:-${TMPDIR:-/tmp}/cordum-hello-worker-e2e.log}"

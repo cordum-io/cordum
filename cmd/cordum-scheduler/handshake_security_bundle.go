@@ -5,13 +5,16 @@ import (
 	"crypto/ecdsa"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/auth/servicetoken"
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
@@ -202,6 +205,18 @@ func newHandshakeAuditSink(bus audit.AuditBus) (scheduler.AuditSink, audit.Audit
 	if missingSecurityValue(reflect.ValueOf(bus)) {
 		return nil, nil, errors.New("scheduler: handshake audit bus required")
 	}
+	priv, kid, err := policysign.LoadPrivateKeyFromEnv()
+	var mint func() (string, error)
+	switch {
+	case errors.Is(err, policysign.ErrSigningKeyNotConfigured):
+		slog.Warn("scheduler audit publisher service token not configured", "variable", policysign.EnvSigningKey)
+	case err != nil:
+		return nil, nil, err
+	default:
+		mint = func() (string, error) {
+			return servicetoken.MintService(priv, kid, servicetoken.IdentityScheduler, time.Now())
+		}
+	}
 	fallback, err := audit.NewExporterFromEnv()
 	if err != nil {
 		return nil, nil, fmt.Errorf("scheduler: handshake audit exporter: %w", err)
@@ -209,7 +224,7 @@ func newHandshakeAuditSink(bus audit.AuditBus) (scheduler.AuditSink, audit.Audit
 	if fallback == nil {
 		fallback = audit.NewBufferedExporter(audit.NewDiscardExporter())
 	}
-	sender := audit.NewNATSAuditPublisher(bus, fallback)
+	sender := audit.NewNATSAuditPublisher(bus, fallback, audit.WithServiceToken(mint))
 	return &auditSenderSink{sender: sender}, sender, nil
 }
 

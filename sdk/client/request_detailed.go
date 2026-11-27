@@ -231,7 +231,7 @@ func buildDetailedResponse(resp *http.Response) (*RequestDetailedResponse, error
 	if resp == nil {
 		return nil, nil
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
@@ -260,11 +260,19 @@ func isRetryableMethod(method string, headers map[string]string) bool {
 	case http.MethodGet, http.MethodHead, http.MethodPut, http.MethodDelete, http.MethodOptions:
 		return true
 	case http.MethodPost:
-		for key := range headers {
-			if strings.EqualFold(key, "Idempotency-Key") {
-				return true
+		// Header.Set runs once per entry, so with several case variants the sent
+		// value is whichever is set last: every one must carry a non-blank key.
+		hasKey := false
+		for key, value := range headers {
+			if !strings.EqualFold(key, "Idempotency-Key") {
+				continue
 			}
+			if strings.TrimSpace(value) == "" {
+				return false
+			}
+			hasKey = true
 		}
+		return hasKey
 	}
 	return false
 }

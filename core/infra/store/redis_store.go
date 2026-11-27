@@ -115,6 +115,15 @@ func redisStoreDataTTL() time.Duration {
 	return ttl
 }
 
+// redisOpContext keeps the caller's deadline, whether longer or shorter than
+// defaultRedisOpTimeout, and applies that default only to a context without one.
+func redisOpContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, defaultRedisOpTimeout) // #nosec G118 -- cancel returned to caller
+}
+
 func (s *RedisStore) PutContext(ctx context.Context, key string, data []byte) error {
 	if s == nil || s.client == nil {
 		return errors.New("redis_store: client not initialized")
@@ -125,7 +134,7 @@ func (s *RedisStore) PutContext(ctx context.Context, key string, data []byte) er
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("redis_store: PutContext: %w", err)
 	}
-	cctx, cancel := context.WithTimeout(ctx, defaultRedisOpTimeout)
+	cctx, cancel := redisOpContext(ctx)
 	defer cancel()
 	if err := s.client.Set(cctx, key, data, s.dataTTL).Err(); err != nil {
 		return fmt.Errorf("redis_store: put context %s: %w", key, err)
@@ -143,7 +152,7 @@ func (s *RedisStore) DeleteContext(ctx context.Context, key string) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("redis_store: DeleteContext: %w", err)
 	}
-	cctx, cancel := context.WithTimeout(ctx, defaultRedisOpTimeout)
+	cctx, cancel := redisOpContext(ctx)
 	defer cancel()
 	if err := s.client.Del(cctx, key).Err(); err != nil {
 		return fmt.Errorf("redis_store: delete context %s: %w", key, err)
@@ -161,7 +170,7 @@ func (s *RedisStore) GetContext(ctx context.Context, key string) ([]byte, error)
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("redis_store: GetContext: %w", err)
 	}
-	cctx, cancel := context.WithTimeout(ctx, defaultRedisOpTimeout)
+	cctx, cancel := redisOpContext(ctx)
 	defer cancel()
 	val, err := s.client.Get(cctx, key).Bytes()
 	if err != nil {
@@ -180,7 +189,7 @@ func (s *RedisStore) PutResult(ctx context.Context, key string, data []byte) err
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("redis_store: PutResult: %w", err)
 	}
-	cctx, cancel := context.WithTimeout(ctx, defaultRedisOpTimeout)
+	cctx, cancel := redisOpContext(ctx)
 	defer cancel()
 	if err := s.client.Set(cctx, key, data, s.dataTTL).Err(); err != nil {
 		return fmt.Errorf("redis_store: put result %s: %w", key, err)
@@ -198,7 +207,7 @@ func (s *RedisStore) GetResult(ctx context.Context, key string) ([]byte, error) 
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("redis_store: GetResult: %w", err)
 	}
-	cctx, cancel := context.WithTimeout(ctx, defaultRedisOpTimeout)
+	cctx, cancel := redisOpContext(ctx)
 	defer cancel()
 	val, err := s.client.Get(cctx, key).Bytes()
 	if err != nil {
