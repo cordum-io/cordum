@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Bus: on core NATS, `Subscribe` and `SubscribeWithContext` return after the server has
+  registered the subscription, as `QueueRespond` does, and a failed flush fails the call
+  (task-1d6b97fc).
+
 - Python SDK: `cordum_sdk._generated` is regenerated from the OpenAPI spec. It gains
   the `create_edge_calibration_report` and `get_edge_calibration_report` endpoints and
   `EdgeSession.assurance_state`. `make openapi-validate`, which the OpenAPI Validate
