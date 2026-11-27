@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -337,27 +338,8 @@ func (s *MCPApprovalStore) EnqueueMCPApproval(ctx context.Context, req *MCPAppro
 	// for this id (pendingMCPPair is its re-ask path). Pre-approval lookup
 	// walks the same members and picks an APPROVED+unconsumed record via CAS.
 	idxKey := mcpApprovalIndexKey(rec.Tenant, rec.AgentID, rec.ToolName, rec.ArgsHash)
-	var reused *MCPApprovalRecord
-	write := func(tx *redis.Tx) error {
-		reused = nil
-		if rec.EdgeApprovalRef == "" {
-			var err error
-			if reused, err = pendingApprovalFor(ctx, tx, idxKey, rec); err != nil || reused != nil {
-				return err
-			}
-		}
-		_, err := tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-			pipe.Set(ctx, mcpApprovalKey(rec.ID), raw, ttl+time.Minute)
-			pipe.SAdd(ctx, idxKey, rec.ID)
-			pipe.Expire(ctx, idxKey, ttl+time.Minute)
-			return nil
-		})
-		return err
-	}
-	if err := redisutil.Retry(ctx, s.client, write,
-		redisutil.WithKeys(idxKey),
-		redisutil.WithMaxAttempts(mcpCASMaxAttempts),
-	); err != nil {
+	reused, err := s.enqueueMCPRecord(ctx, idxKey, rec, raw, ttl+time.Minute)
+	if err != nil {
 		return nil, fmt.Errorf("mcp approval: write redis: %w", err)
 	}
 	if reused != nil {
@@ -368,29 +350,86 @@ func (s *MCPApprovalStore) EnqueueMCPApproval(ctx context.Context, req *MCPAppro
 	return rec, nil
 }
 
+// enqueueMCPRecord writes the TTL-bound record before the index-only CAS.
+// Dedupe reads use the routed client, never the WATCH's node connection.
+func (s *MCPApprovalStore) enqueueMCPRecord(ctx context.Context, idxKey string, rec *MCPApprovalRecord, raw []byte, ttl time.Duration) (*MCPApprovalRecord, error) {
+	written := false
+	for range mcpCASMaxAttempts {
+		var ids []string
+		if rec.EdgeApprovalRef == "" {
+			prior, seen, err := pendingApprovalFor(ctx, s.client, idxKey, rec)
+			if err != nil {
+				return nil, err
+			}
+			if prior != nil {
+				if written {
+					if err := s.client.Del(ctx, mcpApprovalKey(rec.ID)).Err(); err != nil {
+						return nil, err
+					}
+				}
+				return prior, nil
+			}
+			ids = seen
+		}
+		if !written {
+			if err := s.client.Set(ctx, mcpApprovalKey(rec.ID), raw, ttl).Err(); err != nil {
+				return nil, err
+			}
+			written = true
+		}
+		err := s.addMCPApprovalIndex(ctx, idxKey, rec, ids, ttl)
+		if !errors.Is(err, redis.TxFailedErr) {
+			return nil, err
+		}
+	}
+	return nil, redisutil.ErrMaxAttemptsExceeded
+}
+
+func (s *MCPApprovalStore) addMCPApprovalIndex(ctx context.Context, idxKey string, rec *MCPApprovalRecord, ids []string, ttl time.Duration) error {
+	return s.client.Watch(ctx, func(tx *redis.Tx) error {
+		if rec.EdgeApprovalRef == "" {
+			current, err := tx.SMembers(ctx, idxKey).Result()
+			if err != nil {
+				return err
+			}
+			for _, id := range current {
+				if !slices.Contains(ids, id) {
+					return redis.TxFailedErr
+				}
+			}
+		}
+		_, err := tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			pipe.SAdd(ctx, idxKey, rec.ID)
+			pipe.Expire(ctx, idxKey, ttl)
+			return nil
+		})
+		return err
+	}, idxKey)
+}
+
 // pendingApprovalFor returns the PENDING, unexpired, non-Edge record in the
-// index at idxKey that rec's requester enqueued, or nil. It reads on the
-// transaction's own connection, the one holding the WATCH.
-func pendingApprovalFor(ctx context.Context, tx *redis.Tx, idxKey string, rec *MCPApprovalRecord) (*MCPApprovalRecord, error) {
-	ids, err := tx.SMembers(ctx, idxKey).Result()
+// index at idxKey that rec's requester enqueued, or nil, and the ids read.
+// All reads are routed independently, outside any transaction.
+func pendingApprovalFor(ctx context.Context, client redis.Cmdable, idxKey string, rec *MCPApprovalRecord) (*MCPApprovalRecord, []string, error) {
+	ids, err := client.SMembers(ctx, idxKey).Result()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, id := range ids {
-		raw, err := tx.Get(ctx, mcpApprovalKey(id)).Bytes()
+		raw, err := client.Get(ctx, mcpApprovalKey(id)).Bytes()
 		if errors.Is(err, redis.Nil) {
 			continue
 		}
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		var prior MCPApprovalRecord
 		if json.Unmarshal(raw, &prior) == nil && prior.Status == model.ApprovalStatusPending &&
 			prior.ExpiresAt > rec.CreatedAt && prior.EdgeApprovalRef == "" && prior.Requester == rec.Requester {
-			return &prior, nil
+			return &prior, ids, nil
 		}
 	}
-	return nil, nil
+	return nil, ids, nil
 }
 
 // Get returns the approval record by ID. Returns (nil, redis.Nil) when

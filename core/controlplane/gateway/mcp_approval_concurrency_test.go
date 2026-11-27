@@ -418,6 +418,22 @@ func TestEnqueueMCPApprovalConcurrentDuplicatesShareOnePending(t *testing.T) {
 			t.Errorf("enqueuer %d got %q; want the shared record %q", i, id, members[0])
 		}
 	}
+	keys, err := seed.client.Keys(ctx, mcpApprovalKeyPrefix+"*").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var records []string
+	for _, key := range keys {
+		if !strings.HasPrefix(key, mcpApprovalIndexKeyPrefix) {
+			records = append(records, key)
+		}
+	}
+	if len(records) != 1 || records[0] != mcpApprovalKey(members[0]) {
+		t.Fatalf("record keys = %v; want only indexed record %s", records, members[0])
+	}
+	if rec, err := seed.Get(ctx, members[0]); err != nil || rec.Status != model.ApprovalStatusPending {
+		t.Fatalf("indexed record = %v, %v; want PENDING", rec, err)
+	}
 }
 
 // TestEnqueueMCPApprovalReusesOnlyTheCallersLivePendingRecord: a pending record
