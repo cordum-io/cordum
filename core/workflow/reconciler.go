@@ -170,6 +170,11 @@ func (r *reconciler) reconcileRun(ctx context.Context, runID string) {
 	}
 	switch run.Status {
 	case RunStatusSucceeded, RunStatusFailed, RunStatusDenied, RunStatusCancelled, RunStatusTimedOut:
+		// tick lists only active statuses, so a failed index update left this
+		// terminal run listed under one.
+		if err := r.workflowStore.RepairRunIndexes(ctx, run); err != nil {
+			slog.Warn("reconciler: repairing terminal run indexes failed", "run_id", runID, "error", err)
+		}
 		return
 	}
 
