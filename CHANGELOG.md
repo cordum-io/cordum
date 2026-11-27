@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- API keys: creating a key from a user session or a static API key, and revoking a key, now work
+  on Redis Cluster instead of failing with `CROSSSLOT`. The key record is written before its lookup
+  indexes, and a revoked key stays refused even if its prefix index entry outlives the revoke.
+
 - `cordumctl governance backfill-decisions` and `tail` now work on Redis Cluster: the helper takes
   the cluster seeds from `REDIS_CLUSTER_ADDRESSES`, as the services do, scans every master for
   jobs, and writes each decision record before its indexes. Artifact `Put` now works on Redis

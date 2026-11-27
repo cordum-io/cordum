@@ -155,9 +155,16 @@ func (s *RedisKeyStore) Create(ctx context.Context, key *ManagedKey, rawSecret s
 	if err != nil {
 		return err
 	}
-	pipe := s.client.TxPipeline()
-	queueKeyWrites(ctx, pipe, key, data)
-	if _, err := pipe.Exec(ctx); err != nil {
+	// One key per command, so Create works on Redis Cluster. The prefix entry
+	// goes last: a key authenticates only once its record exists and its tenant
+	// lists it. No rollback: no caller gets the secret of a failed create.
+	if err := s.client.Set(ctx, keyRecordKey(key.ID), data, 0).Err(); err != nil {
+		return fmt.Errorf("create key: %w", err)
+	}
+	if err := s.client.SAdd(ctx, keyTenantKey(key.Tenant), key.ID).Err(); err != nil {
+		return fmt.Errorf("create key: %w", err)
+	}
+	if err := s.client.SAdd(ctx, keyPrefixIndexKey(key.Prefix), key.ID).Err(); err != nil {
 		return fmt.Errorf("create key: %w", err)
 	}
 	return nil
@@ -241,6 +248,7 @@ func queueKeyWrites(ctx context.Context, pipe redis.Pipeliner, key *ManagedKey, 
 // Revoke marks a key as revoked and removes its lookup index so it stops working immediately.
 // The tenant parameter ensures callers can only revoke keys belonging to their own tenant.
 func (s *RedisKeyStore) Revoke(ctx context.Context, id string, tenant string) error {
+	var prefix string
 	txFunc := func(tx *redis.Tx) error {
 		raw, err := tx.Get(ctx, keyRecordKey(id)).Result()
 		if err == redis.Nil {
@@ -264,11 +272,9 @@ func (s *RedisKeyStore) Revoke(ctx context.Context, id string, tenant string) er
 			return fmt.Errorf("marshal key: %w", err)
 		}
 
+		prefix = mk.Prefix
 		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 			pipe.Set(ctx, keyRecordKey(id), data, 0)
-			if mk.Prefix != "" {
-				pipe.SRem(ctx, keyPrefixIndexKey(mk.Prefix), id)
-			}
 			return nil
 		})
 		return err
@@ -285,6 +291,14 @@ func (s *RedisKeyStore) Revoke(ctx context.Context, id string, tenant string) er
 			return fmt.Errorf("revoke key: too many retries")
 		}
 		return fmt.Errorf("revoke key: %w", err)
+	}
+	// The prefix entry is another slot, so it goes after the CAS. The revoked
+	// record is authoritative (ValidateKey refuses it), so a failed SREM is
+	// logged, not returned: the revoke took effect and must still be audited.
+	if prefix != "" {
+		if err := s.client.SRem(ctx, keyPrefixIndexKey(prefix), id).Err(); err != nil {
+			slog.WarnContext(ctx, "revoke key: remove prefix index entry", "key_id", id, "error", err)
+		}
 	}
 	return nil
 }
