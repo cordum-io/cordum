@@ -5,6 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+- Decision-log index keys expire with `CORDUM_DECISION_LOG_TTL_SECONDS`, refreshed
+  at each append, in the store and the cordumctl governance helper (task-f6a68292).
+
 ### Fixed
 
 - Packs: `POST /api/v1/packs/install` no longer ends without a response when the
