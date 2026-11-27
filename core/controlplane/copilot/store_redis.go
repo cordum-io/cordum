@@ -173,6 +173,7 @@ func (s *RedisStore) AppendMessage(ctx context.Context, tenant, userID, sessionI
 		if s.maxMessages > 0 && len(stored.Session.Messages) > s.maxMessages {
 			// keep the most recent messages
 			stored.Session.Messages = stored.Session.Messages[len(stored.Session.Messages)-s.maxMessages:]
+			stored.Session.Title = deriveTitleFromMessages(stored.Session.Messages)
 		}
 		stored.Session.UpdatedAt = msg.Timestamp
 		if strings.TrimSpace(stored.Session.Title) == "" {
@@ -228,6 +229,15 @@ func deriveTitle(content string) string {
 		t = t[:80]
 	}
 	return t
+}
+
+func deriveTitleFromMessages(messages []CopilotMessage) string {
+	for _, msg := range messages {
+		if title := deriveTitle(msg.Content); title != "" {
+			return title
+		}
+	}
+	return ""
 }
 
 func sessionTTLFromEnv() time.Duration {

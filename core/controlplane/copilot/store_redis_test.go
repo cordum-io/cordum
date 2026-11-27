@@ -134,6 +134,73 @@ func TestRedisStore_MessageCapKeepsNewest(t *testing.T) {
 	}
 }
 
+func TestRedisStore_MessageCapTitleFromRetainedMessage(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		contents []string
+		want     string
+	}{
+		{"oldest text", []string{"first", "   ", "third", "fourth"}, "third"},
+		{"all blank", []string{"first", "   ", "\t", "\n"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStore(t)
+			s.maxMessages = 3
+			ctx := context.Background()
+			for i, content := range tc.contents {
+				if err := s.AppendMessage(ctx, "tenant-a", "alice", "sess-cap", CopilotMessage{
+					ID: fmt.Sprintf("m-%d", i), Role: "tool", Content: content,
+				}); err != nil {
+					t.Fatalf("AppendMessage #%d: %v", i, err)
+				}
+				got, err := s.GetSession(ctx, "tenant-a", "sess-cap", "alice")
+				if err != nil {
+					t.Fatalf("GetSession: %v", err)
+				}
+				want := "first"
+				if i == 3 {
+					want = tc.want
+				}
+				if got.Title != want {
+					t.Fatalf("title after m-%d = %q, want %q", i, got.Title, want)
+				}
+			}
+		})
+	}
+}
+
+func TestRedisStore_UnderCapKeepsStoredTitle(t *testing.T) {
+	s := newTestStore(t)
+	s.maxMessages = 3
+	ctx := context.Background()
+	stored := storedSession{
+		Tenant: "tenant-a",
+		Session: CopilotSession{
+			ID: "sess-title", UserID: "alice", Title: "kept title",
+			Messages: []CopilotMessage{{ID: "m-0", Role: "tool", Content: "first"}},
+		},
+	}
+	encoded, err := json.Marshal(stored)
+	if err != nil {
+		t.Fatalf("marshal session: %v", err)
+	}
+	if err := s.client.Set(ctx, sessionKey("tenant-a", "sess-title"), encoded, 0).Err(); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	if err := s.AppendMessage(ctx, "tenant-a", "alice", "sess-title", CopilotMessage{
+		ID: "m-1", Role: "tool", Content: "second",
+	}); err != nil {
+		t.Fatalf("AppendMessage: %v", err)
+	}
+	got, err := s.GetSession(ctx, "tenant-a", "sess-title", "alice")
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if got.Title != "kept title" {
+		t.Fatalf("title = %q, want kept title", got.Title)
+	}
+}
+
 func TestRedisStore_AppendMessage_SamePrincipalSucceeds(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
