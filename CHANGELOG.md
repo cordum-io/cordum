@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Copilot and telemetry: copilot transcript appends and telemetry snapshot saves now work on Redis Cluster instead of failing with `CROSSSLOT`. Each session or snapshot is written before the index or history entry that lists it.
+
 - MCP: tool approvals now queue on Redis Cluster instead of failing with `CROSSSLOT` and returning `approval_store_unavailable`.
 
 - Gateway: key, user, RBAC and legal-hold stores now use the shared cluster-aware Redis client.
