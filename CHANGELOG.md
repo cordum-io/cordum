@@ -82,6 +82,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 - cordumctl: the `CORDUM_ADMIN_PASSWORD` that `cordumctl up --dev` generates meets the gateway's password policy, so the admin user is seeded, and a `.env` definition that Compose reads as empty, such as `CORDUM_API_KEY="" # note` or `export CORDUM_API_KEY=`, is filled in place (task-d23dda77).
 
+- cordumctl: concurrent `cordumctl up --dev` runs in one directory keep the `.env` credentials and `cordum.yaml` the first run wrote. A run that finds another in progress stops and asks you to retry, `.env` is replaced as a whole, and an existing `cordum.yaml` is never overwritten (task-bbb80101).
+
 - Gateway: a job submit, over HTTP or gRPC, now stores its policy audit entry
   before the job is dispatched. While that entry cannot be stored, the submit
   fails with 503 (gRPC `Unavailable`), the job is set FAILED, and it is not

@@ -513,10 +513,47 @@ func ensureDevCLIContext(composeDir, tenant string) (string, bool, error) {
 		HookCommand:         detectInitBinary("", "cordum-hook"),
 		ApprovalWaitTimeout: "30s",
 	}
-	if err := writeInitYAML(cfgPath, scaffold); err != nil {
+	created, err := publishDevCLIContext(composeDir, cfgPath, scaffold)
+	if err != nil {
 		return "", false, err
 	}
-	return cfgPath, true, nil
+	return cfgPath, created, nil
+}
+
+// publishDevCLIContext stages the scaffold privately and hard-links it to cfgPath: a cordum.yaml that appeared
+// after the caller's check keeps its bytes (created=false), and no filesystem fallback overwrites anything.
+func publishDevCLIContext(composeDir, cfgPath string, s edgeInitScaffold) (created bool, err error) {
+	stageDir, err := os.MkdirTemp(composeDir, ".cordum-yaml-stage-*")
+	if err != nil {
+		return false, fmt.Errorf("create staging dir in %s: %w", composeDir, err)
+	}
+	defer func() {
+		if rmErr := os.RemoveAll(stageDir); rmErr != nil && err == nil {
+			created, err = false, fmt.Errorf("remove %s: %w", stageDir, rmErr)
+		}
+	}()
+	stagePath := filepath.Clean(filepath.Join(stageDir, "cordum.yaml"))
+	if err := writeInitYAML(stagePath, s); err != nil {
+		return false, err
+	}
+	f, err := os.OpenFile(stagePath, os.O_WRONLY, 0)
+	if err != nil {
+		return false, fmt.Errorf("open %s: %w", stagePath, err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return false, fmt.Errorf("sync %s: %w", stagePath, err)
+	}
+	if err := f.Close(); err != nil {
+		return false, fmt.Errorf("close %s: %w", stagePath, err)
+	}
+	if err := os.Link(stagePath, cfgPath); err != nil {
+		if os.IsExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("publish %s: %w", cfgPath, err)
+	}
+	return true, nil
 }
 
 func devPrincipal() string {
