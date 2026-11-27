@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- `cordumctl governance backfill-decisions` and `tail` now work on Redis Cluster: the helper takes
+  the cluster seeds from `REDIS_CLUSTER_ADDRESSES`, as the services do, scans every master for
+  jobs, and writes each decision record before its indexes. Artifact `Put` now works on Redis
+  Cluster too, and writes the artifact bytes before their metadata.
 - Gateway: key, user, RBAC and legal-hold stores now use the shared cluster-aware Redis client.
 
 - Workflows: saving and deleting workflows, and creating, updating and deleting workflow runs,
