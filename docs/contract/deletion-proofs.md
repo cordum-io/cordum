@@ -25,7 +25,7 @@ A failing proof stays an open finding under the review process, not a weaker tes
 | --- | --- | --- | --- |
 | DI-E01 | no cleanup path | none | none: No session-state cleanup API; Save replaces a file and removes its temporary file only |
 | DI-E02 | no cleanup path | none | none: Process termination and garbage collection; no explicit secure erasure routine |
-| DI-E03 | retention cleanup | `core/edge/agentd/cache.go` (`SafeAllowCache.Get`); `core/edge/agentd/cache.go` (`SafeAllowCache.evictOverflowLocked`) | `TestRetentionProofDIE03` |
+| DI-E03 | retention cleanup | `core/edge/agentd/cache.go` (`SafeAllowCache.Get`); `core/edge/agentd/cache.go` (`SafeAllowCache.evictOverflowLocked`) | open finding PR2-08-F7 |
 | DI-E04 | no cleanup path | none | none: Garbage collection of scan buffers; scanner does not delete source configuration files |
 | DI-C01 | retention cleanup | `core/edge/sweeper.go` (`SessionSweeper.SweepOnce`); `core/edge/store_redis.go` (`RedisStore.DeleteSession`) | `TestRetentionProofDIC01` |
 | DI-C02 | no cleanup path | none | none: No code path deletes approval records at reviewed_at; transitions rewrite records and drop some index refs, while status/principal index refs remain; ApprovalSweeper.SweepOnce only marks past-deadline pending approvals expired; DeleteSession skips approval keys |
