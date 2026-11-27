@@ -335,8 +335,8 @@ func TestDefaultEntitlements_EveryNumericFieldAllowsPositiveUsage(t *testing.T) 
 				err := c.fn(probe, ent)
 				// MaxPolicyBundles is a GATED feature, not a resource limit: the
 				// Community (free) tier is intentionally capped at 0 custom policy
-				// bundles (monetization gate). 0 here is DELIBERATE — enforced by the
-				// loader's policyBundleLimit() Community branch AND CheckPolicyBundleLimit
+				// bundles (monetization gate). 0 here is DELIBERATE — enforced by
+				// CheckPolicyBundleLimit when a bundle is added
 				// — not the "accidental unset = deny" misconfiguration this invariant
 				// guards against. So for this one combo positive usage MUST be denied.
 				if plan == PlanCommunity && c.name == "CheckPolicyBundleLimit" {

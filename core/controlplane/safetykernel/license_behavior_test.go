@@ -39,8 +39,8 @@ var kernelLicenseStates = []kernelLicenseState{
 	{"missing", licensing.PlanCommunity, "active"},
 }
 
-// kernelLicenseEnterpriseStates are the states whose bundle, invariants and
-// velocity cells this file covers.
+// kernelLicenseEnterpriseStates are the states whose velocity cells this file
+// covers.
 var kernelLicenseEnterpriseStates = []string{"valid", "warning", "grace"}
 
 // The base policy allows by default and holds four velocity rules, the deny
@@ -215,13 +215,13 @@ func TestLicenseBehaviorKernel_BaseDeny(t *testing.T) {
 }
 
 func TestLicenseBehaviorKernel_CustomBundleDeny(t *testing.T) {
-	forKernelLicenseStates(t, kernelLicenseEnterpriseStates, func(t *testing.T, f *kernelLicenseFixture) {
+	forKernelLicenseStates(t, nil, func(t *testing.T, f *kernelLicenseFixture) {
 		f.requireDeny(t, "job.license.custom", "license-custom-deny", nil)
 	})
 }
 
 func TestLicenseBehaviorKernel_InvariantsDeny(t *testing.T) {
-	forKernelLicenseStates(t, kernelLicenseEnterpriseStates, func(t *testing.T, f *kernelLicenseFixture) {
+	forKernelLicenseStates(t, nil, func(t *testing.T, f *kernelLicenseFixture) {
 		f.requireDeny(t, "job.license.invariant", "license-invariant-deny", nil)
 	})
 }

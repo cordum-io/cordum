@@ -66,9 +66,10 @@ var TierDefaults = map[Plan]TierDefaultSpec{
 		MaxBodyBytes:       Unlimited,
 		MaxArtifactBytes:   Unlimited,
 		// Community = free/unlicensed tier: 0 custom policy bundles. 0 is an explicit
-		// cap (post-BUG-016 semantics); the loader skips custom bundles when
-		// bundleLimit==0. Keep 0 — Unlimited here guts free-tier gating (regressed in
-		// cdb31f93's BUG-016 sweep; see entitlements_test + tiers_test).
+		// cap (post-BUG-016 semantics) on adding a bundle: gateway
+		// handlePutPolicyBundle -> CheckPolicyBundleLimit. Keep 0 — Unlimited here
+		// guts free-tier gating (regressed in cdb31f93's BUG-016 sweep; see
+		// TestTierPolicyBundleLimits and TestHandlePutPolicyBundle_MaxPolicyBundlesLimit).
 		MaxPolicyBundles: 0,
 		ApprovalMode:     ApprovalModeSingle,
 		Audit:            true,

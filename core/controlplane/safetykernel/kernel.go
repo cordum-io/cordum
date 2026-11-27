@@ -1767,34 +1767,11 @@ func (l *policyLoader) ShouldWatch() bool {
 	return l.source != "" || l.configSvc != nil
 }
 
-func (l *policyLoader) currentEntitlements() licensing.Entitlements {
-	if l != nil && l.entitlements != nil {
-		return l.entitlements.Entitlements()
-	}
-	return licensing.DefaultEntitlements(licensing.PlanCommunity)
-}
-
 func (l *policyLoader) resolvedPlan() licensing.Plan {
 	if l != nil && l.entitlements != nil {
 		return l.entitlements.ResolvedPlan()
 	}
 	return licensing.PlanCommunity
-}
-
-func (l *policyLoader) policyBundleLimit() int64 {
-	entitlements := l.currentEntitlements()
-	if limit := entitlements.MaxPolicyBundles; limit != 0 {
-		return limit
-	}
-	if entitlements.Limits != nil {
-		if limit, ok := entitlements.Limits["max_policy_bundles"]; ok {
-			return limit
-		}
-	}
-	if l.resolvedPlan() == licensing.PlanCommunity {
-		return 0
-	}
-	return licensing.Unlimited
 }
 
 // Load reads the active policy state and returns:
@@ -1807,7 +1784,7 @@ func (l *policyLoader) policyBundleLimit() int64 {
 //     applyKernelInvariants when constructing the kernel-evaluation policy.
 //   - snapshot: "cfg:<sha256>" identifier folding in ALL bundles (including
 //     invariants) so any change invalidates downstream caches.
-//   - customBundleCount: tier-counted custom bundles for licensing telemetry.
+//   - customBundleCount: secops/-prefixed bundles loaded, for licensing telemetry.
 func (l *policyLoader) Load(ctx context.Context) (*config.SafetyPolicy, *config.SafetyPolicy, string, int, error) {
 	basePolicy, baseSnapshot, err := loadPolicyBundle(l.source)
 	if err != nil {
@@ -1830,7 +1807,7 @@ func (l *policyLoader) Load(ctx context.Context) (*config.SafetyPolicy, *config.
 //     authored. The snapshot hash still folds in invariants content so any
 //     change invalidates the cfg:<sha> cache key downstream.
 //   - snapshot: "cfg:<sha256>" identifier; "" when no bundles loaded.
-//   - customBundleCount: count of secops/-prefixed bundles within the tier.
+//   - customBundleCount: count of secops/-prefixed bundles loaded.
 //
 // Cross-bundle duplicate rule IDs resolve by INSTALL RECENCY: bundles merge in
 // installed_at-ascending order (bundle-id alphabetical as a deterministic
@@ -1870,10 +1847,9 @@ func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy,
 	var invariants *config.SafetyPolicy
 	var skippedCount int
 	customBundleCount := 0
-	bundleLimit := l.policyBundleLimit()
 	verifier := newBundleVerifier()
 	// PASS 1 (alphabetical sorted-key order, unchanged): verify, parse, hash,
-	// and account for tier-limit/malformed skips + invariants exactly as before,
+	// and account for malformed skips + invariants exactly as before,
 	// so the snapshot hash, customBundleCount, and skip counts stay a pure
 	// function of the content SET (independent of install order). Accepted
 	// non-invariant fragments are collected for the install-recency merge below.
@@ -1888,19 +1864,7 @@ func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy,
 			continue
 		}
 		isCustomBundle := strings.HasPrefix(key, customPolicyBundlePrefix)
-		if isCustomBundle && bundleLimit != licensing.Unlimited {
-			projected := int64(customBundleCount + 1)
-			if bundleLimit == 0 || projected > bundleLimit {
-				slog.Warn("safety-kernel: custom policy bundle skipped by tier limit",
-					"bundle_id", key,
-					"allowed", bundleLimit,
-					"plan", l.resolvedPlan(),
-					"upgrade_url", licensing.DefaultUpgradeURL,
-				)
-				skippedCount++
-				continue
-			}
-		}
+		// max_policy_bundles caps adding bundles (gateway handlePutPolicyBundle), not loading them.
 		if err := verifyBundleSignature(key, []byte(content), fragmentSignature(rawBundles[key]), verifier.mode, verifier.store); err != nil {
 			return nil, nil, "", customBundleCount, err
 		}

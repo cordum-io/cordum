@@ -77,11 +77,10 @@ func TestDefaultEntitlementsByTier(t *testing.T) {
 // TestTierPolicyBundleLimits locks the per-tier MaxPolicyBundles values so a
 // future TierDefaults edit (e.g. a BUG-016-style "set every numeric field to
 // Unlimited" sweep) cannot silently re-regress free-tier custom-policy-bundle
-// gating. The Community (free) tier MUST be 0 (gated — the loader's
-// policyBundleLimit Community branch + CheckPolicyBundleLimit both deny on 0);
+// gating. The Community (free) tier MUST be 0 (gated — CheckPolicyBundleLimit
+// enforces it when a bundle is added, TestHandlePutPolicyBundle_MaxPolicyBundlesLimit);
 // paid tiers are Unlimited. Asserts the EXACT value, not merely non-Unlimited.
-// Regression context: cdb31f93 flipped Community 0 -> Unlimited (see
-// entitlements_test TestPolicyLoaderSkipsCustomBundlesWhenTierLimitExceeded).
+// Regression context: cdb31f93 flipped Community 0 -> Unlimited.
 func TestTierPolicyBundleLimits(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
