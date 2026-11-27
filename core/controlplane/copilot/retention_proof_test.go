@@ -81,3 +81,35 @@ func requireNoTrace(t *testing.T, client redis.UniversalClient, marker string) {
 		t.Fatalf("trace of %q remains after cleanup: %v", marker, hits)
 	}
 }
+
+// TestRetentionProofDIC47MessageCap drives the COPILOT_SESSION_MAX_MESSAGES cap:
+// once the marker message is trimmed, no trace of it may remain while the
+// session key itself still exists.
+func TestRetentionProofDIC47MessageCap(t *testing.T) {
+	t.Setenv("COPILOT_SESSION_MAX_MESSAGES", "2")
+	_, client, marker := newProofRedis(t)
+	ctx := context.Background()
+	s := NewRedisStore(client)
+	const tenant, user, session = "tenant-cap", "user-cap", "session-cap"
+	key := "copilot:session:" + tenant + ":" + session
+	if err := s.AppendMessage(ctx, tenant, user, session, CopilotMessage{Role: "user", Content: marker + " first prompt"}); err != nil {
+		t.Fatalf("AppendMessage(first): %v", err)
+	}
+	requireTrace(t, client, marker, key)
+	for _, content := range []string{"second prompt", "third prompt"} {
+		if err := s.AppendMessage(ctx, tenant, user, session, CopilotMessage{Role: "user", Content: content}); err != nil {
+			t.Fatalf("AppendMessage(%s): %v", content, err)
+		}
+	}
+	got, err := s.GetSession(ctx, tenant, session, user)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if len(got.Messages) != 2 || got.Messages[0].Content != "second prompt" {
+		t.Fatalf("cap kept %d messages (%+v); want the 2 newest", len(got.Messages), got.Messages)
+	}
+	if n, err := client.Exists(ctx, key).Result(); err != nil || n != 1 {
+		t.Fatalf("Exists(%s) = %d, %v; want the session still stored", key, n, err)
+	}
+	requireNoTrace(t, client, marker)
+}
