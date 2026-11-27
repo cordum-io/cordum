@@ -576,6 +576,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Safety kernel: when one of its action-layer gates denies a request, the kernel
+  publishes an `actiongate.denied` audit event on `sys.audit.export`, which the
+  gateway's audit consumer exports to SIEM and appends to the audit chain. The kernel
+  uses the shadow-evaluation audit publisher for these events, with its service token
+  when a key is configured. Without NATS, or where that publisher cannot be built
+  (production without a usable `CORDUM_AUDIT_SIGNING_KEY`, or a malformed key), the
+  kernel logs these decisions only, warns once at startup, and still starts
+  (task-ad7391d0).
+
 - Managed API keys: the scope resource `mcpgateway` covers the gateway's MCP endpoints.
   `GET /mcp/sse` and `GET /mcp/status` need `mcpgateway:read`, and `POST /mcp/message`
   needs `mcpgateway:write`. `mcpgateway:read`, `mcpgateway:write` and `mcpgateway:*`
