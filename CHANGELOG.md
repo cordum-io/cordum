@@ -73,6 +73,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   and say the change was applied when their audit entry cannot be stored
   (task-b6fd4b98).
 
+- Gateway: admin changes to users, passwords, API keys, config, schemas, pools,
+  topics, worker credentials and agent identities now answer 500 when their policy
+  audit entry cannot be stored. An API key whose entry cannot be stored is revoked
+  and its secret is not returned, and a worker credential whose entry cannot be
+  stored is not issued or rotated; the other changes are already applied, and the
+  500 says so. Revoking a key, credential or agent identity, deleting a user, pool or
+  topic, draining a pool and removing a topic from a pool still complete and log the
+  lost entry (task-05f37291).
+
 - Installer: `tools/scripts/install.ps1` runs under Windows PowerShell 5.1, as its
   `#Requires -Version 5.1` line says. Native stderr from a successful gpg call no
   longer stops it, the version-floor write no longer needs .NET Core, and CI runs the
