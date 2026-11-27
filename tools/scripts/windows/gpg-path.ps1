@@ -19,10 +19,32 @@
 #   Resolve-CordumGpgCommand  -- locate gpg by -GpgExe / PATH (throws if missing)
 #   Get-CordumGpgPathMode      -- 'posix' for MSYS/Cygwin gpg, 'native' otherwise
 #   ConvertTo-CordumGpgArgPath -- normalise a single filesystem argument
+#   Invoke-CordumNative        -- run a native command, stderr merged into the output
 
 #Requires -Version 5.1
 
 Set-StrictMode -Version 2.0
+
+# Windows PowerShell 5.1 turns redirected native stderr into a terminating
+# NativeCommandError under $ErrorActionPreference = 'Stop', even when the
+# command exits 0; pwsh 7 does not. Run the call under 'Continue' and return
+# stdout and stderr as strings. The verdict stays the caller's $LASTEXITCODE
+# check: it is reset to $null first, so a command that never ran fails a
+# `-ne 0` check instead of inheriting an earlier 0.
+function Invoke-CordumNative {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [string[]]$ArgumentList = @()
+    )
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $global:LASTEXITCODE = $null
+        & $FilePath @ArgumentList 2>&1 | ForEach-Object { "$_" }
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+}
 
 function Resolve-CordumGpgCommand {
     [CmdletBinding()]

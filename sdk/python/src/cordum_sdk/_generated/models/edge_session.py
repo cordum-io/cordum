@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 from typing import List
 
@@ -8,6 +8,7 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
+from ..models.edge_session_assurance_state import EdgeSessionAssuranceState
 from ..models.edge_session_mode import EdgeSessionMode
 from ..models.edge_session_policy_mode import EdgeSessionPolicyMode
 from ..models.edge_session_principal_type import EdgeSessionPrincipalType
@@ -57,6 +58,10 @@ class EdgeSession:
         policy_snapshot (Union[Unset, str]): Redacted policy snapshot identifier or summary; raw secrets are redacted
             before persistence/response.
         enforcement_layers (Union[Unset, EdgeEnforcementLayers]):
+        assurance_state (Union[Unset, EdgeSessionAssuranceState]): Server-derived on each response from the policy mode,
+            the enforcement layers, the session status and the agent heartbeat. `stale` means the session has ended or has
+            no heartbeat within the session heartbeat TTL. Combinations that match no rule report `unsupported`. `executor-
+            enforced` is reserved and not reported. Managed-settings status and binary integrity are not inputs yet.
         ended_at (Union[None, Unset, datetime.datetime]):
         labels (Union[Unset, EdgeLabels]):
     """
@@ -84,15 +89,12 @@ class EdgeSession:
     job_id: Union[Unset, str] = UNSET
     policy_snapshot: Union[Unset, str] = UNSET
     enforcement_layers: Union[Unset, "EdgeEnforcementLayers"] = UNSET
+    assurance_state: Union[Unset, EdgeSessionAssuranceState] = UNSET
     ended_at: Union[None, Unset, datetime.datetime] = UNSET
     labels: Union[Unset, "EdgeLabels"] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.edge_labels import EdgeLabels
-        from ..models.edge_enforcement_layers import EdgeEnforcementLayers
-        from ..models.edge_risk_summary import EdgeRiskSummary
-
         session_id = self.session_id
 
         tenant_id = self.tenant_id
@@ -140,6 +142,10 @@ class EdgeSession:
         enforcement_layers: Union[Unset, Dict[str, Any]] = UNSET
         if not isinstance(self.enforcement_layers, Unset):
             enforcement_layers = self.enforcement_layers.to_dict()
+
+        assurance_state: Union[Unset, str] = UNSET
+        if not isinstance(self.assurance_state, Unset):
+            assurance_state = self.assurance_state.value
 
         ended_at: Union[None, Unset, str]
         if isinstance(self.ended_at, Unset):
@@ -196,6 +202,8 @@ class EdgeSession:
             field_dict["policy_snapshot"] = policy_snapshot
         if enforcement_layers is not UNSET:
             field_dict["enforcement_layers"] = enforcement_layers
+        if assurance_state is not UNSET:
+            field_dict["assurance_state"] = assurance_state
         if ended_at is not UNSET:
             field_dict["ended_at"] = ended_at
         if labels is not UNSET:
@@ -261,6 +269,13 @@ class EdgeSession:
         else:
             enforcement_layers = EdgeEnforcementLayers.from_dict(_enforcement_layers)
 
+        _assurance_state = d.pop("assurance_state", UNSET)
+        assurance_state: Union[Unset, EdgeSessionAssuranceState]
+        if isinstance(_assurance_state, Unset):
+            assurance_state = UNSET
+        else:
+            assurance_state = EdgeSessionAssuranceState(_assurance_state)
+
         def _parse_ended_at(data: object) -> Union[None, Unset, datetime.datetime]:
             if data is None:
                 return data
@@ -309,6 +324,7 @@ class EdgeSession:
             job_id=job_id,
             policy_snapshot=policy_snapshot,
             enforcement_layers=enforcement_layers,
+            assurance_state=assurance_state,
             ended_at=ended_at,
             labels=labels,
         )

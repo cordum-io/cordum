@@ -197,13 +197,7 @@ func (s *server) handleCreateVelocityRule(w http.ResponseWriter, r *http.Request
 		return
 	}
 	bundles[bundleID] = bundle
-	doc.Data[packs.PolicyConfigKey] = bundles
-	if err := s.configSvc.Set(r.Context(), doc); err != nil {
-		writeInternalError(w, r, "velocity rule operation", err)
-		return
-	}
-	s.publishConfigChanged(packs.PolicyConfigScope, packs.PolicyConfigID)
-	_ = s.appendPolicyAudit(r.Context(), policybundles.PolicyAuditEntry{
+	if err := s.commitPolicyBundles(r.Context(), doc.Revision, bundles, policybundles.PolicyAuditEntry{
 		Action:       "create",
 		ResourceType: "velocity_rule",
 		ResourceID:   def.ID,
@@ -211,7 +205,11 @@ func (s *server) handleCreateVelocityRule(w http.ResponseWriter, r *http.Request
 		ActorID:      policybundles.PolicyActorID(r),
 		Role:         policybundles.PolicyRole(r),
 		Message:      "create velocity rule " + def.ID,
-	})
+	}); err != nil {
+		writePolicyCommitError(w, r, "velocity rule operation", err)
+		return
+	}
+	s.publishConfigChanged(packs.PolicyConfigScope, packs.PolicyConfigID)
 
 	resp, err := velocityRuleFromBundle(bundleID, bundle)
 	if err != nil {
@@ -333,13 +331,7 @@ func (s *server) handlePutVelocityRule(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bundles[bundleID] = bundle
-	doc.Data[packs.PolicyConfigKey] = bundles
-	if err := s.configSvc.Set(r.Context(), doc); err != nil {
-		writeInternalError(w, r, "velocity rule operation", err)
-		return
-	}
-	s.publishConfigChanged(packs.PolicyConfigScope, packs.PolicyConfigID)
-	_ = s.appendPolicyAudit(r.Context(), policybundles.PolicyAuditEntry{
+	if err := s.commitPolicyBundles(r.Context(), doc.Revision, bundles, policybundles.PolicyAuditEntry{
 		Action:       "edit",
 		ResourceType: "velocity_rule",
 		ResourceID:   def.ID,
@@ -347,7 +339,11 @@ func (s *server) handlePutVelocityRule(w http.ResponseWriter, r *http.Request) {
 		ActorID:      policybundles.PolicyActorID(r),
 		Role:         policybundles.PolicyRole(r),
 		Message:      "edit velocity rule " + def.ID,
-	})
+	}); err != nil {
+		writePolicyCommitError(w, r, "velocity rule operation", err)
+		return
+	}
+	s.publishConfigChanged(packs.PolicyConfigScope, packs.PolicyConfigID)
 
 	resp, err := velocityRuleFromBundle(bundleID, bundle)
 	if err != nil {
@@ -384,13 +380,9 @@ func (s *server) handleDeleteVelocityRule(w http.ResponseWriter, r *http.Request
 	}
 
 	delete(bundles, bundleID)
-	doc.Data[packs.PolicyConfigKey] = bundles
-	if err := s.configSvc.Set(r.Context(), doc); err != nil {
-		writeInternalError(w, r, "velocity rule operation", err)
-		return
-	}
-	s.publishConfigChanged(packs.PolicyConfigScope, packs.PolicyConfigID)
-	_ = s.appendPolicyAudit(r.Context(), policybundles.PolicyAuditEntry{
+	// Removing a rule loosens a limit, so the delete is stored with its audit
+	// entry or not at all, like every other policy write.
+	if err := s.commitPolicyBundles(r.Context(), doc.Revision, bundles, policybundles.PolicyAuditEntry{
 		Action:       "delete",
 		ResourceType: "velocity_rule",
 		ResourceID:   ruleID,
@@ -398,7 +390,11 @@ func (s *server) handleDeleteVelocityRule(w http.ResponseWriter, r *http.Request
 		ActorID:      policybundles.PolicyActorID(r),
 		Role:         policybundles.PolicyRole(r),
 		Message:      "delete velocity rule " + ruleID,
-	})
+	}); err != nil {
+		writePolicyCommitError(w, r, "velocity rule operation", err)
+		return
+	}
+	s.publishConfigChanged(packs.PolicyConfigScope, packs.PolicyConfigID)
 	w.WriteHeader(http.StatusNoContent)
 }
 

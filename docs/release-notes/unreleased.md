@@ -6,6 +6,20 @@ these entries into a versioned release note and reset this file.
 
 ## Security
 
+- **edge: the fix for GHSA-j33m-mr27-pmw3 is already released in v1.3.2.**
+  `main` has the same fix (#603): Edge evaluate drops client-supplied labels
+  with a `_` prefix before policy evaluation. See the
+  [v1.3.2 notes](v1.3.2.md). The next release from `main` includes it.
+
+- **policy inputs: the fixes of #605 are already released in v1.3.3.** `main`
+  has the same fixes (#605): the Safety Kernel selects the rules of a job
+  from its topic alone, Edge evaluate keeps `agent_id`, `secrets_present`,
+  the `mcp` alias names and the workflow and job scope labels server-owned,
+  and job submit sets `_source=pack` only for a credential with a worker
+  link. v1.3.3 also has the label handling that `main` has had since #590.
+  See the [v1.3.3 notes](v1.3.3.md). The next release from `main` includes
+  all of them.
+
 - **Authenticated worker trust is now a bound proof/session contract, not a
   self-reported capability (task-a4b71af7).** Current stable CAP Go, Python,
   and Node workers use one protobuf P-256 challenge/proof flow. Cordum binds
@@ -327,7 +341,7 @@ these entries into a versioned release note and reset this file.
   freshly-scaled fleet into a single flush per pool, and
   `defaultFlushDispatchForPool` reuses the existing
   `handleJobRequest` dispatch path — no forked dispatch logic. New
-  metric `cordum_scheduler_dispatch_flush_on_worker_online_total{pool}`
+  metric `cordum_scheduler_scheduler_dispatch_flush_on_worker_online_total{pool}`
   counts flushes that moved at least one pending job. See
   [`docs/scheduler.md`](../scheduler.md) §Flush-on-worker-online for
   the full design. Closes task-7a2514ae.

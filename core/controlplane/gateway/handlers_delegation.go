@@ -480,6 +480,7 @@ func delegationIssueStatus(err error) int {
 		errors.Is(err, delegation.ErrExpired),
 		errors.Is(err, delegation.ErrNotYetValid),
 		errors.Is(err, delegation.ErrAudienceMismatch),
+		errors.Is(err, delegation.ErrTenantMismatch),
 		errors.Is(err, delegation.ErrChainTooDeep),
 		errors.Is(err, delegation.ErrScopeExceeded),
 		errors.Is(err, delegation.ErrRevoked),

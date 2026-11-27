@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"path"
+	"regexp"
 	"strings"
 
 	"github.com/cordum/cordum/core/edge"
@@ -132,7 +133,9 @@ func validateManagedSettingsOptions(opts ManagedSettingsOptions) (string, string
 		if strings.TrimSpace(value) == "" {
 			return "", "", fmt.Errorf("%s required", name)
 		}
-		if containsSensitiveValue(value) {
+		// MCP URLs use their own credential check below: diagnostic redaction
+		// also hides opaque identifiers, which are valid tenant query values.
+		if name != "mcp_gateway_url" && containsSensitiveValue(value) {
 			return "", "", fmt.Errorf("%s contains sensitive value", name)
 		}
 	}
@@ -147,6 +150,10 @@ func validateManagedSettingsOptions(opts ManagedSettingsOptions) (string, string
 	return llmProxyBaseURL, mcpURL, nil
 }
 
+// Detect named credentials and recognizable token formats, not generic hex or
+// base64-shaped identifiers. Diagnostic redaction deliberately hides more.
+var managedMCPCredentialPattern = regexp.MustCompile(`(?i:Authorization\s*:\s*Bearer\s+[^\s,;}]+|(password|passwd|secret|token|api[_-]?key|credential)(\s*[=:]\s*|"\s*:\s*")[^\s",;}]+)|sk-[A-Za-z0-9_-]+|ghp_[A-Za-z0-9_]+|AKIA[0-9A-Z]{16}`)
+
 // A host-only Claude serverUrl allowlist pattern admits every path on that
 // host. Require a literal endpoint, while allowing private gateways and custom
 // ingress paths without DNS or SSRF checks on this local configuration input.
@@ -160,8 +167,13 @@ func validateManagedMCPGatewayURL(raw string) (string, error) {
 		return "", fmt.Errorf("mcp_gateway_url must not contain credentials; use headersHelper")
 	}
 	// Generate and both verify paths share this check, so a credential in the
-	// query string fails verification as it fails generation.
-	if containsSensitiveValue(raw) {
+	// query string fails verification as it fails generation. Decode first so
+	// URL-escaped names and tokens cannot bypass credential detection.
+	decoded, err := url.QueryUnescape(raw)
+	if err != nil {
+		return "", fmt.Errorf("mcp_gateway_url must have valid URL escaping")
+	}
+	if managedMCPCredentialPattern.MatchString(decoded) {
 		return "", fmt.Errorf("mcp_gateway_url must not contain credentials; use headersHelper")
 	}
 	if strings.Contains(raw, "*") || strings.Contains(u.Path, "*") || strings.Contains(raw, "${") {

@@ -354,7 +354,21 @@ func (s *Service) EnsureDefault(ctx context.Context) error {
 // SetWithRetry wraps Set with automatic retry on ErrRevisionConflict.
 // On conflict, it re-reads the document, calls applyFn to re-apply the
 // caller's changes to the fresh document, and retries up to maxAttempts times.
+// For system/default it deep-merges applyFn's result over the document it
+// read, so a key applyFn drops is kept; use ReplaceWithRetry to delete keys.
 func (s *Service) SetWithRetry(ctx context.Context, scope Scope, scopeID string, maxAttempts int, applyFn func(doc *Document) error) error {
+	return s.setWithRetry(ctx, scope, scopeID, maxAttempts, shouldPreserveSystemDefaultKeys(scope, scopeID), applyFn)
+}
+
+// ReplaceWithRetry is SetWithRetry without the system/default merge: the
+// stored document is exactly what applyFn leaves, so a key it deletes stays
+// deleted. applyFn must edit the document it is given in place and never
+// replace doc.Data with a subset, or every key it leaves out is deleted too.
+func (s *Service) ReplaceWithRetry(ctx context.Context, scope Scope, scopeID string, maxAttempts int, applyFn func(doc *Document) error) error {
+	return s.setWithRetry(ctx, scope, scopeID, maxAttempts, false, applyFn)
+}
+
+func (s *Service) setWithRetry(ctx context.Context, scope Scope, scopeID string, maxAttempts int, preserve bool, applyFn func(doc *Document) error) error {
 	for attempt := range maxAttempts {
 		doc, err := s.Get(ctx, scope, scopeID)
 		if err != nil {
@@ -371,7 +385,7 @@ func (s *Service) SetWithRetry(ctx context.Context, scope Scope, scopeID string,
 		if err := applyFn(doc); err != nil {
 			return fmt.Errorf("apply config changes: %w", err)
 		}
-		if shouldPreserveSystemDefaultKeys(scope, scopeID) {
+		if preserve {
 			// Protect the shared system/default document from partial overwrite
 			// patterns where a caller replaces doc.Data with a subset map.
 			doc.Data = mergePreservingKeys(originalData, doc.Data)

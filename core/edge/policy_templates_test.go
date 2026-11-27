@@ -120,7 +120,7 @@ func TestEdgeProductionPolicyFragmentParsesAndDocumentsEnterpriseBoundary(t *tes
 		"claude-code.require-approval-for-edits",
 		"claude-code.require-approval-for-vcs-push",
 		"claude-code.require-approval-for-network",
-		"claude-code.allow-safe-build-test",
+		"claude-code.require-approval-for-build-test",
 	} {
 		rule := findPolicyRuleByID(t, policy, ruleID)
 		if !reflect.DeepEqual(rule.Match.Topics, []string{EdgePolicyTopic}) {
@@ -128,18 +128,19 @@ func TestEdgeProductionPolicyFragmentParsesAndDocumentsEnterpriseBoundary(t *tes
 		}
 	}
 
-	allowRule := findPolicyRuleByID(t, policy, "claude-code.allow-safe-build-test")
-	if allowRule.Decision != "allow" {
-		t.Fatalf("production safe build/test decision = %q, want allow", allowRule.Decision)
+	// Build and test commands run repository-controlled code, so the
+	// production template requires approval for them instead of allowing them.
+	buildTestRule := findPolicyRuleByID(t, policy, "claude-code.require-approval-for-build-test")
+	if buildTestRule.Decision != "require_approval" {
+		t.Fatalf("production build/test decision = %q, want require_approval", buildTestRule.Decision)
 	}
-	if !allowRule.Constraints.Sandbox.Isolated {
-		t.Fatalf("production safe build/test rule must include an isolated sandbox constraint")
+	if got := buildTestRule.Match.Labels["command.class"]; got != "arbitrary_code" {
+		t.Fatalf("production build/test rule command.class = %q, want arbitrary_code", got)
 	}
-	if len(allowRule.Constraints.Toolchain.AllowedCommands) == 0 {
-		t.Fatalf("production safe build/test rule must constrain allowed commands")
-	}
-	if allowRule.Constraints.RedactionLevel != "strict" {
-		t.Fatalf("production safe build/test redaction_level = %q, want strict", allowRule.Constraints.RedactionLevel)
+	for _, rule := range policy.Rules {
+		if rule.ID == "claude-code.allow-safe-build-test" {
+			t.Fatalf("production policy must not allow build/test commands via %q", rule.ID)
+		}
 	}
 
 	readme := readEdgePackREADME(t)

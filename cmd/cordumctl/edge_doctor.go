@@ -66,7 +66,7 @@ type edgeDoctorJSONEnvelope struct {
 
 func runEdgeDoctorCmd(args []string, stdout, stderr io.Writer) int {
 	stdout, stderr = edgeDoctorWriters(stdout, stderr)
-	cfg, _, err := loadEdgeClaudeConfigForRun()
+	cfg, sources, err := loadEdgeClaudeConfigForRun()
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "cordumctl edge doctor: %s\n", err)
 		return 1
@@ -95,6 +95,15 @@ func runEdgeDoctorCmd(args []string, stdout, stderr io.Writer) int {
 	dashboardURL := fs.String("dashboard-url", cfg.DashboardURL, "dashboard URL to probe")
 	shadowCluster, shadowCI := registerEdgeDoctorShadowFlags(fs.FlagSet)
 	fs.ParseArgs(args)
+	autoCA := sources["cacert"] == sourceAutoDetected
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "cacert" {
+			autoCA = false
+		}
+	})
+	if autoCA && !isLocalhostHTTPSGateway(*fs.gateway) {
+		*fs.cacert = ""
+	}
 
 	if exit, handled := dispatchEdgeDoctorShadow(fs.FlagSet, shadowCluster, shadowCI, *jsonOutput, stdout, stderr); handled {
 		return exit

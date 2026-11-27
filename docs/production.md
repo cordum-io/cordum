@@ -42,7 +42,7 @@ The production overlay includes:
 - Configure API keys (`CORDUM_API_KEYS` or `CORDUM_API_KEY`); production mode fails without keys.
 - Configure user authentication (`CORDUM_USER_AUTH_ENABLED=true`) for dashboard access with proper user credentials.
 - Set a strong admin password (`CORDUM_ADMIN_PASSWORD`) for initial admin user creation.
-- Configure policy signature verification (`SAFETY_POLICY_PUBLIC_KEY` + signature); production mode fails without a public key.
+- Configure policy signing ([Policy Bundle Signing](deployment/policy-signing.md)): a gateway signing key (`CORDUM_POLICY_SIGNING_KEY`) whose public half is set as `CORDUM_POLICY_PUBLIC_KEY_<ID>` on the gateway and the safety kernel (`SAFETY_POLICY_PUBLIC_KEY` is the legacy single key). Unless `CORDUM_POLICY_STRICT` is set explicitly, production mode enforces policy signatures: the safety kernel refuses to start without a trusted public key and activates only policy whose signature verifies. The gateway also refuses unsigned packs unless `CORDUM_GATEWAY_PACK_STRICT=false`.
 - Keep gRPC reflection disabled (enable only for debugging with `CORDUM_GRPC_REFLECTION=1`).
 - HSTS headers are set automatically in production mode (`Strict-Transport-Security: max-age=63072000; includeSubDomains`).
 - NetworkPolicies to restrict lateral traffic (gateway <-> redis/nats/safety).
@@ -106,41 +106,41 @@ In production, metrics endpoints bind to loopback unless explicitly set with `GA
 
 ### Key Prometheus Metrics
 
-**Scheduler metrics** (namespace: `cordum`):
+**Scheduler metrics** (namespace: `cordum_scheduler`):
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `cordum_jobs_received_total` | Counter | Jobs received by topic |
-| `cordum_jobs_dispatched_total` | Counter | Jobs dispatched by topic |
-| `cordum_jobs_completed_total` | Counter | Jobs completed by topic and status |
-| `cordum_safety_denied_total` | Counter | Jobs denied by safety kernel |
-| `cordum_safety_unavailable_total` | Counter | Jobs deferred (safety kernel unreachable) |
-| `cordum_output_policy_quarantined_total` | Counter | Output policy quarantines |
-| `cordum_output_denials_total` | Counter | Output policy denials/quarantines |
-| `cordum_output_redactions_total` | Counter | Output policy redactions |
-| `cordum_scheduler_dispatch_latency_seconds` | Histogram | Receive-to-dispatch latency |
-| `cordum_output_check_latency_seconds` | Histogram | Output policy check latency by phase |
-| `cordum_scheduler_stale_jobs` | Gauge | Stale jobs by state (reconciler) |
-| `cordum_scheduler_active_goroutines` | Gauge | Active handler goroutines |
-| `cordum_scheduler_orphan_replayed_total` | Counter | Orphaned PENDING jobs replayed |
-| `cordum_saga_rollbacks_total` | Counter | Saga rollbacks triggered |
-| `cordum_saga_compensation_failed_total` | Counter | Compensation dispatch failures |
-| `cordum_saga_rollback_duration_seconds` | Histogram | Saga rollback duration |
+| `cordum_scheduler_jobs_received_total` | Counter | Jobs received by topic |
+| `cordum_scheduler_jobs_dispatched_total` | Counter | Jobs dispatched by topic |
+| `cordum_scheduler_jobs_completed_total` | Counter | Jobs completed by topic and status |
+| `cordum_scheduler_safety_denied_total` | Counter | Jobs denied by safety kernel |
+| `cordum_scheduler_safety_unavailable_total` | Counter | Jobs deferred (safety kernel unreachable) |
+| `cordum_scheduler_output_policy_quarantined_total` | Counter | Output policy quarantines |
+| `cordum_scheduler_output_denials_total` | Counter | Output policy denials/quarantines |
+| `cordum_scheduler_output_redactions_total` | Counter | Output policy redactions |
+| `cordum_scheduler_scheduler_dispatch_latency_seconds` | Histogram | Receive-to-dispatch latency |
+| `cordum_scheduler_output_check_latency_seconds` | Histogram | Output policy check latency by phase |
+| `cordum_scheduler_scheduler_stale_jobs` | Gauge | Stale jobs by state (reconciler) |
+| `cordum_scheduler_scheduler_active_goroutines` | Gauge | Active handler goroutines |
+| `cordum_scheduler_scheduler_orphan_replayed_total` | Counter | Orphaned PENDING jobs replayed |
+| `cordum_scheduler_saga_rollbacks_total` | Counter | Saga rollbacks triggered |
+| `cordum_scheduler_saga_compensation_failed_total` | Counter | Compensation dispatch failures |
+| `cordum_scheduler_saga_rollback_duration_seconds` | Histogram | Saga rollback duration |
 
-**Gateway metrics** (namespace: `cordum`):
-
-| Metric | Type | Description |
-|--------|------|-------------|
-| `cordum_http_requests_total` | Counter | HTTP requests by method/route/status |
-| `cordum_http_request_duration_seconds` | Histogram | Request latency by method/route |
-
-**Workflow metrics** (namespace: `cordum`):
+**Gateway metrics** (namespace: `cordum_api_gateway`):
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `cordum_workflows_started_total` | Counter | Workflows started by name |
-| `cordum_workflows_completed_total` | Counter | Workflows completed by name/status |
-| `cordum_workflow_duration_seconds` | Histogram | Workflow duration by name |
+| `cordum_api_gateway_http_requests_total` | Counter | HTTP requests by method/route/status |
+| `cordum_api_gateway_http_request_duration_seconds` | Histogram | Request latency by method/route |
+
+**Workflow metrics** (not exported: no Cordum process registers them):
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `cordum_workflows_started_total` | Counter | Not exported. Workflows started by name |
+| `cordum_workflows_completed_total` | Counter | Not exported. Workflows completed by name/status |
+| `cordum_workflow_duration_seconds` | Histogram | Not exported. Workflow duration by name |
 
 ### Centralized Logging
 
@@ -178,8 +178,8 @@ The production K8s overlay includes CronJobs for hourly backups:
 
 **Redis RDB backup** (`cordum-redis-backup`):
 ```bash
-# Runs hourly over TLS. For each of the 6 nodes, INFO replication picks out the
-# primaries, and each primary's RDB goes to its own file:
+# Runs hourly over TLS. CLUSTER NODES identifies primaries and their slot coverage;
+# each primary's RDB goes to its own file, with stable-topology and checksum guards:
 redis-cli --tls \
   --cacert /etc/cordum/tls/client/ca.crt \
   --cert /etc/cordum/tls/client/tls.crt \
@@ -203,6 +203,13 @@ nats --server tls://cordum-nats:4222 \
 Both CronJobs use a shared 20Gi PVC (`cordum-backups`) and retain 2 successful + 2 failed job histories.
 `cordum-backup-retention` deletes backups older than 7 days.
 
+Each completed backup also writes a SHA-256 manifest and prints its digest to the
+Job log. Retain the backup ID and that digest in an access-controlled, immutable
+catalog outside the backup PVC before the Job logs expire. A checksum stored only
+alongside the snapshots is not a trusted integrity baseline. The restore commands
+below require the catalog digest; older backups without one require a successful
+isolated restore and a separately retained integrity baseline before production deletion.
+
 ### Restore Procedures
 
 The Redis and NATS CronJobs snapshot independently, naming each backup by its own
@@ -222,6 +229,8 @@ volume. Do not select a backup from an interrupted run.
 set -eu
 redis_ts=20260213T120002Z   # Redis backup id; use it as ts in the Redis runbook
 nats_ts=20260213T120009Z    # independently selected NATS backup id
+# Copy from the trusted backup catalog, never calculate from the selected files now.
+nats_manifest_sha256=REPLACE_WITH_CATALOG_SHA256
 
 kubectl patch cronjob cordum-redis-backup -n cordum -p '{"spec":{"suspend":true}}'
 kubectl patch cronjob cordum-nats-backup -n cordum -p '{"spec":{"suspend":true}}'
@@ -241,13 +250,15 @@ kubectl wait -n cordum --for=delete pod --timeout=5m \
 ```
 
 **Redis**: follow [Restore From Backup](./redis-operations.md#restore-from-backup).
-Each backup file holds one primary's slots, so it goes back to the pod that serves
-those slots, and it is loaded onto that pod's volume while Redis is stopped. Do not
-copy an RDB into a running pod and restart it: with `appendonly yes`, Redis loads its
-AOF on startup and ignores `dump.rdb`, so nothing is restored.
+The backup is imported into the running cluster: a toolbox pod loads each file into
+a throwaway Redis, which sends every key to the primary that owns its slot under the
+current slot layout, and no Redis pod restarts. Do not copy an RDB into a running pod
+and restart it: with `appendonly yes`, Redis loads its AOF on startup and ignores
+`dump.rdb`, so nothing is restored.
 
 **NATS JetStream**: `nats stream restore` takes only the snapshot directory and
-refuses a stream that already exists, so remove each stream first. The NATS server
+refuses a stream that already exists. Verify both snapshots against the trusted
+manifest before removing either stream. The NATS server
 image has no `nats` CLI; run it from a nats-box pod. The pod carries the NATS backup
 CronJob's label, which the production NetworkPolicies admit to NATS's client port and
 DNS:
@@ -283,11 +294,19 @@ spec:
 EOF
 kubectl wait -n cordum --for=condition=Ready pod/cordum-nats-restore --timeout=120s
 
-kubectl exec -n cordum cordum-nats-restore -- env nats_ts="$nats_ts" sh -c '
+kubectl exec -n cordum cordum-nats-restore -- env nats_ts="$nats_ts" nats_manifest_sha256="$nats_manifest_sha256" sh -c '
   set -eu
+  cd "/backup/nats-$nats_ts"
+  test "${#nats_manifest_sha256}" -eq 64
+  case "$nats_manifest_sha256" in *[!0-9a-f]*) exit 1 ;; esac
+  printf "%s  SHA256SUMS\n" "$nats_manifest_sha256" | sha256sum -c -
+  test "$(wc -l < SHA256SUMS)" -eq 4
+  sha256sum -c SHA256SUMS
   for s in CORDUM_SYS CORDUM_JOBS; do
-    test -s "/backup/nats-$nats_ts/$s.snapshot/backup.json"
-    test -s "/backup/nats-$nats_ts/$s.snapshot/stream.tar.s2"
+    for file in backup.json stream.tar.s2; do
+      test -s "$s.snapshot/$file"
+      grep -Fx "$(sha256sum "$s.snapshot/$file")" SHA256SUMS >/dev/null
+    done
   done
   for s in CORDUM_SYS CORDUM_JOBS; do
     if nats stream info $s >/dev/null 2>&1; then nats stream rm --force $s; fi
@@ -352,12 +371,14 @@ Document a restore drill and run it at least quarterly.
 ```bash
 # 1. Update image tags in kustomization.yaml
 # 2. Apply to staging first
+kubectl delete job cordum-redis-cluster-init -n cordum-staging --ignore-not-found --cascade=foreground --wait --timeout=5m
 kubectl apply -k deploy/k8s/production -n cordum-staging
 
 # 3. Run smoke test
 bash ./tools/scripts/platform_smoke.sh
 
 # 4. Apply to production
+kubectl delete job cordum-redis-cluster-init -n cordum --ignore-not-found --cascade=foreground --wait --timeout=5m
 kubectl apply -k deploy/k8s/production -n cordum
 
 # 5. Monitor rollout
@@ -365,6 +386,10 @@ kubectl rollout status deployment/cordum-api-gateway -n cordum
 kubectl rollout status deployment/cordum-scheduler -n cordum
 kubectl rollout status deployment/cordum-safety-kernel -n cordum
 ```
+
+The retained Redis init Job has an immutable pod template. Delete it before
+applying an overlay that changes its command or labels; the recreated Job checks
+for an already healthy cluster and exits without reinitializing it.
 
 ### Rollback
 
@@ -415,7 +440,7 @@ cluster once the pods are ready. Re-run it if you replace the cluster.
 
 ### Runbook: Safety Kernel Unreachable
 
-**Symptoms**: `cordum_safety_unavailable_total` rising, jobs stuck in PENDING.
+**Symptoms**: `cordum_scheduler_safety_unavailable_total` rising, jobs stuck in PENDING.
 
 **Impact**: Policy checks cannot be evaluated. In the default closed modes, the Gateway rejects new submits (HTTP 403, gRPC `PermissionDenied`) and the scheduler requeues accepted jobs without publishing them (backoff up to `safetyThrottleDelay = 5s`). Operator-selected open modes change this: Gateway `POLICY_CHECK_FAIL_MODE=open` accepts submits, and scheduler `scheduler.input_fail_mode=open` admits only topics listed in `scheduler.input_fail_open_scope`. For Edge, the Gateway's evaluate returns deny for enforce and enterprise-strict sessions, and allow marked degraded for observe sessions. See the [failure and partition behavior contract](contract/failure-behavior.md).
 
@@ -537,7 +562,7 @@ cluster once the pods are ready. Re-run it if you replace the cluster.
 
 3. **Message delivery guarantees**: NATS JetStream provides at-least-once delivery for job requests. Messages published during a partition may be lost if not yet replicated. The reconciler (`cordum:reconciler:default`) will detect stuck jobs and re-queue them.
 
-4. **Manual replay**: For orphaned PENDING jobs, the scheduler's pending replayer periodically scans and re-dispatches them. Monitor `cordum_scheduler_orphan_replayed_total` to confirm replay is working.
+4. **Manual replay**: For orphaned PENDING jobs, the scheduler's pending replayer periodically scans and re-dispatches them. Monitor `cordum_scheduler_scheduler_orphan_replayed_total` to confirm replay is working.
 
 5. **Recovery**: If a NATS node is permanently lost:
    ```bash
@@ -579,20 +604,9 @@ cluster once the pods are ready. Re-run it if you replace the cluster.
      https://cordum.example.com/api/v1/dlq/JOB_ID
    ```
 
-4. **Alerting threshold**: Set an alert when DLQ depth exceeds your SLO:
-   ```yaml
-   - alert: CordumDLQDepthHigh
-     expr: cordum_dlq_entries > 100
-     for: 10m
-     labels:
-       severity: warning
-     annotations:
-       summary: DLQ depth exceeds 100 entries
-   ```
-
 ### Runbook: High Latency
 
-**Symptoms**: `cordum_scheduler_dispatch_latency_seconds` p99 > 1s, `cordum_http_request_duration_seconds` p99 > 500ms, dashboard feels slow.
+**Symptoms**: `cordum_scheduler_scheduler_dispatch_latency_seconds` p99 > 1s, `cordum_api_gateway_http_request_duration_seconds` p99 > 500ms, dashboard feels slow.
 
 **Impact**: Job throughput degrades, workflow completion times increase, user experience suffers.
 
@@ -601,16 +615,16 @@ cluster once the pods are ready. Re-run it if you replace the cluster.
 1. **Identify the bottleneck**:
    ```promql
    # Gateway latency by route
-   histogram_quantile(0.99, rate(cordum_http_request_duration_seconds_bucket[5m]))
+   histogram_quantile(0.99, rate(cordum_api_gateway_http_request_duration_seconds_bucket[5m]))
 
    # Scheduler dispatch latency
-   histogram_quantile(0.99, rate(cordum_scheduler_dispatch_latency_seconds_bucket[5m]))
+   histogram_quantile(0.99, rate(cordum_scheduler_scheduler_dispatch_latency_seconds_bucket[5m]))
 
    # Output policy check latency
-   histogram_quantile(0.99, rate(cordum_output_check_latency_seconds_bucket[5m]))
+   histogram_quantile(0.99, rate(cordum_scheduler_output_check_latency_seconds_bucket[5m]))
 
    # Safety kernel evaluation (should be < 5ms p99)
-   histogram_quantile(0.99, rate(cordum_output_eval_duration_seconds_bucket[5m]))
+   histogram_quantile(0.99, rate(cordum_scheduler_output_eval_duration_seconds_bucket[5m]))
    ```
 
 2. **Redis latency**: Check Redis slowlog:
@@ -633,11 +647,11 @@ cluster once the pods are ready. Re-run it if you replace the cluster.
 5. **Quick wins**:
    - Increase gateway/scheduler replicas manually if HPA is too slow
    - Check for hot topics (single topic consuming all scheduler capacity)
-   - Verify job lock contention: `cordum_scheduler_job_lock_wait_seconds`
+   - Verify job lock contention: `cordum_scheduler_scheduler_job_lock_wait_seconds`
 
 ### Runbook: Worker Pool Unresponsive
 
-**Symptoms**: Jobs stuck in DISPATCHED state, heartbeats missing for a pool, `cordum_scheduler_stale_jobs{state="dispatched"}` rising.
+**Symptoms**: Jobs stuck in DISPATCHED state, heartbeats missing for a pool, `cordum_scheduler_scheduler_stale_jobs{state="dispatched"}` rising.
 
 **Steps**:
 
@@ -674,7 +688,7 @@ cluster once the pods are ready. Re-run it if you replace the cluster.
 
 **Gateway**: Fully stateless. Add replicas freely. Each instance handles HTTP + gRPC + WebSocket connections independently. The production overlay HPA scales on CPU (70%) and memory (80%).
 
-**Safety Kernel**: Fully stateless — policies are loaded into memory from Redis/config and cached. Each instance evaluates independently. Scale when `cordum_output_eval_duration_seconds` p99 exceeds 5ms.
+**Safety Kernel**: Fully stateless — policies are loaded into memory from Redis/config and cached. Each instance evaluates independently. Scale when `cordum_scheduler_output_eval_duration_seconds` p99 exceeds 5ms.
 
 **Scheduler**: Multiple replicas are safe. The reconciler uses a distributed Redis lock (`cordum:reconciler:default`, TTL = 2x poll interval) so only one instance runs timeout checks at a time. Job handling is concurrent across all replicas via NATS queue groups. Scale when dispatch latency rises.
 
@@ -720,7 +734,7 @@ groups:
   - alert: CordumSafetyKernelSlow
     expr: |
       histogram_quantile(0.99,
-        rate(cordum_output_eval_duration_seconds_bucket[5m])
+        rate(cordum_scheduler_output_eval_duration_seconds_bucket[5m])
       ) > 0.005
     for: 5m
     labels:
@@ -731,23 +745,11 @@ groups:
         Output policy evaluation is slower than the 5ms p99 target.
         Consider scaling safety kernel replicas.
 
-  # DLQ depth
-  - alert: CordumDLQDepthHigh
-    expr: cordum_dlq_entries > 100
-    for: 10m
-    labels:
-      severity: warning
-    annotations:
-      summary: DLQ depth exceeds 100 entries
-      description: >
-        Dead-letter queue has {{ $value }} entries.
-        Triage and retry or delete entries.
-
   # Job failure rate
   - alert: CordumJobFailureRateHigh
     expr: |
-      rate(cordum_jobs_completed_total{status="failed"}[5m])
-      / rate(cordum_jobs_completed_total[5m]) > 0.1
+      rate(cordum_scheduler_jobs_completed_total{status="failed"}[5m])
+      / rate(cordum_scheduler_jobs_completed_total[5m]) > 0.1
     for: 10m
     labels:
       severity: warning
@@ -757,24 +759,11 @@ groups:
         More than 10% of completed jobs are failing.
         Check worker logs and DLQ for root cause.
 
-  # Worker heartbeat gaps
-  - alert: CordumWorkerHeartbeatGap
-    expr: |
-      time() - cordum_last_heartbeat_timestamp > 60
-    for: 5m
-    labels:
-      severity: warning
-    annotations:
-      summary: Worker heartbeat gap exceeds 60 seconds
-      description: >
-        A worker pool has not sent a heartbeat in over 60 seconds.
-        Check worker connectivity and NATS health.
-
   # Dispatch latency
   - alert: CordumDispatchLatencyHigh
     expr: |
       histogram_quantile(0.99,
-        rate(cordum_scheduler_dispatch_latency_seconds_bucket[5m])
+        rate(cordum_scheduler_scheduler_dispatch_latency_seconds_bucket[5m])
       ) > 1
     for: 5m
     labels:
@@ -787,7 +776,7 @@ groups:
 
   # Saga compensation failures
   - alert: CordumSagaCompensationFailing
-    expr: rate(cordum_saga_compensation_failed_total[10m]) > 0
+    expr: rate(cordum_scheduler_saga_compensation_failed_total[10m]) > 0
     for: 10m
     labels:
       severity: warning
@@ -799,7 +788,7 @@ groups:
 
   # Stale jobs (reconciler not clearing them)
   - alert: CordumStaleJobsHigh
-    expr: cordum_scheduler_stale_jobs > 50
+    expr: cordum_scheduler_scheduler_stale_jobs > 50
     for: 15m
     labels:
       severity: warning
@@ -811,7 +800,7 @@ groups:
 
   # Output policy quarantine spike
   - alert: CordumOutputQuarantineSpike
-    expr: rate(cordum_output_policy_quarantined_total[5m]) > 1
+    expr: rate(cordum_scheduler_output_policy_quarantined_total[5m]) > 1
     for: 5m
     labels:
       severity: warning
@@ -831,7 +820,8 @@ groups:
 | TLS everywhere | All inter-service traffic encrypted | `kubectl exec ... -- env \| grep TLS` |
 | API keys | Strong, unique keys per tenant | Check `CORDUM_API_KEYS` length (>= 32 hex chars) |
 | Admin password | Strong password set | `CORDUM_ADMIN_PASSWORD` is non-empty, >= 12 chars |
-| Policy signatures | Signature verification enabled | `SAFETY_POLICY_PUBLIC_KEY` is set |
+| Policy signatures | Signature verification enforced | `CORDUM_POLICY_STRICT` is unset or `enforce`, a `CORDUM_POLICY_PUBLIC_KEY_<ID>` (or legacy `SAFETY_POLICY_PUBLIC_KEY`) is set, and `signature_enforcement.policy.sources` in `GET /api/v1/status` reports `enforce` for each source |
+| Pack signatures | Unsigned packs refused | `signature_enforcement.packs.strict` in `GET /api/v1/status` is `true` (`CORDUM_GATEWAY_PACK_STRICT=false` turns it off) |
 | gRPC reflection | Disabled in production | `CORDUM_GRPC_REFLECTION` is unset or `0` |
 | HSTS | Auto-enabled in production mode | Response includes `Strict-Transport-Security` header |
 | CORS | Explicit allowlist (not `*`) | `CORDUM_ALLOWED_ORIGINS` lists specific domains |
@@ -887,7 +877,7 @@ Complete list of production-relevant environment variables:
 | `SAFETY_KERNEL_ADDR` | Gateway, Scheduler | Safety kernel gRPC address |
 | `SAFETY_KERNEL_TLS_REQUIRED` | Gateway, Scheduler | Require TLS for safety kernel connection |
 | `SAFETY_KERNEL_TLS_CA` | Gateway, Scheduler | CA cert for safety kernel TLS |
-| `SAFETY_POLICY_PUBLIC_KEY` | Safety Kernel | ECDSA public key for policy signature verification |
+| `SAFETY_POLICY_PUBLIC_KEY` | Safety Kernel | Legacy single Ed25519 public key for policy signature verification; `CORDUM_POLICY_PUBLIC_KEY_<ID>` is the current form |
 | `SAFETY_POLICY_SIGNATURE_REQUIRED` | Safety Kernel | Require policy signatures |
 | `SCHEDULER_METRICS_ADDR` | Scheduler | Metrics listen address (default `:9090`) |
 | `SCHEDULER_METRICS_PUBLIC` | Scheduler | Allow public metrics bind (`1` to allow) |

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/cordum/cordum/core/policylabels"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -174,7 +175,9 @@ func putPolicyLabel(labels map[string]string, key, value string, trusted bool) {
 var reservedPolicyLabelPrefixes = []string{
 	"edge.",
 	"hook.",
-	"mcp.",
+	// No dot: the Safety Kernel also reads mcp_server, mcpServer and the other
+	// alias names, so the whole mcp namespace belongs to the classifier.
+	"mcp",
 	"llm.",
 	"runtime.",
 	"agent.",
@@ -195,6 +198,14 @@ var reservedPolicyLabelPrefixes = []string{
 	// classifier.complete=true to short-circuit the fail-closed path
 	// for an actually-partial classification.
 	"classifier.",
+	// "_" is the system-label namespace, owned by Cordum services. The
+	// Safety Kernel reads _delegation.* as gateway-verified delegation
+	// metadata, _action.descriptor_json as a gateway-validated action and
+	// _content.* as gateway-built input. Edge has no path that verifies
+	// any of them, so request and session labels must not use the
+	// namespace. Same rule as the gateway's stripReservedLabels on job
+	// submit. GHSA-j33m-mr27-pmw3.
+	"_",
 }
 
 // reservedPolicyLabelPrefix reports whether key is in a reserved
@@ -208,6 +219,20 @@ func reservedPolicyLabelPrefix(key string) (string, bool) {
 			// alert routing and dashboard breakdowns.
 			return strings.TrimSuffix(prefix, "."), true
 		}
+	}
+	// Labels the Safety Kernel reads by plain name. agent_id is the agent
+	// identity of the caller, secrets_present is the secret check of the
+	// gateway, and the workflow and job labels pick the policy scope for tier
+	// overrides. Job submit binds or drops each of them. Edge has no verified
+	// source for them in a request or session label; the gateway sets agent_id
+	// from the credential after this mapper.
+	switch {
+	case key == "agent_id", key == "secrets_present":
+		return key, true
+	case policylabels.WorkflowContextLabel(key):
+		return "workflow", true
+	case key == "job_id", key == "job.id", key == "session_id":
+		return "job", true
 	}
 	return "", false
 }

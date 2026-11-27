@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 from typing import List
 
@@ -9,8 +9,7 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 from ..types import UNSET, Unset
-from typing import cast
-from typing import cast, List
+from typing import List
 from typing import Dict
 from typing import Union
 
@@ -38,8 +37,6 @@ class CreateEvalDatasetBody:
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.create_eval_dataset_body_entries_item import CreateEvalDatasetBodyEntriesItem
-
         name = self.name
 
         version = self.version

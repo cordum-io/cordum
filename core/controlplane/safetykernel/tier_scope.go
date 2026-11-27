@@ -42,17 +42,16 @@ func scopedPolicyForRequest(
 	workflowID string,
 	jobID string,
 	topic string,
-	labels map[string]string,
 ) *config.SafetyPolicy {
 	if base == nil || global == nil {
 		return base
 	}
 	defaultDecision, defaultTier := global.DefaultDecisionForJobWorkflowTier(workflowID, jobID)
-	rules := global.RulesForInput(workflowID, jobID)
+	// The topic alone picks the rule set. Request labels come from the client
+	// and never choose it.
+	rules := global.RulesForJob(workflowID, jobID)
 	if strings.TrimSpace(topic) == EdgeActionTopic {
 		rules = global.RulesForEdgeAction(workflowID, jobID)
-	} else if policyScopeMCPUsed(extractMCPRequest(labels)) {
-		rules = global.RulesForMCPTool(workflowID, jobID)
 	}
 	return &config.SafetyPolicy{
 		Version:         base.Version,
@@ -62,11 +61,4 @@ func scopedPolicyForRequest(
 		Rules:           rules,
 		Tenants:         base.Tenants,
 	}
-}
-
-func policyScopeMCPUsed(req config.MCPRequest) bool {
-	return strings.TrimSpace(req.Server) != "" ||
-		strings.TrimSpace(req.Tool) != "" ||
-		strings.TrimSpace(req.Resource) != "" ||
-		strings.TrimSpace(req.Action) != ""
 }

@@ -1,12 +1,9 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 
 from attrs import define as _attrs_define
-from attrs import field as _attrs_field
 
-from ..types import UNSET, Unset
 
-from typing import cast
 from typing import Dict
 
 if TYPE_CHECKING:
@@ -28,10 +25,6 @@ class ResolveMemoryResourceBody:
     reference: "ResolveMemoryResourceBodyReference"
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.resolve_memory_resource_body_reference import (
-            ResolveMemoryResourceBodyReference,
-        )
-
         job_id = self.job_id
 
         reference = self.reference.to_dict()

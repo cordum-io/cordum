@@ -599,7 +599,10 @@ const mcpSessionLabel = "mcp_session_id"
 // current session and execution per SSE session if either matters.
 func (s *server) mcpEdgeTrace(ctx context.Context, tenantID, agentID, principalID, mcpSessionID string) (sessionID, executionID string, err error) {
 	caps, rotates := s.edgeStore.(mcpEdgeTraceCaps)
-	for gen := 0; ; gen++ {
+	for gen := 0; ; {
+		if err := ctx.Err(); err != nil {
+			return "", "", err
+		}
 		sessionID = mcpSessionID
 		if gen > 0 {
 			sessionID = fmt.Sprintf("%s.s%d", mcpSessionID, gen)
@@ -619,6 +622,7 @@ func (s *server) mcpEdgeTrace(ctx context.Context, tenantID, agentID, principalI
 				}
 				if events >= max(int64(maxEvents)*4/5, 1) {
 					if n >= int64(maxExecutions) {
+						gen++
 						continue
 					}
 					executionID = mcpEdgeExecutionID(sessionID, n)
@@ -627,9 +631,26 @@ func (s *server) mcpEdgeTrace(ctx context.Context, tenantID, agentID, principalI
 		}
 		err = s.ensureMCPHTTPTraceParents(ctx, tenantID, agentID, principalID, mcpSessionID, sessionID, executionID)
 		if errors.Is(err, edge.ErrSessionExecutionFanoutExceeded) {
+			gen++
 			continue
 		}
-		return sessionID, executionID, err
+		if err != nil {
+			return "", "", err
+		}
+		if rotates {
+			// The count above may be stale: another caller can create and fill
+			// its successor while this call is selecting it. Recheck the actual
+			// selected execution, then reread this session on concurrent progress.
+			_, maxEvents := caps.ExecutionCaps()
+			events, err := caps.CountExecutionEvents(ctx, tenantID, executionID)
+			if err != nil {
+				return "", "", err
+			}
+			if events >= max(int64(maxEvents)*4/5, 1) {
+				continue
+			}
+		}
+		return sessionID, executionID, nil
 	}
 }
 
@@ -1560,7 +1581,51 @@ func (s *server) newMCPServiceBridge() mcp.ServiceBridge {
 			}
 			return &mcp.ResourceItem{Kind: "status", Data: payload}, nil
 		},
+		GetJSONFunc: s.mcpReadJSON(s.mcpReadMux()),
 	})
+}
+
+// mcpReadMux holds exactly the read routes DirectServiceBridge's GetJSONFunc
+// may reach, each bound to the handler gateway.go registers for it. Any
+// other path, packs, workers and audit query included, answers 404.
+func (s *server) mcpReadMux() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/jobs", s.handleListJobs)
+	mux.HandleFunc("GET /api/v1/workflow-runs", s.handleListAllRuns)
+	mux.HandleFunc("GET /api/v1/workflow-runs/{id}", s.handleGetRun)
+	mux.HandleFunc("GET /api/v1/workflow-runs/{id}/timeline", s.handleGetRunTimeline)
+	mux.HandleFunc("GET /api/v1/workflows", s.handleListWorkflows)
+	mux.HandleFunc("GET /api/v1/topics", s.handleListTopics)
+	mux.HandleFunc("GET /api/v1/agents", s.handleListAgents)
+	mux.HandleFunc("GET /api/v1/approvals", s.handleListApprovals)
+	mux.HandleFunc("GET /api/v1/audit/verify", s.handleAuditVerify)
+	return mux
+}
+
+// mcpReadJSON returns DirectServiceBridge's GetJSONFunc. It serves path and
+// query from reads under the caller's ctx: invokeMCPAnyHandler builds the
+// request through newMCPBridgeRequest and stamps the tenant from the MCP
+// context, so each handler runs its own permission and tenant checks. A
+// non-2xx answer, a redirect included, becomes a BridgeError, and so does a
+// 2xx body that is not JSON.
+func (s *server) mcpReadJSON(reads *http.ServeMux) func(context.Context, string, url.Values, any) error {
+	return func(ctx context.Context, path string, query url.Values, out any) error {
+		target := path
+		if len(query) > 0 {
+			target += "?" + query.Encode()
+		}
+		status, _, raw, err := s.invokeMCPAnyHandler(ctx, http.MethodGet, target, nil, nil, nil, reads.ServeHTTP)
+		if err != nil {
+			return err
+		}
+		if status < 200 || status >= 300 {
+			return mcp.NewBridgeErrorFromHTTP(status, raw)
+		}
+		if err := json.Unmarshal(raw, out); err != nil {
+			return mcp.NewBridgeError(http.StatusBadGateway, "invalid_response", "invalid JSON in "+path+" response", nil)
+		}
+		return nil
+	}
 }
 
 // mcpGetJobPayload reads one job through handleGetJob for both MCP bridges.
@@ -1603,9 +1668,17 @@ func (s *server) mcpGetStatusPayload(ctx context.Context) (map[string]any, error
 // POST /api/v1/workflows handler under the caller's ctx, so permission
 // (workflows-write or admin), tenant resolution and validation are
 // identical to the REST endpoint. The registry's approval gate has
-// already admitted the call before this runs. Idempotency-Key is not
-// forwarded: handleCreateWorkflow does not honor it.
+// already admitted the call before this runs. A call with an
+// idempotency_key and no id gets the workflow id derived from the caller's
+// tenant, org_id, agent and that key. handleCreateWorkflow upserts by id,
+// so a repeated delivery of the call writes the same workflow, not a second.
 func (s *server) mcpCreateWorkflow(ctx context.Context, req mcp.CreateWorkflowInput) (*mcp.CreateWorkflowOutput, error) {
+	if key := strings.TrimSpace(req.IdempotencyKey); key != "" && strings.TrimSpace(req.ID) == "" {
+		meta, _ := MCPCallMetadataFromContext(ctx)
+		name := fmt.Sprintf("%q", []string{mcp.ToolCreateWorkflow, s.mcpTenantFromContext(ctx),
+			strings.TrimSpace(req.OrgID), meta.AgentID, key})
+		req.ID = uuid.NewSHA1(uuid.NameSpaceOID, []byte(name)).String()
+	}
 	body := map[string]any{"steps": req.Steps}
 	for key, value := range map[string]string{
 		"id": req.ID, "name": req.Name, "description": req.Description,

@@ -166,6 +166,7 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 				msg = "system/packs installed is written only by the pack install and uninstall APIs"
 			}
 			slog.Warn("config managed key refused", "scope", scopeStr, "scope_id", scopeID, "key", managedConfigKey(scope, scopeID), "actor", policybundles.PolicyActorID(r))
+			// Refusal record: the answer is already non-2xx, so a lost entry is only logged (ERROR).
 			s.appendAuditEntryNamed(r.Context(), "config.set.rejected", "config", scopeStr+"/"+scopeID, scopeStr, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), msg)
 			writeJSONError(w, http.StatusBadRequest, errorCodeConfigKeyForbidden, "config.managed_key: "+msg)
 		} else if errors.Is(err, configsvc.ErrTenantMismatch) {
@@ -185,7 +186,10 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	if mcpConfigTouched(data) {
 		s.reloadMCPConfig(r.Context())
 	}
-	s.appendAuditEntryNamed(r.Context(), "set", "config", scopeStr+"/"+scopeID, scopeStr, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "set config "+scopeStr+"/"+scopeID)
+	if err := s.appendNamedAuditEntry(r.Context(), "set", "config", scopeStr+"/"+scopeID, scopeStr, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "set config "+scopeStr+"/"+scopeID); err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "config set but its audit entry was not stored")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -364,7 +368,10 @@ func (s *server) handleRegisterSchema(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, errorCodeConfigSchemaViolation, err.Error())
 		return
 	}
-	s.appendAuditEntryNamed(r.Context(), "register", "schema", req.ID, req.ID, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "register schema "+req.ID)
+	if err := s.appendNamedAuditEntry(r.Context(), "register", "schema", req.ID, req.ID, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "register schema "+req.ID); err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "schema registered but its audit entry was not stored")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -472,7 +479,10 @@ func (s *server) handleDeleteSchema(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	s.appendAuditEntryNamed(r.Context(), "delete", "schema", id, id, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "delete schema "+id)
+	if err := s.appendNamedAuditEntry(r.Context(), "delete", "schema", id, id, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "delete schema "+id); err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "schema deleted but its audit entry was not stored")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

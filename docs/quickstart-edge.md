@@ -219,10 +219,13 @@ go test -count=3 ./core/controlplane/gateway -run 'Test.*Edge.*(Auth|Tenant|Limi
 go test -count=1 ./cmd/cordumctl/... ./cmd/cordum-hook/... ./cmd/cordum-agentd/...
 ```
 
-Dashboard regression (run from `dashboard/`):
+Dashboard regression (start at the repository root). Install the pnpm version
+pinned in `dashboard/package.json` and the dashboard dependencies first:
 
 ```bash
 cd dashboard
+npm install --global pnpm@9.15.9
+pnpm install --frozen-lockfile
 node ./node_modules/typescript/bin/tsc --noEmit
 pnpm exec vitest run
 pnpm run build

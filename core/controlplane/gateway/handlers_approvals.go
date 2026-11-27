@@ -410,6 +410,7 @@ func (s *server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// Cancellation stops work and must complete; appendPolicyAudit logs persistence failures at ERROR.
 	s.appendAuditEntryNamed(r.Context(), "cancel", "run", runID, cancelRunWfName, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "cancel run "+runID)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -721,7 +722,7 @@ func approvalHandlerErrorCode(status int) string {
 	}
 }
 
-func (s *server) appendApprovalDecisionAudit(ctx context.Context, action, jobID, topic, actorID, role, identitySource, identityLabel, reason, note, agentID, agentName, agentRiskTier string) {
+func (s *server) appendApprovalDecisionAudit(ctx context.Context, action, jobID, topic, actorID, role, identitySource, identityLabel, reason, note, agentID, agentName, agentRiskTier string) error {
 	extra := map[string]string{}
 	if note = strings.TrimSpace(note); note != "" {
 		extra["note"] = note
@@ -729,7 +730,7 @@ func (s *server) appendApprovalDecisionAudit(ctx context.Context, action, jobID,
 	if len(extra) == 0 {
 		extra = nil
 	}
-	_ = s.appendPolicyAudit(ctx, policybundles.PolicyAuditEntry{
+	return s.appendPolicyAudit(ctx, policybundles.PolicyAuditEntry{
 		Action:         action,
 		ResourceType:   "job",
 		ResourceID:     jobID,
@@ -858,6 +859,7 @@ func (s *server) publishApprovalRepair(ctx context.Context, repaired *store.Appr
 		packet := approvalRejectionPacket(
 			repaired.TraceID, repaired.JobID, errorMessage, request.GetIdentity(),
 		)
+		s.attachServiceToken(packet)
 		if err := s.bus.Publish(capsdk.SubjectDLQ, packet); err != nil {
 			return err
 		}
@@ -1001,7 +1003,10 @@ func (s *server) handleRepairApproval(w http.ResponseWriter, r *http.Request) {
 			"target_state", repaired.State,
 			"publish_target", finalApproval.PublishTarget,
 			"publish_status", finalApproval.PublishStatus)
-		s.appendAuditEntryNamed(ctx, "repair", "job", jobID, snapshot.Topic, actorID, policybundles.PolicyRole(r), "repair approval "+jobID+" ("+string(plan.Kind)+")")
+		if err := s.appendNamedAuditEntry(ctx, "repair", "job", jobID, snapshot.Topic, actorID, policybundles.PolicyRole(r), "repair approval "+jobID+" ("+string(plan.Kind)+")"); err != nil {
+			result = handlerResult{http.StatusInternalServerError, "approval repair applied but its audit entry was not stored"}
+			return nil
+		}
 		if s.approvalMetrics != nil {
 			s.approvalMetrics.IncApprovalDecision("repaired")
 		}
@@ -1033,6 +1038,7 @@ func (s *server) handleRepairApproval(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
+	// approve_failed and self_approval_denied record refusals that already answer non-2xx.
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermJobsApprove, []string{"admin"}, s.jobStore, s.bus) {
 		return
 	}
@@ -1218,6 +1224,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 			isWorkflowGate = true
 		}
 		policySnapshot := strings.TrimSpace(safetyRecord.PolicySnapshot)
+		var refreshedSafety *model.SafetyDecisionRecord
 		if isWorkflowGate {
 			if policySnapshot == "" {
 				policySnapshot = "workflow-gate"
@@ -1334,12 +1341,15 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 					pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS,
 					pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN:
 					// Fresh policy still admits this request (possibly with
-					// approval). Persist the FULL re-evaluated decision so
+					// approval). Store the FULL re-evaluated decision so
 					// the scheduler's fast-path sees the current rule / reason /
 					// constraints, not a hybrid of old decision + new snapshot.
 					// ApprovalRef and JobHash are preserved (approval identity
 					// is still this job); ApprovalRevision is bumped so
-					// downstream consumers can detect the drift.
+					// downstream consumers can detect the drift. ResolveApproval
+					// stores it with the approval, so a failed approve leaves
+					// the old record in place and can be retried.
+					// Informational: approval continues and records its own required audit entry below.
 					s.appendAuditEntryNamed(ctx, "approve_snapshot_refreshed", "job", jobID, "", policybundles.PolicyActorID(r), policybundles.PolicyRole(r),
 						fmt.Sprintf("policy snapshot refreshed during approval (was=%s now=%s decision=%s rule=%s)",
 							snapshotBase(policySnapshot), snapshotBase(currentSnapshot), freshDecision.String(), freshResp.GetRuleId()))
@@ -1353,16 +1363,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 					safetyRecord.ApprovalRequired = freshDecision == pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN
 					safetyRecord.CheckedAt = time.Now().UnixMicro()
 					safetyRecord.ApprovalRevision++
-					if err := s.jobStore.SetSafetyDecision(ctx, jobID, safetyRecord); err != nil {
-						// Persisting the re-evaluated decision is on the
-						// critical path — continuing would ship a job whose
-						// stored safety record still reflects the pre-drift
-						// policy. Fail closed and let the caller retry.
-						s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policybundles.PolicyActorID(r), policybundles.PolicyRole(r),
-							fmt.Sprintf("failed to persist refreshed safety decision: %v", err))
-						result = handlerResult{http.StatusServiceUnavailable, "failed to persist refreshed safety decision"}
-						return nil
-					}
+					refreshedSafety = &safetyRecord
 				default:
 					// DENY / THROTTLE / UNSPECIFIED — the drifted policy no
 					// longer permits this request at all. Fail closed and
@@ -1417,18 +1418,30 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 		if note != "" {
 			labelUpdates["approval_note"] = note
 		}
+		// Store the audit entry first: a persisted approval can be dispatched by the pending replayer.
+		approveAgentID, approveAgentName, approveAgentRiskTier := "", "", ""
+		if req != nil && req.Labels != nil {
+			approveAgentID, approveAgentName, approveAgentRiskTier = s.resolveAgentForAudit(ctx, tenant, req.Labels["agent_id"])
+		}
+		approveActorID, approveIdentitySource, approveIdentityLabel := policybundles.PolicyActorIdentity(r)
+		if err := s.appendApprovalDecisionAudit(ctx, "approve", jobID, req.GetTopic(), approveActorID, policybundles.PolicyRole(r), approveIdentitySource, approveIdentityLabel, reason, note, approveAgentID, approveAgentName, approveAgentRiskTier); err != nil {
+			result = handlerResult{http.StatusInternalServerError, "approval not applied: its audit entry was not stored"}
+			return nil
+		}
 		resolved, err := s.jobStore.ResolveApproval(ctx, store.ApprovalResolutionParams{
-			JobID:          jobID,
-			Decision:       model.ApprovalDecisionApprove,
-			ResultState:    model.JobStatePending,
-			ApprovedBy:     approvedBy,
-			ApprovedRole:   approvalRole,
-			Reason:         reason,
-			Note:           note,
-			PolicySnapshot: policySnapshot,
-			LabelUpdates:   labelUpdates,
+			JobID:           jobID,
+			Decision:        model.ApprovalDecisionApprove,
+			ResultState:     model.JobStatePending,
+			ApprovedBy:      approvedBy,
+			ApprovedRole:    approvalRole,
+			Reason:          reason,
+			Note:            note,
+			PolicySnapshot:  policySnapshot,
+			LabelUpdates:    labelUpdates,
+			RefreshedSafety: refreshedSafety,
 		})
 		if err != nil {
+			s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, req.GetTopic(), approveActorID, approvalRole, fmt.Sprintf("approval resolution failed: %v", err))
 			var conflict *store.ApprovalConflictError
 			if errors.As(err, &conflict) {
 				result = handlerResult{http.StatusConflict, approvalConflictPayload(http.StatusConflict, conflict.Code, conflict.Message)}
@@ -1457,13 +1470,6 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 			"job_id", jobID, "trace_id", resolved.TraceID,
 			"topic", resolved.Request.GetTopic(), "actor", policybundles.PolicyActorID(r),
 			"role", policybundles.PolicyRole(r))
-		// Include the submitted job's agent context in the approval audit event.
-		approveAgentID, approveAgentName, approveAgentRiskTier := "", "", ""
-		if resolved.Request != nil && resolved.Request.Labels != nil {
-			approveAgentID, approveAgentName, approveAgentRiskTier = s.resolveAgentForAudit(ctx, tenant, resolved.Request.Labels["agent_id"])
-		}
-		approveActorID, approveIdentitySource, approveIdentityLabel := policybundles.PolicyActorIdentity(r)
-		s.appendApprovalDecisionAudit(ctx, "approve", jobID, resolved.Request.GetTopic(), approveActorID, policybundles.PolicyRole(r), approveIdentitySource, approveIdentityLabel, reason, note, approveAgentID, approveAgentName, approveAgentRiskTier)
 		result = handlerResult{http.StatusOK, map[string]string{"job_id": jobID, "trace_id": resolved.TraceID}}
 		return nil
 	})
@@ -1502,6 +1508,7 @@ func (s *server) approvalRunTerminalStatus(ctx context.Context, req *pb.JobReque
 }
 
 func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
+	// reject_failed and self_rejection_denied record refusals that already answer non-2xx.
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermJobsApprove, []string{"admin"}, s.jobStore, s.bus) {
 		return
 	}
@@ -1664,6 +1671,7 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 			errorMessage = reason
 		}
 		packet := approvalRejectionPacket(resolved.TraceID, jobID, errorMessage, req.GetIdentity())
+		s.attachServiceToken(packet)
 		if err := s.bus.Publish(capsdk.SubjectDLQ, packet); err != nil {
 			slog.Error("publish dlq on approval reject failed", "job_id", jobID, "error", err)
 		} else {
@@ -1692,7 +1700,8 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 			rejectAgentID, rejectAgentName, rejectAgentRiskTier = s.resolveAgentForAudit(ctx, tenant, resolved.Request.Labels["agent_id"])
 		}
 		rejectActorID, rejectIdentitySource, rejectIdentityLabel := policybundles.PolicyActorIdentity(r)
-		s.appendApprovalDecisionAudit(ctx, "reject", jobID, rejectTopic, rejectActorID, policybundles.PolicyRole(r), rejectIdentitySource, rejectIdentityLabel, reason, note, rejectAgentID, rejectAgentName, rejectAgentRiskTier)
+		// Rejection reduces authority and must complete; appendPolicyAudit logs persistence failures at ERROR.
+		_ = s.appendApprovalDecisionAudit(ctx, "reject", jobID, rejectTopic, rejectActorID, policybundles.PolicyRole(r), rejectIdentitySource, rejectIdentityLabel, reason, note, rejectAgentID, rejectAgentName, rejectAgentRiskTier)
 		result = handlerResult{http.StatusOK, map[string]string{"job_id": jobID}}
 		return nil
 	})

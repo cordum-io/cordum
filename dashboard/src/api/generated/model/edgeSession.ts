@@ -8,6 +8,7 @@
 import type { EdgeEnforcementLayers } from "./edgeEnforcementLayers.ts";
 import type { EdgeLabels } from "./edgeLabels.ts";
 import type { EdgeRiskSummary } from "./edgeRiskSummary.ts";
+import type { EdgeSessionAssuranceState } from "./edgeSessionAssuranceState.ts";
 import type { EdgeSessionMode } from "./edgeSessionMode.ts";
 import type { EdgeSessionPolicyMode } from "./edgeSessionPolicyMode.ts";
 import type { EdgeSessionPrincipalType } from "./edgeSessionPrincipalType.ts";
@@ -36,6 +37,8 @@ export interface EdgeSession {
   enforcement_layers?: EdgeEnforcementLayers;
   policy_mode: EdgeSessionPolicyMode;
   status: EdgeSessionStatus;
+  /** Server-derived on each response from the policy mode, the enforcement layers, the session status and the agent heartbeat. `stale` means the session has ended or has no heartbeat within the session heartbeat TTL. Combinations that match no rule report `unsupported`. `executor-enforced` is reserved and not reported. Managed-settings status and binary integrity are not inputs yet. */
+  assurance_state?: EdgeSessionAssuranceState;
   risk_summary: EdgeRiskSummary;
   started_at: string;
   /** @nullable */

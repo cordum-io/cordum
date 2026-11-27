@@ -329,8 +329,10 @@ go run ./cmd/cordumctl pack install ./examples/cordum-edge-pack
 bash tools/scripts/edge_fake_hook_e2e.sh
 ```
 
-The pack is unsigned in-tree; the gateway accepts unsigned packs in default
-mode (`CORDUM_GATEWAY_PACK_STRICT` unset → false). Operators running the
+The pack is unsigned in-tree. Outside the production profile the gateway
+accepts unsigned packs (`CORDUM_GATEWAY_PACK_STRICT` unset → false); in the
+production profile it refuses them unless `CORDUM_GATEWAY_PACK_STRICT=false`
+is set. Operators running the
 strict-mode gate against a hardened gateway with
 `CORDUM_GATEWAY_PACK_STRICT=true` must sign the pack first (see
 `docs/pack.md` for the signing workflow).

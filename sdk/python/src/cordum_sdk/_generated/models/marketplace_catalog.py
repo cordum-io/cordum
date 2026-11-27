@@ -1,4 +1,4 @@
-from typing import Any, Dict, Type, TypeVar, Tuple, Optional, BinaryIO, TextIO, TYPE_CHECKING
+from typing import Any, Dict, Type, TypeVar, TYPE_CHECKING
 
 from typing import List
 
@@ -10,8 +10,7 @@ from ..types import UNSET, Unset
 
 from ..types import UNSET, Unset
 from dateutil.parser import isoparse
-from typing import cast
-from typing import cast, List
+from typing import List
 from typing import Dict
 from typing import Union
 import datetime
@@ -41,9 +40,6 @@ class MarketplaceCatalog:
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.marketplace_pack import MarketplacePack
-        from ..models.marketplace_catalog_catalogs_item import MarketplaceCatalogCatalogsItem
-
         catalogs: Union[Unset, List[Dict[str, Any]]] = UNSET
         if not isinstance(self.catalogs, Unset):
             catalogs = []
