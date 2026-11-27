@@ -1974,6 +1974,7 @@ func (s *server) instrumented(route string, fn http.HandlerFunc) http.HandlerFun
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		fn(rec, r)
+		rec.answer(rec.status)
 		duration := time.Since(start)
 		logger.Debug("handler exit", "route", route, "status", rec.status, "duration", duration.String())
 		statusStr := fmt.Sprintf("%d", rec.status)
