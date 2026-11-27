@@ -11,30 +11,41 @@ import (
 
 var artifactInterpreters = []string{"sh", "bash", "zsh", "dash", "python", "node", "perl", "ruby"}
 
-// artifactIsInterpreter reports a shell or script interpreter under any
-// spelling of its program: a path, a version suffix (python3.12) or .exe.
+// artifactIsInterpreter reports a shell or script interpreter by its exact
+// program name, after a path, a version suffix (python3.12) or .exe.
 func artifactIsInterpreter(field string) bool {
-	name := strings.TrimSuffix(strings.ToLower(filepath.Base(field)), ".exe")
+	name := strings.TrimSuffix(filepath.Base(field), ".exe")
 	return slices.Contains(artifactInterpreters, strings.TrimRight(name, "0123456789."))
 }
 
 // artifactRecognized returns "" when the binding models the program and every
 // argument of a command, and the unbound reason otherwise. KUBECONFIG=
 // assignments may come first. kubectl is modeled when artifactKubectlArgs
-// recognizes its arguments. A listed interpreter is modeled when its first
-// argument is a script file in the digest; the arguments after it belong to
-// the script. With no argument, or an option first (bash also reads +c as
-// -c), it runs code the command line does not name as a file.
+// recognizes its arguments and every file they name is in the digest. A listed
+// interpreter is modeled when its first argument is a script file in the
+// digest, named without a '..' element: node resolves its script by name
+// (path.resolve), where the hook follows the kernel. The arguments after the
+// script belong to it. With no argument, or an option first (bash also reads
+// +c as -c), the interpreter runs code the command line does not name as a
+// file.
 func artifactRecognized(fields []string, cwd string, inputs *artifactInputs) string {
 	for len(fields) > 0 && strings.HasPrefix(fields[0], "KUBECONFIG=") {
 		fields = fields[1:]
+	}
+	hashed := func(name string) bool {
+		_, ok := inputs.Files[artifactPath(cwd, name)]
+		return ok
 	}
 	switch {
 	case len(fields) == 0 || strings.Contains(fields[0], "="):
 		// An assignment before the program: the shell runs the next word.
 		return "unrecognized"
 	case artifactIsKubectl(fields[0]):
-		if _, ok := artifactKubectlArgs(fields[1:]); ok {
+		_, files, ok := artifactKubectlArgs(fields[1:])
+		for _, file := range files {
+			ok = ok && hashed(file)
+		}
+		if ok {
 			return ""
 		}
 	case artifactIsInterpreter(fields[0]):
@@ -42,7 +53,7 @@ func artifactRecognized(fields []string, cwd string, inputs *artifactInputs) str
 			return "inline-code"
 		}
 		// node inspect starts a debugger, not a script named inspect.
-		if _, ok := inputs.Files[artifactPath(cwd, fields[1])]; ok && fields[1] != "inspect" {
+		if hashed(fields[1]) && fields[1] != "inspect" && !slices.Contains(strings.Split(fields[1], "/"), "..") {
 			return ""
 		}
 	}
@@ -118,6 +129,28 @@ func artifactWindowsDevice(name string) bool {
 		port, found = strings.CutPrefix(stem, "LPT")
 	}
 	return found && (len(port) == 1 && '0' <= port[0] && port[0] <= '9' || port == "¹" || port == "²" || port == "³")
+}
+
+// artifactWindowsUnreadable reports a Windows name the binding cannot read as
+// the command will. Windows resolves a rooted (/dir) or drive-relative (D:dir)
+// name against a current drive the binding does not know, and Git Bash
+// rewrites a rooted name through its mount table first. A device name is not
+// a file, even when stat of cwd/name says missing. A ':' after the volume name
+// is an NTFS stream to Go and another character to Git Bash's MSYS programs.
+// None of these is stat'ed.
+func artifactWindowsUnreadable(name string) bool {
+	volume := filepath.VolumeName(name)
+	return artifactWindowsDevice(name) || strings.Contains(name[len(volume):], ":") ||
+		!filepath.IsAbs(name) && (name[0] == '/' || volume != "")
+}
+
+// artifactTrailingDot reports a name with an element that ends in '.', other
+// than . and ..: Windows opens it without the dot, while Git Bash's MSYS
+// programs open it as written. A bound command holds no '\'.
+func artifactTrailingDot(name string) bool {
+	return slices.ContainsFunc(strings.Split(name, "/"), func(element string) bool {
+		return element != "." && element != ".." && strings.HasSuffix(element, ".")
+	})
 }
 
 // artifactSpecialPath checks each hop before following it: resolving a procfs

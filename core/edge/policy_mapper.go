@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/cordum/cordum/core/policylabels"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -174,7 +175,9 @@ func putPolicyLabel(labels map[string]string, key, value string, trusted bool) {
 var reservedPolicyLabelPrefixes = []string{
 	"edge.",
 	"hook.",
-	"mcp.",
+	// No dot: the Safety Kernel also reads mcp_server, mcpServer and the other
+	// alias names, so the whole mcp namespace belongs to the classifier.
+	"mcp",
 	"llm.",
 	"runtime.",
 	"agent.",
@@ -216,6 +219,20 @@ func reservedPolicyLabelPrefix(key string) (string, bool) {
 			// alert routing and dashboard breakdowns.
 			return strings.TrimSuffix(prefix, "."), true
 		}
+	}
+	// Labels the Safety Kernel reads by plain name. agent_id is the agent
+	// identity of the caller, secrets_present is the secret check of the
+	// gateway, and the workflow and job labels pick the policy scope for tier
+	// overrides. Job submit binds or drops each of them. Edge has no verified
+	// source for them in a request or session label; the gateway sets agent_id
+	// from the credential after this mapper.
+	switch {
+	case key == "agent_id", key == "secrets_present":
+		return key, true
+	case policylabels.WorkflowContextLabel(key):
+		return "workflow", true
+	case key == "job_id", key == "job.id", key == "session_id":
+		return "job", true
 	}
 	return "", false
 }

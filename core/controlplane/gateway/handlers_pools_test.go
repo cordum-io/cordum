@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -253,4 +254,98 @@ func TestRemoveTopicFromPoolRejectsInvalidTopic(t *testing.T) {
 	s.handleRemoveTopicFromPool(w, req)
 
 	requireStableErrorCode(t, w, http.StatusBadRequest, "POOL_INVALID_CONFIG")
+}
+
+// requireStoredRoutes reads system/default back and requires that its raw
+// pools.topics map holds no topic outside want, and that the routes
+// config.ParsePoolsConfig derives from the pools section, as the topic
+// registry does, are exactly want. It returns the stored document data.
+func requireStoredRoutes(t *testing.T, s *server, want map[string][]string) map[string]any {
+	t.Helper()
+	doc, err := s.configSvc.Get(context.Background(), configsvc.ScopeSystem, "default")
+	if err != nil {
+		t.Fatalf("get system/default: %v", err)
+	}
+	section, _ := doc.Data["pools"].(map[string]any)
+	rawTopics, _ := section["topics"].(map[string]any)
+	for topic := range rawTopics {
+		if _, ok := want[topic]; !ok {
+			t.Fatalf("stored pools.topics still has %q: %v", topic, rawTopics)
+		}
+	}
+	payload, err := json.Marshal(doc.Data["pools"])
+	if err != nil {
+		t.Fatalf("marshal pools section: %v", err)
+	}
+	cfg, err := config.ParsePoolsConfig(payload)
+	if err != nil {
+		t.Fatalf("parse pools section: %v", err)
+	}
+	if !reflect.DeepEqual(cfg.Topics, want) {
+		t.Fatalf("stored routes = %v, want %v", cfg.Topics, want)
+	}
+	return doc.Data
+}
+
+func TestRemoveLastTopicMappingDropsStoredKey(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	seedPoolConfig(t, s, map[string]any{"job.only": "pool-b", "job.shared": []string{"pool-a", "pool-b"}}, map[string]config.PoolConfig{
+		"pool-a": {},
+		"pool-b": {},
+	})
+	rateLimits := map[string]any{"enabled": true}
+	if err := s.configSvc.SetWithRetry(context.Background(), configsvc.ScopeSystem, "default", 1, func(doc *configsvc.Document) error {
+		doc.Data["rate_limits"] = rateLimits
+		return nil
+	}); err != nil {
+		t.Fatalf("seed rate_limits: %v", err)
+	}
+
+	steps := []struct {
+		topic string
+		want  map[string][]string
+	}{
+		{"job.only", map[string][]string{"job.shared": {"pool-a", "pool-b"}}},
+		{"job.shared", map[string][]string{"job.shared": {"pool-a"}}},
+	}
+	for _, step := range steps {
+		req := withPathValues(adminRequest("DELETE", "/api/v1/pools/pool-b/topics/"+step.topic, nil), "name", "pool-b", "topic", step.topic)
+		w := httptest.NewRecorder()
+		s.handleRemoveTopicFromPool(w, req)
+		if w.Code != http.StatusNoContent {
+			t.Fatalf("remove pool-b from %s: expected 204, got %d: %s", step.topic, w.Code, w.Body.String())
+		}
+		data := requireStoredRoutes(t, s, step.want)
+		if !reflect.DeepEqual(data["rate_limits"], rateLimits) {
+			t.Fatalf("rate_limits changed to %v", data["rate_limits"])
+		}
+	}
+}
+
+func TestForceDeletePoolDropsEmptiedTopicKeys(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	seedPoolConfig(t, s, map[string]any{
+		"job.test":  "pool-a",
+		"job.mixed": []string{"pool-a", "pool-b"},
+		"job.other": "pool-b",
+	}, map[string]config.PoolConfig{
+		"pool-a": {Status: config.PoolStatusInactive},
+		"pool-b": {},
+	})
+
+	req := withPathValues(adminRequest("DELETE", "/api/v1/pools/pool-a?force=true", nil), "name", "pool-a")
+	w := httptest.NewRecorder()
+	s.handleDeletePool(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 with force, got %d: %s", w.Code, w.Body.String())
+	}
+	data := requireStoredRoutes(t, s, map[string][]string{"job.mixed": {"pool-b"}, "job.other": {"pool-b"}})
+	section, _ := data["pools"].(map[string]any)
+	poolMap, _ := section["pools"].(map[string]any)
+	if _, ok := poolMap["pool-a"]; ok {
+		t.Fatalf("expected pool-a deleted, got %v", poolMap)
+	}
+	if _, ok := poolMap["pool-b"]; !ok {
+		t.Fatalf("expected pool-b kept, got %v", poolMap)
+	}
 }

@@ -241,11 +241,26 @@ spec:
             {{- end }}
             - name: REDIS_URL
               value: {{ include "cordum.redisUrl" . | quote }}
+            {{- $auditKey := .Values.audit.publisherKeys.safetyKernel.privateKeySecret }}
+            {{- if or .Values.global.production $auditKey.name }}
+            # Signs the safety kernel's sys.audit.export service tokens.
+            - name: CORDUM_AUDIT_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "audit.publisherKeys.safetyKernel.privateKeySecret.name is required when global.production=true" $auditKey.name | quote }}
+                  key: {{ required "audit.publisherKeys.safetyKernel.privateKeySecret.key is required" $auditKey.key | quote }}
+            {{- with .Values.audit.publisherKeys.keyId }}
+            - name: CORDUM_AUDIT_SIGNING_KEY_ID
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.global.tls.enabled }}
             - name: SAFETY_KERNEL_TLS_CERT
               value: /etc/cordum/tls/server/tls.crt
             - name: SAFETY_KERNEL_TLS_KEY
               value: /etc/cordum/tls/server/tls.key
+            - name: SAFETY_KERNEL_TLS_CLIENT_CA
+              value: /etc/cordum/tls/client/ca.crt
             - name: NATS_TLS_CA
               value: /etc/cordum/tls/client/ca.crt
             - name: NATS_TLS_CERT
@@ -465,6 +480,10 @@ spec:
               value: /etc/cordum/tls/client/tls.key
             - name: SAFETY_KERNEL_TLS_CA
               value: /etc/cordum/tls/client/ca.crt
+            - name: SAFETY_KERNEL_TLS_CLIENT_CERT
+              value: /etc/cordum/tls/client/tls.crt
+            - name: SAFETY_KERNEL_TLS_CLIENT_KEY
+              value: /etc/cordum/tls/client/tls.key
             - name: CONTEXT_ENGINE_TLS_CA
               value: /etc/cordum/tls/client/ca.crt
             {{- end }}
@@ -635,6 +654,25 @@ spec:
               value: "1"
             {{- include "cordum.workerTrustModeEnv" . | nindent 12 }}
             {{- include "cordum.workerSessionSigningEnv" . | nindent 12 }}
+            {{- /* Verify the safety kernel's and cordum-mcp's sys.audit.export service tokens. */}}
+            {{- with .Values.audit.publisherKeys.safetyKernel.publicKeySecret }}
+            {{- if .name }}
+            - name: CORDUM_AUDIT_PUBLIC_KEY_CORDUM_SAFETY_KERNEL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .name | quote }}
+                  key: {{ required "audit.publisherKeys.safetyKernel.publicKeySecret.key is required" .key | quote }}
+            {{- end }}
+            {{- end }}
+            {{- with .Values.audit.publisherKeys.mcp.publicKeySecret }}
+            {{- if .name }}
+            - name: CORDUM_AUDIT_PUBLIC_KEY_CORDUM_MCP
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .name | quote }}
+                  key: {{ required "audit.publisherKeys.mcp.publicKeySecret.key is required" .key | quote }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.redis.auth.enabled }}
             - name: REDIS_PASSWORD
               valueFrom:
@@ -706,6 +744,10 @@ spec:
               value: /etc/cordum/tls/client/tls.key
             - name: SAFETY_KERNEL_TLS_CA
               value: /etc/cordum/tls/client/ca.crt
+            - name: SAFETY_KERNEL_TLS_CLIENT_CERT
+              value: /etc/cordum/tls/client/tls.crt
+            - name: SAFETY_KERNEL_TLS_CLIENT_KEY
+              value: /etc/cordum/tls/client/tls.key
             - name: CONTEXT_ENGINE_TLS_CA
               value: /etc/cordum/tls/client/ca.crt
             {{- end }}
@@ -1079,6 +1121,12 @@ spec:
               value: /etc/cordum/tls/client/tls.crt
             - name: REDIS_TLS_KEY
               value: /etc/cordum/tls/client/tls.key
+            - name: SAFETY_KERNEL_TLS_CA
+              value: /etc/cordum/tls/client/ca.crt
+            - name: SAFETY_KERNEL_TLS_CLIENT_CERT
+              value: /etc/cordum/tls/client/tls.crt
+            - name: SAFETY_KERNEL_TLS_CLIENT_KEY
+              value: /etc/cordum/tls/client/tls.key
             {{- end }}
             {{- include "cordum.sharedEnv" . | nindent 12 }}
             {{- if gt (int .Values.workflowEngine.env.foreachMaxItems) 0 }}
@@ -1201,6 +1249,8 @@ spec:
               value: /etc/cordum/tls/server/tls.crt
             - name: CONTEXT_ENGINE_TLS_KEY
               value: /etc/cordum/tls/server/tls.key
+            - name: CONTEXT_ENGINE_TLS_CLIENT_CA
+              value: /etc/cordum/tls/client/ca.crt
             - name: REDIS_TLS_CA
               value: /etc/cordum/tls/client/ca.crt
             - name: REDIS_TLS_CERT

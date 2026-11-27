@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/auth/servicetoken"
+	"github.com/cordum/cordum/core/policysign"
+	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	wf "github.com/cordum/cordum/core/workflow"
 )
@@ -15,6 +18,8 @@ import (
 type auditBusLoopback struct {
 	mu       sync.Mutex
 	handlers map[string][]func(*pb.BusPacket) error
+	packets  []*pb.BusPacket
+	subs     int
 }
 
 func newAuditBusLoopback() *auditBusLoopback {
@@ -23,6 +28,7 @@ func newAuditBusLoopback() *auditBusLoopback {
 
 func (b *auditBusLoopback) Publish(subject string, packet *pb.BusPacket) error {
 	b.mu.Lock()
+	b.packets = append(b.packets, packet)
 	handlers := append([]func(*pb.BusPacket) error{}, b.handlers[subject]...)
 	b.mu.Unlock()
 	for _, h := range handlers {
@@ -36,6 +42,7 @@ func (b *auditBusLoopback) Publish(subject string, packet *pb.BusPacket) error {
 func (b *auditBusLoopback) Subscribe(subject, queue string, handler func(*pb.BusPacket) error) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.subs++
 	b.handlers[subject] = append(b.handlers[subject], handler)
 	return nil
 }
@@ -43,6 +50,8 @@ func (b *auditBusLoopback) Subscribe(subject, queue string, handler func(*pb.Bus
 func TestInitAuditPipeline_NullBackendChainsEvents(t *testing.T) {
 	t.Setenv("CORDUM_AUDIT_EXPORT_TYPE", "null")
 	t.Setenv("AUDIT_TRANSPORT", "nats")
+	// The consumer chains only packets carrying a publisher service token.
+	t.Setenv(policysign.EnvDevSigningSeed, "gateway-audit-chain-test")
 
 	s, _, _ := newTestGateway(t)
 	bus := newAuditBusLoopback()
@@ -108,6 +117,118 @@ func TestInitAuditPipeline_NullBackendChainsEvents(t *testing.T) {
 // hmacTestKey64Hex is a 64-hex-char (32-byte) test signing key.
 // Generated for tests only; never use a hardcoded key in production.
 const hmacTestKey64Hex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+func setupAuditPublisherEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("CORDUM_AUDIT_EXPORT_TYPE", "null")
+	t.Setenv("AUDIT_TRANSPORT", "nats")
+	t.Setenv("CORDUM_ENV", "development")
+	t.Setenv("CORDUM_PRODUCTION", "")
+	t.Setenv(audit.EnvHMACKey, hmacTestKey64Hex)
+	for _, name := range []string{policysign.EnvSigningKey, policysign.EnvSigningKeyPath,
+		policysign.EnvSigningKeyID, policysign.EnvDevSigningSeed} {
+		t.Setenv(name, "")
+	}
+}
+
+func TestInitAuditPipeline_ServiceToken(t *testing.T) {
+	setupAuditPublisherEnv(t)
+	t.Setenv(policysign.EnvSigningKeyID, "audit_test")
+	t.Setenv(policysign.EnvDevSigningSeed, "gateway-audit-test")
+	s, _, _ := newTestGateway(t)
+	bus := newAuditBusLoopback()
+	sender, chainer, err := initAuditPipeline(s.jobStore.Client(), bus, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sender.Close() })
+	sender.Send(audit.SIEMEvent{EventType: audit.EventSafetyDecision, TenantID: "default"})
+	if len(bus.packets) != 1 {
+		t.Fatalf("packets = %d, want 1", len(bus.packets))
+	}
+	trust, err := policysign.LoadTrustStoreFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims, err := servicetoken.VerifyService(bus.packets[0].AuthToken, trust, time.Now())
+	if err != nil || claims.Subject != servicetoken.IdentityGateway {
+		t.Fatalf("service token subject = %q, err = %v", claims.Subject, err)
+	}
+	// The consumer chains the gateway's packet and refuses the same payload
+	// without its token.
+	if err := bus.Publish(capsdk.SubjectAuditExport, &pb.BusPacket{Payload: bus.packets[0].Payload}); err != nil {
+		t.Fatal(err)
+	}
+	chained, err := s.redisClient().XLen(context.Background(), chainer.StreamKey("default")).Result()
+	if err != nil || chained != 1 {
+		t.Fatalf("chained %d events (err %v), want only the token-bearing one", chained, err)
+	}
+}
+
+func TestInitAuditPipeline_PublisherTrustKeyFailure(t *testing.T) {
+	for _, name := range []string{audit.EnvPublisherPublicKeyPrefix + "CORDUM_MCP", policysign.EnvPublicKeyPrefix + "AUDIT_TEST"} {
+		t.Run(name, func(t *testing.T) {
+			setupAuditPublisherEnv(t)
+			s, _, _ := newTestGateway(t)
+			t.Setenv(name, "invalid-key")
+			bus := newAuditBusLoopback()
+			sender, _, err := initAuditPipeline(s.jobStore.Client(), bus, nil)
+			if sender != nil {
+				t.Cleanup(func() { _ = sender.Close() })
+			}
+			if err == nil || !strings.Contains(err.Error(), name) {
+				t.Fatalf("expected an error naming %s, got %v", name, err)
+			}
+			if bus.subs != 0 || len(bus.packets) != 0 {
+				t.Fatalf("trust failure subscribed %d times and published %d packets", bus.subs, len(bus.packets))
+			}
+		})
+	}
+}
+
+func TestInitAuditPipeline_ServiceTokenKeyFailure(t *testing.T) {
+	for _, tc := range []struct{ name, mode, key string }{
+		{"missing_production", "production", ""},
+		{"malformed_development", "development", "invalid-key"},
+		{"malformed_production", "production", "invalid-key"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupAuditPublisherEnv(t)
+			t.Setenv("CORDUM_ENV", tc.mode)
+			t.Setenv(policysign.EnvSigningKey, tc.key)
+			s, _, _ := newTestGateway(t)
+			bus := newAuditBusLoopback()
+			sender, _, err := initAuditPipeline(s.jobStore.Client(), bus, nil)
+			if sender != nil {
+				t.Cleanup(func() { _ = sender.Close() })
+			}
+			if err == nil || !strings.Contains(err.Error(), policysign.EnvSigningKey) {
+				t.Fatalf("expected signing-key error, got %v", err)
+			}
+			if tc.key == "" && !strings.Contains(err.Error(), policysign.EnvSigningKeyPath) {
+				t.Fatal("missing key error must name the path alternative")
+			}
+			if bus.subs != 0 || len(bus.packets) != 0 {
+				t.Fatalf("key failure subscribed %d times and published %d packets", bus.subs, len(bus.packets))
+			}
+		})
+	}
+}
+
+func TestInitAuditPipeline_NoServiceTokenKeyInDevelopment(t *testing.T) {
+	setupAuditPublisherEnv(t)
+	s, _, _ := newTestGateway(t)
+	bus := newAuditBusLoopback()
+	sender, _, err := initAuditPipeline(s.jobStore.Client(), bus, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sender.Close() })
+	sender.Send(audit.SIEMEvent{EventType: audit.EventSafetyDecision, TenantID: "default"})
+	if len(bus.packets) != 1 || bus.packets[0].AuthToken != "" {
+		t.Fatal("development without key must preserve token-less publishing")
+	}
+}
 
 // TestInitAuditPipeline_HMACRequiredInProduction pins BUG-012: in
 // production, an empty CORDUM_AUDIT_HMAC_KEY must abort boot unless the

@@ -9,6 +9,8 @@ func TestMatchScopes(t *testing.T) {
 		required string
 		want     bool
 	}{
+		{name: "MCP gateway scope excludes MCP API", granted: []string{"mcpgateway:*"}, required: "mcp:write", want: false},
+		{name: "MCP API scope excludes MCP gateway", granted: []string{"mcp:*"}, required: "mcpgateway:write", want: false},
 		{
 			name:     "empty granted allows for back-compat",
 			granted:  nil,
@@ -89,6 +91,11 @@ func TestPathToScope(t *testing.T) {
 		scope  string
 		ok     bool
 	}{
+		{name: "MCP SSE", method: "GET", path: "/mcp/sse", scope: "mcpgateway:read", ok: true},
+		{name: "MCP status", method: "GET", path: "/mcp/status", scope: "mcpgateway:read", ok: true},
+		{name: "MCP message", method: "POST", path: "/mcp/message", scope: "mcpgateway:write", ok: true},
+		{name: "MCP API approval", method: "POST", path: "/api/v1/mcp/approvals/a1/approve", scope: "mcp:write", ok: true},
+		{name: "MCP prefix boundary", method: "GET", path: "/mcpgateway/sse", ok: false},
 		{
 			name:   "jobs read",
 			method: "GET",
@@ -138,6 +145,13 @@ func TestPathToScope(t *testing.T) {
 			scope:  "",
 			ok:     false,
 		},
+		{name: "edge session create", method: "POST", path: "/api/v1/edge/sessions", scope: "edge:write", ok: true},
+		{name: "edge session list", method: "GET", path: "/api/v1/edge/sessions", scope: "edge:read", ok: true},
+		{name: "edge approve maps to approvals", method: "POST", path: "/api/v1/edge/approvals/x/approve", scope: "approvals:write", ok: true},
+		{name: "edge mcp maps to mcp", method: "GET", path: "/api/v1/edge/mcp/upstreams", scope: "mcp:read", ok: true},
+		{name: "edge shadow agents map to audit", method: "POST", path: "/api/v1/edge/shadow-agents/x/suppress", scope: "audit:write", ok: true},
+		{name: "edge shadow exception maps to audit", method: "POST", path: "/api/v1/edge/shadow/exception", scope: "audit:write", ok: true},
+		{name: "edge prefix needs a segment boundary", method: "GET", path: "/api/v1/edgex", scope: "", ok: false},
 	}
 
 	for _, tt := range tests {

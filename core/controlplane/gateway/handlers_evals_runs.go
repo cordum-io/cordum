@@ -179,6 +179,7 @@ func (s *server) handleRunEvalDataset(w http.ResponseWriter, r *http.Request) {
 			"actor", policybundles.PolicyActorID(r),
 			"role", policybundles.PolicyRole(r),
 		)
+		// Informational: the run is a simulation whose stored result changes no runtime authority; a lost entry is logged.
 		s.appendAuditEntryNamed(r.Context(), "run", "eval_dataset", dataset.ID, dataset.Name,
 			policybundles.PolicyActorID(r), policybundles.PolicyRole(r),
 			"run eval dataset "+dataset.Name+" v"+strconv.Itoa(dataset.Version))
@@ -418,9 +419,12 @@ func (s *server) handleDeleteEvalRun(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.deleteEvalRunPending(r.Context(), tenant, runID)
 
-	s.appendAuditEntryNamed(r.Context(), "delete", "eval_run", runID, existing.DatasetName,
+	if err := s.appendNamedAuditEntry(r.Context(), "delete", "eval_run", runID, existing.DatasetName,
 		policybundles.PolicyActorID(r), policybundles.PolicyRole(r),
-		"force-delete eval run "+runID+" for dataset "+existing.DatasetName)
+		"force-delete eval run "+runID+" for dataset "+existing.DatasetName); err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "eval run deleted but its audit entry was not stored")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

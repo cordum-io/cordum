@@ -1,15 +1,22 @@
 package policysign
 
 import (
+	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
+	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func generatePEMPrivate(t *testing.T) (ed25519.PublicKey, ed25519.PrivateKey, string) {
@@ -39,6 +46,7 @@ func generatePEMPublic(t *testing.T, pub ed25519.PublicKey) string {
 func clearPolicyEnv(t *testing.T) {
 	t.Helper()
 	for _, name := range []string{
+		"CORDUM_ENV", "CORDUM_PRODUCTION",
 		EnvSigningKey, EnvSigningKeyPath, EnvSigningKeyID, EnvDevSigningSeed,
 		envLegacyPublicKey, envLegacyKeyID,
 	} {
@@ -63,6 +71,8 @@ func splitEnvEntry(entry string) (string, string, bool) {
 
 func TestLoadPrivateKeyFromEnv_PEM(t *testing.T) {
 	clearPolicyEnv(t)
+	t.Setenv("CORDUM_ENV", "production")
+	t.Setenv(EnvDevSigningSeed, "unused-seed")
 	_, priv, pemStr := generatePEMPrivate(t)
 	t.Setenv(EnvSigningKey, pemStr)
 	t.Setenv(EnvSigningKeyID, "primary")
@@ -113,6 +123,8 @@ func TestLoadPrivateKeyFromEnv_Seed(t *testing.T) {
 
 func TestLoadPrivateKeyFromEnv_Path(t *testing.T) {
 	clearPolicyEnv(t)
+	t.Setenv("CORDUM_PRODUCTION", "true")
+	t.Setenv(EnvDevSigningSeed, "unused-seed")
 	_, _, pemStr := generatePEMPrivate(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "key.pem")
@@ -173,6 +185,8 @@ func TestLoadPrivateKeyFromEnv_WrongSize(t *testing.T) {
 
 func TestLoadTrustStoreFromEnv_Multi(t *testing.T) {
 	clearPolicyEnv(t)
+	t.Setenv("CORDUM_ENV", "production")
+	t.Setenv(EnvDevSigningSeed, "unused-seed")
 	pub1, _, _ := generatePEMPrivate(t)
 	pub2, _, _ := generatePEMPrivate(t)
 	t.Setenv(EnvPublicKeyPrefix+"PRIMARY", base64.StdEncoding.EncodeToString(pub1))
@@ -194,6 +208,8 @@ func TestLoadTrustStoreFromEnv_Multi(t *testing.T) {
 
 func TestLoadTrustStoreFromEnv_Legacy(t *testing.T) {
 	clearPolicyEnv(t)
+	t.Setenv("CORDUM_PRODUCTION", "true")
+	t.Setenv(EnvDevSigningSeed, "unused-seed")
 	pub, _, _ := generatePEMPrivate(t)
 	t.Setenv(envLegacyPublicKey, base64.StdEncoding.EncodeToString(pub))
 	t.Setenv(envLegacyKeyID, "rotating")
@@ -304,6 +320,101 @@ func TestTrustStore_IDsSorted(t *testing.T) {
 		if ids[i] != want[i] {
 			t.Errorf("ids = %v want %v", ids, want)
 			break
+		}
+	}
+}
+
+func TestPolicyKeyProductionDevSeed(t *testing.T) {
+	clearPolicyEnv(t)
+	t.Setenv("CORDUM_AUDIT_SIGNING_KEY", "")
+	t.Setenv("CORDUM_AUDIT_SIGNING_KEY_PATH", "")
+	t.Setenv("CORDUM_AUDIT_DEV_SIGNING_SEED", "")
+	t.Setenv("CORDUM_ENV", "production")
+	t.Setenv(EnvDevSigningSeed, "production-profile-test-seed")
+	key, id, err := LoadPrivateKeyFromEnv()
+	signed := false
+	if len(key) == ed25519.PrivateKeySize {
+		message := []byte("policy-seed-test")
+		signed = ed25519.Verify(key.Public().(ed25519.PublicKey), message, ed25519.Sign(key, message))
+	}
+	if key != nil || id != "" {
+		t.Errorf("returned signing key length=%d, id=%q, signed=%t", len(key), id, signed)
+	}
+	if !errors.Is(err, ErrSigningKeyNotConfigured) || !strings.Contains(err.Error(), EnvDevSigningSeed) {
+		t.Fatalf("want missing-key error naming %s, got %v", EnvDevSigningSeed, err)
+	}
+}
+
+func TestPolicyTrustProductionDevSeed(t *testing.T) {
+	clearPolicyEnv(t)
+	t.Setenv("CORDUM_AUDIT_SIGNING_KEY", "")
+	t.Setenv("CORDUM_AUDIT_SIGNING_KEY_PATH", "")
+	t.Setenv("CORDUM_AUDIT_DEV_SIGNING_SEED", "")
+	t.Setenv("CORDUM_ENV", "production")
+	t.Setenv(EnvDevSigningSeed, "production-profile-test-seed")
+	trust, err := LoadTrustStoreFromEnv()
+	if trust.Len() != 0 {
+		t.Errorf("returned %d trusted keys", trust.Len())
+	}
+	if err == nil || !strings.Contains(err.Error(), EnvDevSigningSeed) {
+		t.Fatalf("want error naming %s, got %v", EnvDevSigningSeed, err)
+	}
+}
+
+func TestPolicyDevSeedWarning(t *testing.T) {
+	const helper = "CORDUM_TEST_POLICY_SEED_WARNING"
+	if first := os.Getenv(helper); first != "" {
+		checkPolicyDevSeedWarning(t, first)
+		return
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, first := range []string{"key", "trust"} {
+		t.Run(first, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, executable, "-test.run=^TestPolicyDevSeedWarning$")
+			cmd.Env = append(os.Environ(), helper+"="+first)
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("isolated warning test: %v\n%s", err, output)
+			}
+		})
+	}
+}
+
+func checkPolicyDevSeedWarning(t *testing.T, first string) {
+	t.Helper()
+	clearPolicyEnv(t)
+	const seed = "warning-test-secret"
+	t.Setenv(EnvDevSigningSeed, " "+seed+" ")
+	t.Setenv(EnvSigningKeyID, "dev")
+	sum := sha256.Sum256([]byte(seed))
+	want := ed25519.NewKeyFromSeed(sum[:])
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	for _, loader := range []string{first, "key", "trust", first} {
+		if loader == "key" {
+			key, id, err := LoadPrivateKeyFromEnv()
+			if err != nil || id != "dev" || !want.Equal(key) {
+				t.Fatalf("non-production key changed: id=%q, err=%v", id, err)
+			}
+		} else {
+			trust, err := LoadTrustStoreFromEnv()
+			if err != nil || trust.Len() != 1 {
+				t.Fatalf("non-production trust count=%d, err=%v", trust.Len(), err)
+			}
+			public, ok := trust.Lookup("dev")
+			if !ok || !want.Public().(ed25519.PublicKey).Equal(public) {
+				t.Fatal("non-production trust changed")
+			}
+		}
+		if strings.Count(logs.String(), "level=WARN") != 1 ||
+			!strings.Contains(logs.String(), EnvDevSigningSeed) || strings.Contains(logs.String(), seed) {
+			t.Fatalf("want one variable-named warning without seed material, got %q", logs.String())
 		}
 	}
 }
