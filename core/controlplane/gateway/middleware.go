@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
@@ -198,6 +199,55 @@ func (rl *redisRateLimiter) Allow(key string) bool {
 // keyedRateLimiter, used by the middleware/interceptor functions.
 type rateLimiter interface {
 	Allow(key string) bool
+}
+
+// apiRateLimit is the API limit for the current license state: the tier
+// default, then API_RATE_LIMIT_RPS and API_RATE_LIMIT_BURST, then the license
+// cap.
+func (s *server) apiRateLimit() (int, int) {
+	rps, burst := s.tierRateLimitDefaults()
+	rps, burst = rateLimitFromEnv("API_RATE_LIMIT_RPS", "API_RATE_LIMIT_BURST", rps, burst)
+	return clampRateLimitToEntitlements(rps, burst, s.currentEntitlements())
+}
+
+// apiRateLimiter applies s.apiRateLimit() on each request. When that limit
+// differs from the one its current limiter was built for, it builds a limiter
+// for the new limit and swaps it in. A nil client selects the in-memory
+// limiter, a non-nil one the Redis limiter.
+type apiRateLimiter struct {
+	s       *server
+	client  redis.UniversalClient
+	current atomic.Pointer[apiRateLimiterState]
+}
+
+type apiRateLimiterState struct {
+	rps, burst int
+	limiter    rateLimiter
+}
+
+func newAPIRateLimiter(s *server, client redis.UniversalClient) *apiRateLimiter {
+	return &apiRateLimiter{s: s, client: client}
+}
+
+func (rl *apiRateLimiter) Allow(key string) bool {
+	for {
+		// Load before computing, so a limit computed from an older license
+		// state never replaces a limiter built for a newer one.
+		cur := rl.current.Load()
+		rps, burst := rl.s.apiRateLimit()
+		if cur != nil && cur.rps == rps && cur.burst == burst {
+			return cur.limiter.Allow(key)
+		}
+		next := &apiRateLimiterState{rps: rps, burst: burst}
+		if rl.client != nil {
+			next.limiter = newRedisRateLimiter(rl.client, rps, burst)
+		} else {
+			next.limiter = newKeyedRateLimiterFromEnvWithDefaults(rps, burst)
+		}
+		if rl.current.CompareAndSwap(cur, next) {
+			return next.limiter.Allow(key)
+		}
+	}
 }
 
 func entitlementBodyBytesLimit(resolvers ...*licensing.EntitlementResolver) int64 {

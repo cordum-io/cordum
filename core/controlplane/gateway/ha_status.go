@@ -77,7 +77,12 @@ func readCircuitBreakerStatus(ctx context.Context, rdb redis.UniversalClient, ke
 
 // rateLimiterMode returns "redis" or "memory" based on the rate limiter type.
 func rateLimiterMode(rl rateLimiter) string {
-	if _, ok := rl.(*redisRateLimiter); ok {
+	switch rl := rl.(type) {
+	case *apiRateLimiter:
+		if rl.client != nil {
+			return "redis"
+		}
+	case *redisRateLimiter:
 		return "redis"
 	}
 	return "memory"
