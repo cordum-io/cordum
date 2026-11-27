@@ -1063,6 +1063,7 @@ func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cancelTopic, _ := s.jobStore.GetTopic(r.Context(), id)
+	// Must-complete: the job is already cancelled, so a lost entry is logged and does not undo the stop.
 	s.appendAuditEntryNamed(r.Context(), "cancel", "job", id, cancelTopic, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "cancel job "+id)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]any{
@@ -1238,11 +1239,19 @@ func (s *server) handleRemediateJob(w http.ResponseWriter, r *http.Request) {
 
 	packet := jobRequestPacket(traceID, "api-gateway", newReq)
 	s.attachServiceToken(packet)
+	// The entry is stored before dispatch: a job whose entry was not stored is
+	// set FAILED, so the pending replayer never dispatches it either.
+	actorID, role := policybundles.PolicyActorID(r), policybundles.PolicyRole(r)
+	if err := s.appendNamedAuditEntry(r.Context(), "remediate", "job", newJobID, newReq.GetTopic(), actorID, role, "remediate job "+newJobID); err != nil {
+		_ = s.jobStore.SetState(r.Context(), newJobID, model.JobStateFailed)
+		writeErrorJSON(w, http.StatusBadGateway, "remediate not dispatched: its audit entry was not stored")
+		return
+	}
 	if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
+		s.appendAuditEntryNamed(r.Context(), "remediate_failed", "job", newJobID, newReq.GetTopic(), actorID, role, "remediate job "+newJobID+" not dispatched: publish failed")
 		writeErrorJSON(w, http.StatusBadGateway, "failed to enqueue job")
 		return
 	}
-	s.appendAuditEntryNamed(r.Context(), "remediate", "job", newJobID, newReq.GetTopic(), policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "remediate job "+newJobID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]string{"job_id": newJobID, "trace_id": traceID})
 }
@@ -1279,6 +1288,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		if ac := auth.FromRequest(r); ac != nil {
 			actorID, role = ac.PrincipalID, ac.Role
 		}
+		// Refusal record: the request was already answered 403.
 		s.appendAuditEntryNamed(r.Context(), "submit_denied", "job", "", "", actorID, role, "job submit denied: permission or role check failed")
 		return
 	}
@@ -1564,6 +1574,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			if ac := auth.FromRequest(r); ac != nil {
 				actorID, role = ac.PrincipalID, ac.Role
 			}
+			// Refusal record: the request was already answered 403.
 			s.appendAuditEntryNamed(r.Context(), "submit_delegation_impersonation_denied", "job", "", req.Topic, actorID, role,
 				"delegation audience override denied: caller agent_id "+authDerivedAgentID+" requested audience "+audienceOverride+" without "+auth.PermDelegationImpersonate)
 			return

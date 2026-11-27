@@ -65,6 +65,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   unchanged. An install or uninstall whose own audit entry cannot be stored answers
   500 and says so (task-b2c7a413).
 
+- Gateway: job remediation, DLQ retry, and workflow run start and rerun now store
+  their policy audit entry before they dispatch work. While that entry cannot be
+  stored they answer 5xx and dispatch nothing: a run start creates no run, and the
+  new remediation job, retry job or rerun is set failed. Workflow creation, run
+  deletion, eval dataset create, update and delete, and eval run delete answer 500
+  and say the change was applied when their audit entry cannot be stored
+  (task-b6fd4b98).
+
 - Gateway: admin changes to users, passwords, API keys, config, schemas, pools,
   topics, worker credentials and agent identities now answer 500 when their policy
   audit entry cannot be stored. An API key whose entry cannot be stored is revoked
