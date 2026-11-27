@@ -2,6 +2,7 @@ package shadow
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -70,4 +71,57 @@ func dIC03Trace(t *testing.T, store *RedisStore, marker string) []string {
 		t.Fatalf("tracescan.Find: %v", err)
 	}
 	return hits
+}
+
+// TestRetentionProofDIC31.
+// The finding id is DI-C31 content. Every index family the writer touched must
+// hold it before cleanup; after the record's terminal TTL and the read-time
+// cleanupStaleIDTx pass (ListFindings sees the stale id), no trace may remain.
+func TestRetentionProofDIC31(t *testing.T) {
+	t.Setenv("CORDUM_EDGE_SHADOW_RETENTION_SHORT", "1h")
+	ctx := context.Background()
+	store, mr := newTestStore(t)
+	const tenant, marker = "tenant-dic31", "pr2-08-dic31"
+	req := minimalCreateReq(tenant, "owner-dic31", "principal-dic31", "claude-code", FindingRiskHigh, "config_file", "dic31 summary")
+	req.FindingID = marker
+	req.RetentionClass = ShadowRetentionShort
+	req.SourceType = SourceTypeCI
+	req.CIProvider = "github_actions"
+	req.Repo = "org/dic31"
+	req.ClusterID = "cluster-dic31"
+	req.SignalSet = []string{"mcp_config"}
+	finding, err := store.CreateFinding(ctx, req)
+	if err != nil {
+		t.Fatalf("CreateFinding: %v", err)
+	}
+	if _, err := store.ResolveFinding(ctx, tenant, finding.FindingID, ResolveRequest{ResolvedBy: "pr2-08", Reason: "retired"}); err != nil {
+		t.Fatalf("ResolveFinding: %v", err)
+	}
+	id := finding.FindingID
+	locations := []string{
+		findingKey(id),
+		tenantIndexKey(tenant) + ":" + id,
+		secondaryIndexKey(tenant, redisIndexSegStatus, string(FindingStatusResolved)) + ":" + id,
+		secondaryIndexKey(tenant, redisIndexSegRisk, string(FindingRiskHigh)) + ":" + id,
+		secondaryIndexKey(tenant, redisIndexSegAgent, "claude-code") + ":" + id,
+		secondaryIndexKey(tenant, redisIndexSegOwner, "owner-dic31") + ":" + id,
+		sourceIndexKey(SourceTypeCI) + ":" + id,
+		clusterIndexKey("cluster-dic31") + ":" + id,
+		repoIndexKey("github_actions", "org/dic31") + ":" + id,
+		signalIndexKey("mcp_config") + ":" + id,
+	}
+	slices.Sort(locations)
+	if before := dIC03Trace(t, store, marker); !slices.Equal(before, locations) {
+		t.Fatalf("trace of %q before cleanup = %v, want %v", marker, before, locations)
+	}
+
+	mr.FastForward(time.Hour + time.Second)
+	if _, err := store.ListFindings(ctx, ListFindingsQuery{TenantID: tenant}); err != nil {
+		t.Fatalf("ListFindings: %v", err)
+	}
+	waitForZSetCard(t, ctx, store.client, tenantIndexKey(tenant), 0)
+	waitForCleanupIdle(t, store)
+	if hits := dIC03Trace(t, store, marker); len(hits) != 0 {
+		t.Fatalf("trace of %q remains after terminal TTL and stale-index cleanup: %v", marker, hits)
+	}
 }

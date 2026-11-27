@@ -177,6 +177,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Edge shadow findings: every finding write also stores an index record,
+  `edge:shadow:finding-index:<hash>` keyed by a hash of tenant and id, holding
+  the index values the finding was written under and no id or tenant. It expires
+  at the finding's terminal retention plus 90 days. Read-time cleanup of a stale
+  id removes it from every index set the record names, then deletes the record;
+  an id live under another tenant keeps its shared index members. The DI-C31
+  retention proof is `TestRetentionProofDIC31` (PR2-08, task-89109425).
 - Docs: Edge overview, Claude Code, CLI and runbook outage statements now follow
   the failure and partition behavior contract's measured hook and Gateway probes.
   The P0 decision table is labeled design intent; agentd Gateway-outage handling
