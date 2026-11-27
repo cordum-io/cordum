@@ -131,7 +131,11 @@ func (s *RedisStore) AppendMessage(ctx context.Context, tenant, userID, sessionI
 	}
 	key := sessionKey(tenant, sessionID)
 
+	// committed reports that this round's MULTI wrote the session. A replay
+	// or a TxFailedErr round leaves it false, so only a new message is indexed.
+	committed := false
 	txf := func(tx *redis.Tx) error {
+		committed = false
 		stored := storedSession{Tenant: tenant, Owner: userID, Session: CopilotSession{ID: sessionID, UserID: userID, CreatedAt: msg.Timestamp}}
 		data, err := tx.Get(ctx, key).Bytes()
 		switch {
@@ -182,22 +186,23 @@ func (s *RedisStore) AppendMessage(ctx context.Context, tenant, userID, sessionI
 		if err != nil {
 			return err
 		}
+		// The MULTI names only the session key: a cluster refuses a MULTI
+		// across slots, so the user's index is written after it commits.
 		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 			pipe.Set(ctx, key, encoded, s.ttl)
-			if userID != "" {
-				idxKey := sessionIndexKey(tenant, userID)
-				pipe.ZAdd(ctx, idxKey, redis.Z{Score: float64(msg.Timestamp.UnixNano()), Member: sessionID})
-				pipe.Expire(ctx, idxKey, s.ttl)
-			}
 			return nil
 		})
+		committed = err == nil
 		return err
 	}
 
 	for i := 0; i < appendMaxRetries; i++ {
 		err := s.client.Watch(ctx, txf, key)
 		if err == nil {
-			return nil
+			if !committed || userID == "" {
+				return nil
+			}
+			return s.indexSession(ctx, sessionIndexKey(tenant, userID), sessionID, msg.Timestamp)
 		}
 		if errors.Is(err, redis.TxFailedErr) {
 			continue // optimistic-lock contention — retry
@@ -205,6 +210,19 @@ func (s *RedisStore) AppendMessage(ctx context.Context, tenant, userID, sessionI
 		return fmt.Errorf("copilot store: append message: %w", err)
 	}
 	return fmt.Errorf("copilot store: append message: write contention after %d retries", appendMaxRetries)
+}
+
+// indexSession scores sessionID at updatedAt in the user's session index and
+// refreshes the index TTL, in one MULTI on the index key alone.
+func (s *RedisStore) indexSession(ctx context.Context, idxKey, sessionID string, updatedAt time.Time) error {
+	if _, err := s.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.ZAdd(ctx, idxKey, redis.Z{Score: float64(updatedAt.UnixNano()), Member: sessionID})
+		pipe.Expire(ctx, idxKey, s.ttl)
+		return nil
+	}); err != nil {
+		return fmt.Errorf("copilot store: append message: %w", err)
+	}
+	return nil
 }
 
 // messageID derives a deterministic id so at-least-once audit delivery is
