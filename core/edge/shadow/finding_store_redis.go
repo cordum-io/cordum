@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -24,18 +25,25 @@ import (
 //	edge:shadow:index:<tenant_id>:risk:<v>       — ZSET, secondary filter
 //	edge:shadow:index:<tenant_id>:agent:<v>      — ZSET, secondary filter
 //	edge:shadow:index:<tenant_id>:owner:<v>      — ZSET, secondary filter
+//	edge:shadow:index:source:<v>                 — ZSET, shared across tenants
+//	edge:shadow:index:cluster:<v>                — ZSET, shared across tenants
+//	edge:shadow:index:repo:<provider>:<repo>     — ZSET, shared across tenants
+//	edge:shadow:index:signal:<v>                 — ZSET, shared across tenants
+//	edge:shadow:finding-index:<hash>             — JSON index fields (string), with TTL
 //
-// All secondary indexes share the same per-tenant scope to prevent
-// cross-tenant index contamination. The tenant index is the broadest
-// fallback; secondaries are used when the query's narrowest filter
-// matches one of (status, risk, agent_product, owner).
+// The tenant-scoped indexes prevent cross-tenant index contamination. The
+// tenant index is the broadest fallback; secondaries are used when the
+// query's narrowest filter matches one of (status, risk, agent_product,
+// owner). The finding-index record holds the index values a finding was
+// written under, so read-time cleanup can remove its id from every index.
 const (
-	redisKeyFinding     = "edge:shadow:finding:"
-	redisKeyIndexTenant = "edge:shadow:index:"
-	redisIndexSegStatus = ":status:"
-	redisIndexSegRisk   = ":risk:"
-	redisIndexSegAgent  = ":agent:"
-	redisIndexSegOwner  = ":owner:"
+	redisKeyFinding         = "edge:shadow:finding:"
+	redisKeyFindingIndexRef = "edge:shadow:finding-index:"
+	redisKeyIndexTenant     = "edge:shadow:index:"
+	redisIndexSegStatus     = ":status:"
+	redisIndexSegRisk       = ":risk:"
+	redisIndexSegAgent      = ":agent:"
+	redisIndexSegOwner      = ":owner:"
 	// EDGE-143.5 — §10.5 NON-tenant-scoped indexes. Multiple tenants
 	// share the same ZSET on these keys (Q7 binding governor ruling,
 	// comment-a17f4f1c on task-de50a293). Tenant isolation is enforced
@@ -248,6 +256,82 @@ func signalIndexKey(signal string) string {
 	return redisIndexKeySignal + signal
 }
 
+// findingIndexRefKey returns the key of a finding's index record, a hash of
+// tenant and id so the key holds neither. Any path that deletes a finding
+// must delete this record with it.
+func findingIndexRefKey(tenant, id string) string {
+	sum := sha256.Sum256([]byte(tenant + "\x00" + id))
+	return redisKeyFindingIndexRef + hex.EncodeToString(sum[:])
+}
+
+// findingIndexFields are the values that place a finding in its index
+// sets. They form the finding's index record, which holds no finding id
+// and no tenant.
+type findingIndexFields struct {
+	Status           FindingStatus `json:"status"`
+	Risk             FindingRisk   `json:"risk"`
+	AgentProduct     string        `json:"agent_product"`
+	OwnerPrincipalID string        `json:"owner_principal_id"`
+	SourceType       string        `json:"source_type"`
+	ClusterID        string        `json:"cluster_id,omitempty"`
+	CIProvider       string        `json:"ci_provider,omitempty"`
+	Repo             string        `json:"repo,omitempty"`
+	SignalSet        []string      `json:"signal_set,omitempty"`
+}
+
+func indexFieldsOf(f *ShadowAgentFinding) findingIndexFields {
+	return findingIndexFields{
+		Status:           f.Status,
+		Risk:             f.Risk,
+		AgentProduct:     f.AgentProduct,
+		OwnerPrincipalID: f.OwnerPrincipalID,
+		SourceType:       f.SourceType,
+		ClusterID:        f.ClusterID,
+		CIProvider:       f.CIProvider,
+		Repo:             f.Repo,
+		SignalSet:        f.SignalSet,
+	}
+}
+
+// findingIndexKeys returns the index sets a finding with these fields is
+// written to: the tenant-scoped sets, then the sets shared across tenants.
+func findingIndexKeys(tenant string, f findingIndexFields) (scoped, shared []string) {
+	scoped = []string{
+		tenantIndexKey(tenant),
+		secondaryIndexKey(tenant, redisIndexSegStatus, string(f.Status)),
+		secondaryIndexKey(tenant, redisIndexSegRisk, string(f.Risk)),
+		secondaryIndexKey(tenant, redisIndexSegAgent, f.AgentProduct),
+		secondaryIndexKey(tenant, redisIndexSegOwner, f.OwnerPrincipalID),
+	}
+	// EDGE-143.5 — §10.5 shared (non-tenant-scoped) indexes.
+	shared = []string{sourceIndexKey(f.SourceType)}
+	if f.ClusterID != "" {
+		shared = append(shared, clusterIndexKey(f.ClusterID))
+	}
+	if f.CIProvider != "" && f.Repo != "" {
+		shared = append(shared, repoIndexKey(f.CIProvider, f.Repo))
+	}
+	for _, sig := range f.SignalSet {
+		if sig != "" {
+			shared = append(shared, signalIndexKey(sig))
+		}
+	}
+	return scoped, shared
+}
+
+// addFindingIndexRefWrite queues f's index record. Its TTL is the
+// finding's terminal retention plus DefaultTerminalRetention, reset on
+// every write, so the record outlives an expiring finding by that grace.
+func (s *RedisStore) addFindingIndexRefWrite(ctx context.Context, pipe redis.Pipeliner, f *ShadowAgentFinding) error {
+	payload, err := json.Marshal(indexFieldsOf(f))
+	if err != nil {
+		return fmt.Errorf("shadow finding: marshal index record: %w", err)
+	}
+	ttl := max(s.retentionFor(f.RetentionClass), 0) + DefaultTerminalRetention
+	pipe.Set(ctx, findingIndexRefKey(f.TenantID, f.FindingID), payload, ttl)
+	return nil
+}
+
 // CreateFinding persists a new finding. Atomicity: the JSON write +
 // every index member add happen inside a Redis pipeline so a single
 // partial failure leaves no orphaned indexes.
@@ -323,7 +407,7 @@ func (s *RedisStore) createFindingAtomically(
 			_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 				pipe.Set(ctx, key, payload, 0)
 				addFindingIndexWrites(ctx, pipe, &candidate, float64(candidate.CreatedAt.UnixMilli()))
-				return nil
+				return s.addFindingIndexRefWrite(ctx, pipe, &candidate)
 			})
 			if err != nil {
 				return fmt.Errorf("shadow finding: create transaction: %w", err)
@@ -370,27 +454,9 @@ func decodeExistingFindingForCreate(raw []byte) (*ShadowAgentFinding, error) {
 }
 
 func addFindingIndexWrites(ctx context.Context, pipe redis.Pipeliner, finding *ShadowAgentFinding, score float64) {
-	pipe.ZAdd(ctx, tenantIndexKey(finding.TenantID), redis.Z{Score: score, Member: finding.FindingID})
-	pipe.ZAdd(ctx, secondaryIndexKey(finding.TenantID, redisIndexSegStatus, string(finding.Status)),
-		redis.Z{Score: score, Member: finding.FindingID})
-	pipe.ZAdd(ctx, secondaryIndexKey(finding.TenantID, redisIndexSegRisk, string(finding.Risk)),
-		redis.Z{Score: score, Member: finding.FindingID})
-	pipe.ZAdd(ctx, secondaryIndexKey(finding.TenantID, redisIndexSegAgent, finding.AgentProduct),
-		redis.Z{Score: score, Member: finding.FindingID})
-	pipe.ZAdd(ctx, secondaryIndexKey(finding.TenantID, redisIndexSegOwner, finding.OwnerPrincipalID),
-		redis.Z{Score: score, Member: finding.FindingID})
-	// EDGE-143.5 — §10.5 shared (non-tenant-scoped) indexes.
-	pipe.ZAdd(ctx, sourceIndexKey(finding.SourceType), redis.Z{Score: score, Member: finding.FindingID})
-	if finding.ClusterID != "" {
-		pipe.ZAdd(ctx, clusterIndexKey(finding.ClusterID), redis.Z{Score: score, Member: finding.FindingID})
-	}
-	if finding.CIProvider != "" && finding.Repo != "" {
-		pipe.ZAdd(ctx, repoIndexKey(finding.CIProvider, finding.Repo), redis.Z{Score: score, Member: finding.FindingID})
-	}
-	for _, sig := range finding.SignalSet {
-		if sig != "" {
-			pipe.ZAdd(ctx, signalIndexKey(sig), redis.Z{Score: score, Member: finding.FindingID})
-		}
+	scoped, shared := findingIndexKeys(finding.TenantID, indexFieldsOf(finding))
+	for _, key := range append(scoped, shared...) {
+		pipe.ZAdd(ctx, key, redis.Z{Score: score, Member: finding.FindingID})
 	}
 }
 
@@ -762,7 +828,7 @@ func (s *RedisStore) commitTransitionFinding(
 				pipe.Expire(ctx, key, ttl)
 			}
 		}
-		return nil
+		return s.addFindingIndexRefWrite(ctx, pipe, f)
 	})
 	if err != nil {
 		return fmt.Errorf("shadow finding: transition: %w", err)
