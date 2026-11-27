@@ -238,6 +238,9 @@ func TestBusTapAuthRefusalLog(t *testing.T) {
 	bus.emit(capsdk.SubjectDLQ, busTapDLQPacket(job, message, dlqToken))
 	bus.emit(capsdk.SubjectDLQ, busTapDLQPacket(job, message, invalid))
 	bus.emit(capsdk.SubjectAuditExport, busTapDLQPacket(job, message, invalid))
+	bus.emit(capsdk.SubjectResult, &pb.BusPacket{SenderId: worker, AuthToken: hbToken, Payload: &pb.BusPacket_JobResult{
+		JobResult: &pb.JobResult{JobId: job, WorkerId: worker, Status: pb.JobStatus_JOB_STATUS_SUCCEEDED, ErrorMessage: message},
+	}})
 	_, warnBus := busTapGateway(t, scheduler.HandshakeModeWarn, false)
 	for range 2 {
 		warnBus.emit(capsdk.SubjectHeartbeat, busTapHeartbeatPacket(sender, sender, ""))
@@ -260,6 +263,7 @@ func TestBusTapAuthRefusalLog(t *testing.T) {
 		`level=WARN msg="bus tap packet refused" tap=dlq reason=reject_invalid`,
 		`level=WARN msg="bus tap packet refused" tap=job_stream reason=identity`,
 		`level=WARN msg="bus tap packet refused" tap=job_stream reason=reject_invalid`,
+		`level=WARN msg="bus tap packet refused" tap=job_stream reason=dispatch`,
 		`level=WARN msg="bus tap packet refused" tap=audit_stream reason=reject_invalid`,
 		`level=WARN msg="bus tap admitted a packet without a session token" tap=heartbeat`,
 	}
@@ -270,18 +274,20 @@ func TestBusTapAuthRefusalLog(t *testing.T) {
 	}
 }
 
-// busTapWorkflow uses the dispatched-run fixture from the workflow result tests.
-func busTapWorkflow(t *testing.T, s *server, bus *stubBus) *wf.WorkflowRun {
+// busTapWorkflow uses the dispatched-run fixture from the workflow result tests,
+// with the run in tenant. It records the step job's tenant as the scheduler
+// does at submit.
+func busTapWorkflow(t *testing.T, s *server, bus *stubBus, tenant string) *wf.WorkflowRun {
 	t.Helper()
 	ctx := context.Background()
 	s.workflowEng = wf.NewEngine(s.workflowStore, bus).WithMemory(s.memStore)
-	definition := &wf.Workflow{ID: "wf-stream", OrgID: matrixTenant, Steps: map[string]*wf.Step{
+	definition := &wf.Workflow{ID: "wf-stream", OrgID: tenant, Steps: map[string]*wf.Step{
 		"step": {ID: "step", Type: wf.StepTypeWorker, Topic: "job.default"},
 	}}
 	if err := s.workflowStore.SaveWorkflow(ctx, definition); err != nil {
 		t.Fatal(err)
 	}
-	run := &wf.WorkflowRun{ID: "run-stream", WorkflowID: definition.ID, OrgID: matrixTenant,
+	run := &wf.WorkflowRun{ID: "run-stream", WorkflowID: definition.ID, OrgID: tenant,
 		Steps: map[string]*wf.StepRun{}, Status: wf.RunStatusPending, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
 	if err := s.workflowStore.CreateRun(ctx, run); err != nil {
 		t.Fatal(err)
@@ -292,6 +298,9 @@ func busTapWorkflow(t *testing.T, s *server, bus *stubBus) *wf.WorkflowRun {
 	dispatched, err := s.workflowStore.GetRun(ctx, run.ID)
 	if err != nil || dispatched == nil || dispatched.Steps["step"] == nil || dispatched.Steps["step"].JobID == "" {
 		t.Fatalf("expected dispatched step: run=%+v err=%v", dispatched, err)
+	}
+	if err := s.jobStore.SetJobMeta(ctx, &pb.JobRequest{JobId: dispatched.Steps["step"].JobID, TenantId: tenant}); err != nil {
+		t.Fatalf("record job tenant: %v", err)
 	}
 	return dispatched
 }
@@ -319,7 +328,7 @@ func TestBusTapAuthStreamWorkflow(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			s, bus := busTapGateway(t, c.mode, false)
-			before := busTapWorkflow(t, s, bus)
+			before := busTapWorkflow(t, s, bus, matrixTenant)
 			job := before.Steps["step"].JobID
 			client := registerGatewayEdgeStreamClient(t, s, "", true)
 			p := &pb.BusPacket{SenderId: c.sender, AuthToken: c.token(t, s), Payload: &pb.BusPacket_JobResult{

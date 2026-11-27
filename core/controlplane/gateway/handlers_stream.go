@@ -408,7 +408,12 @@ func (s *server) startBusTaps() error {
 		if err := s.bus.Subscribe(subject, "", func(p *pb.BusPacket) error {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			if _, ok := tapAuth.admit(ctx, tap, p); !ok {
+			claims, ok := tapAuth.admit(ctx, tap, p)
+			if !ok {
+				return nil
+			}
+			if !s.busTapResultFromDispatchedWorker(ctx, p, claims) {
+				tapAuth.refuse(tap, "dispatch")
 				return nil
 			}
 			// Always broadcast to WS clients first — duplicate broadcasts are
