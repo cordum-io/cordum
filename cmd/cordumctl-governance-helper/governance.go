@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/cordum/cordum/core/policysign"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/nats-io/nats.go"
@@ -234,11 +235,10 @@ func newGovernanceRuntime(redisURL string) (*governanceRuntime, error) {
 	if redisURL == "" {
 		redisURL = governanceDefaultRedisURL
 	}
-	options, err := redis.ParseURL(redisURL)
+	client, err := redisutil.NewClient(redisURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse redis url: %w", err)
 	}
-	client := redis.NewClient(options)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {
@@ -410,22 +410,29 @@ func (s natsGovernanceSubscriber) Subscribe(handler func([]byte) error) error {
 }
 
 func (g *governanceRuntime) scanJobIDs(ctx context.Context) ([]string, error) {
-	ids := make(map[string]struct{})
-	var cursor uint64
-	for {
-		keys, next, err := g.rawClient.Scan(ctx, cursor, governanceJobRequestPrefix+"*", governanceScanBatchSize).Result()
-		if err != nil {
-			return nil, fmt.Errorf("scan job request keys: %w", err)
-		}
-		for _, key := range keys {
-			jobID := strings.TrimSpace(strings.TrimPrefix(key, governanceJobRequestPrefix))
-			if jobID != "" {
-				ids[jobID] = struct{}{}
-			}
-		}
-		cursor = next
-		if cursor == 0 {
-			break
+	var keys []string
+	var err error
+	if cluster, ok := g.rawClient.(*redis.ClusterClient); ok {
+		// On a cluster SCAN reaches one node, so scan every master with its own cursor.
+		var mu sync.Mutex
+		err = cluster.ForEachMaster(ctx, func(ctx context.Context, node *redis.Client) error {
+			found, scanErr := governanceScanJobKeys(ctx, node)
+			mu.Lock()
+			defer mu.Unlock()
+			keys = append(keys, found...)
+			return scanErr
+		})
+	} else {
+		keys, err = governanceScanJobKeys(ctx, g.rawClient)
+	}
+	if err != nil {
+		return nil, err
+	}
+	ids := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		jobID := strings.TrimSpace(strings.TrimPrefix(key, governanceJobRequestPrefix))
+		if jobID != "" {
+			ids[jobID] = struct{}{}
 		}
 	}
 	out := make([]string, 0, len(ids))
@@ -434,6 +441,22 @@ func (g *governanceRuntime) scanJobIDs(ctx context.Context) ([]string, error) {
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+func governanceScanJobKeys(ctx context.Context, client redis.UniversalClient) ([]string, error) {
+	var out []string
+	var cursor uint64
+	for {
+		keys, next, err := client.Scan(ctx, cursor, governanceJobRequestPrefix+"*", governanceScanBatchSize).Result()
+		if err != nil {
+			return nil, fmt.Errorf("scan job request keys: %w", err)
+		}
+		out = append(out, keys...)
+		cursor = next
+		if cursor == 0 {
+			return out, nil
+		}
+	}
 }
 
 func (g *governanceRuntime) loadJobRequest(ctx context.Context, jobID string) (*governanceJobRequest, error) {
@@ -488,45 +511,55 @@ func (g *governanceRuntime) appendDecisionRecord(ctx context.Context, record gov
 	}
 	recordID := governanceDecisionRecordID(record)
 	recordKey := governanceDecisionRecordKey(record.Tenant, recordID)
-	primaryIndex := governanceDecisionPrimaryIndexKey(record.Tenant)
 	verdictWire, err := governanceDecisionWireVerdict(record.Verdict)
 	if err != nil {
 		return err
 	}
-	pipe := g.rawClient.TxPipeline()
-	score := float64(record.Timestamp)
-	pipe.HSet(ctx, recordKey, governanceDecisionJSONField, payload)
-	pipe.ZAdd(ctx, primaryIndex, redis.Z{Score: score, Member: recordID})
-	if record.RuleID != "" {
-		pipe.ZAdd(ctx, governanceDecisionRuleIndexKey(record.Tenant, record.RuleID), redis.Z{Score: score, Member: recordID})
-	}
-	if record.AgentID != "" {
-		pipe.ZAdd(ctx, governanceDecisionAgentIndexKey(record.Tenant, record.AgentID), redis.Z{Score: score, Member: recordID})
-	}
-	if record.Topic != "" {
-		pipe.ZAdd(ctx, governanceDecisionTopicIndexKey(record.Tenant, record.Topic), redis.Z{Score: score, Member: recordID})
-	}
-	pipe.ZAdd(ctx, governanceDecisionVerdictIndexKey(record.Tenant, verdictWire), redis.Z{Score: score, Member: recordID})
-	if g.decisionTTL > 0 {
-		pipe.Expire(ctx, recordKey, g.decisionTTL)
-		cutoff := time.Now().UTC().Add(-g.decisionTTL).UnixMilli()
-		min, max := "-inf", strconv.FormatInt(cutoff, 10)
-		pipe.ZRemRangeByScore(ctx, primaryIndex, min, max)
-		if record.RuleID != "" {
-			pipe.ZRemRangeByScore(ctx, governanceDecisionRuleIndexKey(record.Tenant, record.RuleID), min, max)
+	// The record and each index sit in different Redis Cluster slots, so they
+	// cannot share a MULTI. The record goes first, with its TTL.
+	if _, err := g.rawClient.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.HSet(ctx, recordKey, governanceDecisionJSONField, payload)
+		if g.decisionTTL > 0 {
+			pipe.Expire(ctx, recordKey, g.decisionTTL)
 		}
-		if record.AgentID != "" {
-			pipe.ZRemRangeByScore(ctx, governanceDecisionAgentIndexKey(record.Tenant, record.AgentID), min, max)
-		}
-		if record.Topic != "" {
-			pipe.ZRemRangeByScore(ctx, governanceDecisionTopicIndexKey(record.Tenant, record.Topic), min, max)
-		}
-		pipe.ZRemRangeByScore(ctx, governanceDecisionVerdictIndexKey(record.Tenant, verdictWire), min, max)
-	}
-	if _, err := pipe.Exec(ctx); err != nil {
+		return nil
+	}); err != nil {
 		return fmt.Errorf("append decision record: %w", err)
 	}
+	if err := g.appendDecisionIndexes(ctx, governanceDecisionIndexKeys(record, verdictWire), recordID, float64(record.Timestamp)); err != nil {
+		// backfill-decisions skips a decision whose record exists, so an
+		// unindexed record would never be repaired: remove it instead.
+		undoErr := g.rawClient.Del(context.WithoutCancel(ctx), recordKey).Err()
+		return fmt.Errorf("append decision record: %w", errors.Join(err, undoErr))
+	}
 	return nil
+}
+
+func governanceDecisionIndexKeys(record governanceDecisionLogRecord, verdictWire string) []string {
+	keys := []string{governanceDecisionPrimaryIndexKey(record.Tenant)}
+	if record.RuleID != "" {
+		keys = append(keys, governanceDecisionRuleIndexKey(record.Tenant, record.RuleID))
+	}
+	if record.AgentID != "" {
+		keys = append(keys, governanceDecisionAgentIndexKey(record.Tenant, record.AgentID))
+	}
+	if record.Topic != "" {
+		keys = append(keys, governanceDecisionTopicIndexKey(record.Tenant, record.Topic))
+	}
+	return append(keys, governanceDecisionVerdictIndexKey(record.Tenant, verdictWire))
+}
+
+func (g *governanceRuntime) appendDecisionIndexes(ctx context.Context, keys []string, recordID string, score float64) error {
+	cutoff := strconv.FormatInt(time.Now().UTC().Add(-g.decisionTTL).UnixMilli(), 10)
+	pipe := g.rawClient.Pipeline()
+	for _, key := range keys {
+		pipe.ZAdd(ctx, key, redis.Z{Score: score, Member: recordID})
+		if g.decisionTTL > 0 {
+			pipe.ZRemRangeByScore(ctx, key, "-inf", cutoff)
+		}
+	}
+	_, err := pipe.Exec(ctx)
+	return err
 }
 
 func (g *governanceRuntime) decisionRecordExists(ctx context.Context, record governanceDecisionLogRecord) (bool, error) {
