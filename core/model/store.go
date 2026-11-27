@@ -111,6 +111,15 @@ type JobStore interface {
 	GetDelegationLineage(ctx context.Context, jobID string) (DelegationLineage, error)
 	GetAttempts(ctx context.Context, jobID string) (int, error)
 	CountActiveByTenant(ctx context.Context, tenant string) (int, error)
+	// ReserveTenantSlot atomically adds jobID to tenant's active set when
+	// fewer than limit other jobs are in it, and reports whether it did and
+	// how many other jobs it counted. A job already in the set does not count
+	// against itself, and a refused job leaves it. A terminal state write
+	// removes the job again.
+	ReserveTenantSlot(ctx context.Context, tenant, jobID string, limit int64) (reserved bool, others int, err error)
+	// ReleaseTenantSlot removes jobID from tenant's active set, giving back a
+	// slot ReserveTenantSlot took for a job that was not dispatched.
+	ReleaseTenantSlot(ctx context.Context, tenant, jobID string) error
 	TryAcquireLock(ctx context.Context, key string, ttl time.Duration) (string, error)
 	ReleaseLock(ctx context.Context, key string, token string) error
 	RenewLock(ctx context.Context, key, token string, ttl time.Duration) error
