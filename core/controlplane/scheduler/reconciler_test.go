@@ -863,3 +863,27 @@ func TestReconcilerSingleTickPerTTLWindow(t *testing.T) {
 		t.Fatal("expected lock to be available after TTL expiry")
 	}
 }
+
+type sweepRecordingStore struct {
+	*fakeReconcileStore
+	sweeps []time.Time
+}
+
+func (s *sweepRecordingStore) SweepExpiredJobIndexes(_ context.Context, now time.Time) (int64, error) {
+	s.sweeps = append(s.sweeps, now)
+	return 0, nil
+}
+
+func TestReconcilerTickSweepsExpiredJobIndexes(t *testing.T) {
+	store := &sweepRecordingStore{fakeReconcileStore: newFakeReconcileStore()}
+	reconciler := NewReconciler(store, time.Minute, time.Minute, time.Hour)
+	before := time.Now()
+	reconciler.tick(context.Background())
+	after := time.Now()
+	if len(store.sweeps) != 1 {
+		t.Fatalf("sweeps per tick = %d; want 1", len(store.sweeps))
+	}
+	if now := store.sweeps[0]; now.Before(before) || now.After(after) {
+		t.Fatalf("sweep now = %s; want between %s and %s", now, before, after)
+	}
+}

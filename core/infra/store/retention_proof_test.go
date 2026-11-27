@@ -1,9 +1,12 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -13,6 +16,8 @@ import (
 	"github.com/cordum/cordum/core/infra/locks"
 	"github.com/cordum/cordum/core/infra/tracescan"
 	"github.com/cordum/cordum/core/internal/testredis"
+	"github.com/cordum/cordum/core/model"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -36,6 +41,109 @@ func TestRetentionProofDIC11(t *testing.T) {
 		t.Fatalf("PutResult: %v", err)
 	}
 	expireJustPast(t, mr, client, ttl, marker, "ctx:", "res:")
+	requireNoTrace(t, client, marker)
+}
+
+// TestRetentionProofDIC22: one job through every DI-C22 writer, then a
+// terminal transition, then JOB_META_TTL.
+func TestRetentionProofDIC22(t *testing.T) {
+	const ttl = time.Hour
+	t.Setenv("JOB_META_TTL", ttl.String())
+	mr, client, marker := newProofRedis(t)
+	ctx := context.Background()
+	s := NewRedisJobStoreFromClient(client)
+	jobID, tenant, worker := marker+"-job", marker+"-tenant", marker+"-worker"
+	req := &pb.JobRequest{
+		JobId: jobID, Topic: "job." + marker, TenantId: tenant, PrincipalId: marker + "-principal",
+		Labels: map[string]string{"proof": marker}, Budget: &pb.Budget{DeadlineMs: 600000},
+	}
+	if err := s.SetJobMeta(ctx, req); err != nil {
+		t.Fatalf("SetJobMeta: %v", err)
+	}
+	if err := s.SetJobRequest(ctx, req); err != nil {
+		t.Fatalf("SetJobRequest: %v", err)
+	}
+	if err := s.SetStateWithContext(ctx, jobID, model.JobStatePending, &model.StateEventContext{Reason: "queued " + marker}); err != nil {
+		t.Fatalf("SetStateWithContext(pending): %v", err)
+	}
+	if err := s.SetSafetyDecision(ctx, jobID, model.SafetyDecisionRecord{
+		Decision: model.SafetyAllow, Reason: "allow " + marker, RuleID: marker + "-rule",
+	}); err != nil {
+		t.Fatalf("SetSafetyDecision: %v", err)
+	}
+	if err := s.SetOutputDecision(ctx, jobID, model.OutputSafetyRecord{Decision: model.OutputAllow, Reason: "output " + marker}); err != nil {
+		t.Fatalf("SetOutputDecision: %v", err)
+	}
+	dispatchID, attempt, err := s.BeginDispatch(ctx, jobID, worker, tenant)
+	if err != nil {
+		t.Fatalf("BeginDispatch: %v", err)
+	}
+	// SetState moves the runtime fence to RUNNING, as the dispatch path does.
+	if err := s.SetState(ctx, jobID, model.JobStateRunning); err != nil {
+		t.Fatalf("SetState(running): %v", err)
+	}
+	if err := s.SetWorkerID(ctx, jobID, worker); err != nil {
+		t.Fatalf("SetWorkerID: %v", err)
+	}
+	resultPtr := PointerForKey(MakeResultKey(jobID))
+	if err := s.SetResultPtr(ctx, jobID, resultPtr); err != nil {
+		t.Fatalf("SetResultPtr: %v", err)
+	}
+	if got, err := s.ApplyJobResult(ctx, model.JobResultApply{
+		JobID: jobID, DispatchID: dispatchID, Attempt: attempt, WorkerID: worker, Tenant: tenant,
+		MessageID: []byte("message " + marker), Digest: bytes.Repeat([]byte{0x5a}, 32),
+		State: model.JobStateSucceeded, ResultPtr: resultPtr, Effect: []byte("effect " + marker),
+	}); err != nil || got != model.JobEventApplied {
+		t.Fatalf("ApplyJobResult = %v, %v; want applied", got, err)
+	}
+	// The terminal transition clears these two, so check them before it.
+	requireTrace(t, client, marker, "job:deadline:", "job:tenant:active:")
+	if err := s.SetStateWithContext(ctx, jobID, model.JobStateSucceeded, &model.StateEventContext{ResultPtr: resultPtr}); err != nil {
+		t.Fatalf("SetStateWithContext(succeeded): %v", err)
+	}
+	expireJustPast(t, mr, client, ttl, marker,
+		"job:meta:", "job:state:", "job:result_ptr:", "job:req:", "job:decisions:",
+		"job:"+jobID+":output_decision", jobRuntimeKey(jobID), "worker:jobs:",
+		"job:index:", "job:recent:", "job:events:")
+	if _, err := s.SweepExpiredJobIndexes(ctx, time.Now().Add(ttl+time.Second)); err != nil {
+		t.Fatalf("SweepExpiredJobIndexes: %v", err)
+	}
+	requireNoTrace(t, client, marker)
+	// The runtime key names the job only in base64.
+	requireNoTrace(t, client, base64.RawURLEncoding.EncodeToString([]byte(jobID)))
+}
+
+// TestRetentionProofDIC24: a deadline, a terminal state, 1000 newer jobs so
+// the job:recent trim drops the id, then JOB_META_TTL.
+func TestRetentionProofDIC24(t *testing.T) {
+	const ttl = time.Hour
+	t.Setenv("JOB_META_TTL", ttl.String())
+	mr, client, marker := newProofRedis(t)
+	ctx := context.Background()
+	s := NewRedisJobStoreFromClient(client)
+	jobID := marker + "-job"
+	if err := s.SetTenant(ctx, jobID, marker+"-tenant"); err != nil {
+		t.Fatalf("SetTenant: %v", err)
+	}
+	if err := s.SetStateWithContext(ctx, jobID, model.JobStatePending, nil); err != nil {
+		t.Fatalf("SetStateWithContext(pending): %v", err)
+	}
+	if err := s.SetDeadline(ctx, jobID, time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("SetDeadline: %v", err)
+	}
+	requireTrace(t, client, marker, "job:index:", "job:recent:", "job:deadline:", "job:tenant:active:")
+	if err := s.SetStateWithContext(ctx, jobID, model.JobStateSucceeded, nil); err != nil {
+		t.Fatalf("SetStateWithContext(succeeded): %v", err)
+	}
+	for i := 0; i < 1000; i++ {
+		if err := s.SetStateWithContext(ctx, fmt.Sprintf("newer-%04d", i), model.JobStatePending, nil); err != nil {
+			t.Fatalf("SetStateWithContext(newer %d): %v", i, err)
+		}
+	}
+	expireJustPast(t, mr, client, ttl, marker, "job:index:")
+	if _, err := s.SweepExpiredJobIndexes(ctx, time.Now().Add(ttl+time.Second)); err != nil {
+		t.Fatalf("SweepExpiredJobIndexes: %v", err)
+	}
 	requireNoTrace(t, client, marker)
 }
 

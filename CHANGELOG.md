@@ -177,6 +177,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Job index and event keys follow `JOB_META_TTL`. On each scan the scheduler
+  reconciler removes a job's id from the `job:index:<state>` sets and
+  `job:recent`, and deletes its `job:events:<id>` list, once the job's
+  `job:meta` and `job:state` keys have both expired. A job with either key
+  present keeps its index entries and its events. The DI-C22 and DI-C24
+  retention proofs are `TestRetentionProofDIC22` and `TestRetentionProofDIC24`
+  (PR2-08, task-3d7cab89).
 - Edge shadow findings: every finding write also stores an index record,
   `edge:shadow:finding-index:<hash>` keyed by a hash of tenant and id, holding
   the index values the finding was written under and no id or tenant. It expires
