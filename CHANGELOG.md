@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Edge agentd: when a call waits inline for an approval, agentd's own decision event records the decision the hook applied: ALLOW once the approval is consumed, or DENY with the hook's reason when the approval is rejected, cannot be consumed, or comes back with constraints the hook cannot apply. A wait that ends unresolved still records REQUIRE_APPROVAL (task-4136b2a5).
+
 - Python SDK: `cordum_sdk._generated` is regenerated from the OpenAPI spec. It gains
   the `create_edge_calibration_report` and `get_edge_calibration_report` endpoints and
   `EdgeSession.assurance_state`. `make openapi-validate`, which the OpenAPI Validate
