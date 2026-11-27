@@ -217,7 +217,7 @@ func (e *Evaluator) evaluateFreshDecision(evalCtx context.Context, req claude.Ag
 	// metadata (cache lookup, fail-mode, agentd timing) and must be a distinct
 	// record — reusing resp.EventID would collide with the gateway-written
 	// event when the events/batch flush hits loadEventByIDInTx.
-	freshResp := checked
+	freshResp := evidenceResponse(checked, decision)
 	freshResp.EventID = ""
 	if err := e.recordDecisionEvidence(writer, requireEvidence, decision, evalReq, DecisionEvidence{
 		State:      e.state,
@@ -229,6 +229,28 @@ func (e *Evaluator) evaluateFreshDecision(evalCtx context.Context, req claude.Ag
 		return decision, err
 	}
 	return decision, nil
+}
+
+// evidenceResponse is the response the evidence event records. When an inline
+// wait turned a REQUIRE_APPROVAL into an ALLOW or DENY, it carries that outcome
+// and the hook's reason. Any other response is returned unchanged, including
+// one with no approval_ref, which is never waited on.
+func evidenceResponse(checked EvaluateResponse, decision claude.AgentdDecision) EvaluateResponse {
+	if !strings.EqualFold(strings.TrimSpace(checked.Decision), string(edgecore.DecisionRequireApproval)) ||
+		strings.TrimSpace(checked.ApprovalRef) == "" {
+		return checked
+	}
+	outcome := checked
+	switch decision.Decision {
+	case claude.DecisionAllow:
+		outcome.Decision = string(edgecore.DecisionAllow)
+	case claude.DecisionDeny:
+		outcome.Decision = string(edgecore.DecisionDeny)
+	default:
+		return checked
+	}
+	outcome.TerminalMessage, outcome.PermissionDecisionReason, outcome.Reason = decision.Reason, decision.Reason, decision.Reason
+	return outcome
 }
 
 // evaluatorCoalesceKey shares one in-flight evaluate only between calls with
