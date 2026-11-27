@@ -25,8 +25,7 @@ const resignPackLockResource = "packs:global"
 const resignPackLockTTL = 60 * time.Second
 
 // handleResignPolicyBundle is an explicit operator action, never called automatically.
-// It requires the admin role; requireStoreAndRole admits the canonical operator
-// and secops aliases through auth.NormalizeRole.
+// It requires the admin role.
 func (s *server) handleResignPolicyBundle(w http.ResponseWriter, r *http.Request) {
 	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
 		return

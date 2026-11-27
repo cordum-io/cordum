@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1409,7 +1410,7 @@ func (s *server) requirePermissionOrRole(w http.ResponseWriter, r *http.Request,
 			return false
 		}
 		if len(legacyRoles) > 0 {
-			if err := s.requireRole(r, legacyRoles...); err != nil {
+			if err := s.requireRole(r, s.permissionLegacyRoles(legacyRoles)...); err != nil {
 				writeForbidden(w, r, err)
 				return false
 			}
@@ -1418,7 +1419,7 @@ func (s *server) requirePermissionOrRole(w http.ResponseWriter, r *http.Request,
 	}
 
 	if len(legacyRoles) > 0 {
-		if err := s.requireRole(r, legacyRoles...); err != nil {
+		if err := s.requireRole(r, s.permissionLegacyRoles(legacyRoles)...); err != nil {
 			writeForbidden(w, r, err)
 			return false
 		}
@@ -1433,6 +1434,16 @@ func (s *server) requirePermissionOrRole(w http.ResponseWriter, r *http.Request,
 		}
 	}
 	return true
+}
+
+// permissionLegacyRoles returns legacyRoles plus "operator" when the list names
+// "admin" and the permission checker is set, so the permission check binds
+// operator to its own built-in permissions. Otherwise the list is unchanged.
+func (s *server) permissionLegacyRoles(legacyRoles []string) []string {
+	if s == nil || s.permChecker == nil || !slices.Contains(legacyRoles, "admin") {
+		return legacyRoles
+	}
+	return append(slices.Clip(legacyRoles), "operator")
 }
 
 func (s *server) requireFeatureEntitlement(w http.ResponseWriter, feature, message string) bool {

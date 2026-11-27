@@ -340,9 +340,8 @@ func TestOIDC_CustomClaimMapping(t *testing.T) {
 	if authCtx.Tenant != "my-tenant" {
 		t.Errorf("Tenant = %q, want my-tenant", authCtx.Tenant)
 	}
-	// operator maps to admin via normalizeRole
-	if authCtx.Role != "admin" {
-		t.Errorf("Role = %q, want admin (operator normalizes to admin)", authCtx.Role)
+	if authCtx.Role != "operator" {
+		t.Errorf("Role = %q, want operator", authCtx.Role)
 	}
 }
 
