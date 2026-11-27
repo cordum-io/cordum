@@ -11,6 +11,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   the cluster seeds from `REDIS_CLUSTER_ADDRESSES`, as the services do, scans every master for
   jobs, and writes each decision record before its indexes. Artifact `Put` now works on Redis
   Cluster too, and writes the artifact bytes before their metadata.
+
+- Stores: agent identity create, decision-log append, and DLQ add and delete now work on Redis
+  Cluster instead of failing with `CROSSSLOT`. Each record is written before its index entries,
+  a DLQ delete removes the index entry before the record, and a decision-log append whose index
+  write fails removes its record.
+
+- MCP: tool approvals now queue on Redis Cluster instead of failing with `CROSSSLOT` and returning `approval_store_unavailable`.
+
 - Gateway: key, user, RBAC and legal-hold stores now use the shared cluster-aware Redis client.
 
 - Workflows: saving and deleting workflows, and creating, updating and deleting workflow runs,

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -102,50 +103,63 @@ func (s *RedisDecisionLogStore) AppendDecision(ctx context.Context, record model
 	}
 
 	recordID := decisionRecordID(record)
-	primaryIndex := decisionPrimaryIndexKey(record.Tenant)
 	recordKey := decisionRecordKey(record.Tenant, recordID)
-	score := float64(record.Timestamp)
 	verdict, err := record.Verdict.DecisionLogWireValue()
 	if err != nil {
 		return err
 	}
 
-	pipe := s.client.TxPipeline()
-	pipe.HSet(ctx, recordKey, decisionLogRecordFieldJSON, payload)
-	pipe.ZAdd(ctx, primaryIndex, redis.Z{Score: score, Member: recordID})
-	if record.RuleID != "" {
-		pipe.ZAdd(ctx, decisionRuleIndexKey(record.Tenant, record.RuleID), redis.Z{Score: score, Member: recordID})
-	}
-	if record.AgentID != "" {
-		pipe.ZAdd(ctx, decisionAgentIndexKey(record.Tenant, record.AgentID), redis.Z{Score: score, Member: recordID})
-	}
-	if record.Topic != "" {
-		pipe.ZAdd(ctx, decisionTopicIndexKey(record.Tenant, record.Topic), redis.Z{Score: score, Member: recordID})
-	}
-	pipe.ZAdd(ctx, decisionVerdictIndexKey(record.Tenant, verdict), redis.Z{Score: score, Member: recordID})
-
-	if s.ttl > 0 {
-		pipe.Expire(ctx, recordKey, s.ttl)
-		cutoff := time.Now().UTC().Add(-s.ttl).UnixMilli()
-		min := "-inf"
-		max := strconv.FormatInt(cutoff, 10)
-		pipe.ZRemRangeByScore(ctx, primaryIndex, min, max)
-		if record.RuleID != "" {
-			pipe.ZRemRangeByScore(ctx, decisionRuleIndexKey(record.Tenant, record.RuleID), min, max)
+	// The record and each index sit in different Redis Cluster slots, so they
+	// cannot share a MULTI. The record goes first, with its TTL.
+	if _, err := s.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.HSet(ctx, recordKey, decisionLogRecordFieldJSON, payload)
+		if s.ttl > 0 {
+			pipe.Expire(ctx, recordKey, s.ttl)
 		}
-		if record.AgentID != "" {
-			pipe.ZRemRangeByScore(ctx, decisionAgentIndexKey(record.Tenant, record.AgentID), min, max)
-		}
-		if record.Topic != "" {
-			pipe.ZRemRangeByScore(ctx, decisionTopicIndexKey(record.Tenant, record.Topic), min, max)
-		}
-		pipe.ZRemRangeByScore(ctx, decisionVerdictIndexKey(record.Tenant, verdict), min, max)
-	}
-
-	if _, err := pipe.Exec(ctx); err != nil {
+		return nil
+	}); err != nil {
 		return fmt.Errorf("append decision log record: %w", err)
 	}
+
+	if err := s.appendDecisionIndexes(ctx, decisionIndexKeys(record, verdict), recordID, float64(record.Timestamp)); err != nil {
+		// backfill-decisions skips a decision whose record exists, so an
+		// unindexed record would never be repaired: remove it instead.
+		undoErr := s.client.Del(context.WithoutCancel(ctx), recordKey).Err()
+		return fmt.Errorf("append decision log record: %w", errors.Join(err, undoErr))
+	}
 	return nil
+}
+
+// decisionIndexKeys lists every index that holds a record: the primary index,
+// the rule, agent and topic indexes when those are set, and the verdict index.
+func decisionIndexKeys(record model.DecisionLogRecord, verdict string) []string {
+	keys := []string{decisionPrimaryIndexKey(record.Tenant)}
+	if record.RuleID != "" {
+		keys = append(keys, decisionRuleIndexKey(record.Tenant, record.RuleID))
+	}
+	if record.AgentID != "" {
+		keys = append(keys, decisionAgentIndexKey(record.Tenant, record.AgentID))
+	}
+	if record.Topic != "" {
+		keys = append(keys, decisionTopicIndexKey(record.Tenant, record.Topic))
+	}
+	return append(keys, decisionVerdictIndexKey(record.Tenant, verdict))
+}
+
+// appendDecisionIndexes adds recordID to each index and trims the entries past
+// the retention window. Every command names one key, so a cluster client sends
+// each to its own slot.
+func (s *RedisDecisionLogStore) appendDecisionIndexes(ctx context.Context, keys []string, recordID string, score float64) error {
+	cutoff := strconv.FormatInt(time.Now().UTC().Add(-s.ttl).UnixMilli(), 10)
+	pipe := s.client.Pipeline()
+	for _, key := range keys {
+		pipe.ZAdd(ctx, key, redis.Z{Score: score, Member: recordID})
+		if s.ttl > 0 {
+			pipe.ZRemRangeByScore(ctx, key, "-inf", cutoff)
+		}
+	}
+	_, err := pipe.Exec(ctx)
+	return err
 }
 
 func (s *RedisDecisionLogStore) QueryDecisions(ctx context.Context, query model.DecisionQuery) (model.DecisionPage, error) {
