@@ -14,6 +14,7 @@ import (
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
+	"github.com/cordum/cordum/core/infra/schema"
 	"github.com/cordum/cordum/core/licensing"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -344,19 +345,21 @@ func (s *server) handleRegisterSchema(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(w, r, "schema lookup", err)
 		return
 	}
-	claimTenant, allowed := s.schemaRegisterScope(w, r, req.ID, schemaExists)
-	if !allowed {
+	if !s.schemaRegisterScope(w, r, req.ID, schemaExists) {
 		return
 	}
 	if !schemaExists && !s.schemaCountAllows(w, r) {
 		return
 	}
-	if claimTenant != "" && !s.claimSchemaOwner(w, r, req.ID, claimTenant) {
-		return
+	if tenant, bound := s.schemaTenantScope(r); bound {
+		err = s.schemaRegistry.RegisterOwned(r.Context(), req.ID, tenant, data)
+	} else {
+		err = s.schemaRegistry.Register(r.Context(), req.ID, data)
 	}
-	if err := s.schemaRegistry.Register(r.Context(), req.ID, data); err != nil {
-		if claimTenant != "" {
-			s.releaseSchemaOwner(r, req.ID)
+	if err != nil {
+		if errors.Is(err, schema.ErrIDNotAvailable) {
+			writeJSONError(w, http.StatusForbidden, errorCodeConfigSchemaViolation, "schema id not available")
+			return
 		}
 		writeJSONError(w, http.StatusBadRequest, errorCodeConfigSchemaViolation, err.Error())
 		return
@@ -400,7 +403,8 @@ func (s *server) handleGetSchema(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, errorCodeConfigSchemaViolation, "schema id required")
 		return
 	}
-	if tenant, bound := s.schemaTenantScope(r); bound {
+	tenant, bound := s.schemaTenantScope(r)
+	if bound {
 		owner, err := s.schemaRegistry.Owner(r.Context(), id)
 		if err != nil {
 			writeInternalError(w, r, "schema owner lookup", err)
@@ -411,7 +415,13 @@ func (s *server) handleGetSchema(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	data, err := s.schemaRegistry.Get(r.Context(), id)
+	var data []byte
+	var err error
+	if bound {
+		data, err = s.schemaRegistry.GetOwned(r.Context(), id, tenant)
+	} else {
+		data, err = s.schemaRegistry.Get(r.Context(), id)
+	}
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			writeJSONError(w, http.StatusNotFound, errorCodeConfigSchemaNotFound, "schema not found")
@@ -439,10 +449,25 @@ func (s *server) handleDeleteSchema(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, errorCodeConfigSchemaViolation, "schema id required")
 		return
 	}
-	if tenant, bound := s.schemaTenantScope(r); bound && !s.schemaDeleteAllowed(w, r, id, tenant) {
+	tenant, bound := s.schemaTenantScope(r)
+	if bound && !s.schemaDeleteAllowed(w, r, id, tenant) {
 		return
 	}
-	if err := s.schemaRegistry.Delete(r.Context(), id); err != nil {
+	var err error
+	if bound {
+		err = s.schemaRegistry.DeleteOwned(r.Context(), id, tenant)
+	} else {
+		err = s.schemaRegistry.Delete(r.Context(), id)
+	}
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			writeJSONError(w, http.StatusNotFound, errorCodeConfigSchemaNotFound, "schema not found")
+			return
+		}
+		if errors.Is(err, schema.ErrIDNotAvailable) {
+			writeJSONError(w, http.StatusForbidden, errorCodeConfigSchemaViolation, "schema id not available")
+			return
+		}
 		slog.Error("schema delete failed", "error", err, "id", id) // #nosec -- id is validated and used for diagnostics.
 		writeErrorJSON(w, http.StatusInternalServerError, "internal error")
 		return
@@ -469,27 +494,26 @@ func (s *server) schemaTenantScope(r *http.Request) (string, bool) {
 	return strings.TrimSpace(ac.Tenant), true
 }
 
-// schemaRegisterScope decides a register before any write. It returns the
-// tenant that must claim id (empty when no claim is needed) and false after
-// writing the refusal.
-func (s *server) schemaRegisterScope(w http.ResponseWriter, r *http.Request, id string, exists bool) (string, bool) {
+// schemaRegisterScope decides a register before any write and returns false
+// after writing a refusal.
+func (s *server) schemaRegisterScope(w http.ResponseWriter, r *http.Request, id string, exists bool) bool {
 	tenant, bound := s.schemaTenantScope(r)
 	if !bound {
-		return "", true
+		return true
 	}
 	owner, err := s.schemaRegistry.Owner(r.Context(), id)
 	if err != nil {
 		writeInternalError(w, r, "schema owner lookup", err)
-		return "", false
+		return false
 	}
 	switch {
 	case owner != "" && owner == tenant:
-		return "", true
+		return true
 	case owner == "" && !exists && tenant != "":
-		return tenant, true
+		return true
 	}
 	writeJSONError(w, http.StatusForbidden, errorCodeConfigSchemaViolation, "schema id not available")
-	return "", false
+	return false
 }
 
 // schemaCountAllows writes the refusal and returns false when one more schema
@@ -505,27 +529,6 @@ func (s *server) schemaCountAllows(w http.ResponseWriter, r *http.Request) bool 
 		return false
 	}
 	return true
-}
-
-// claimSchemaOwner claims id for tenant and writes the refusal when another
-// owner holds it.
-func (s *server) claimSchemaOwner(w http.ResponseWriter, r *http.Request, id, tenant string) bool {
-	owner, err := s.schemaRegistry.ClaimOwner(r.Context(), id, tenant)
-	if err != nil {
-		writeInternalError(w, r, "schema owner claim", err)
-		return false
-	}
-	if owner != tenant {
-		writeJSONError(w, http.StatusForbidden, errorCodeConfigSchemaViolation, "schema id not available")
-		return false
-	}
-	return true
-}
-
-func (s *server) releaseSchemaOwner(r *http.Request, id string) {
-	if err := s.schemaRegistry.ReleaseOwner(r.Context(), id); err != nil {
-		slog.Warn("schema owner release failed", "error", err, "id", id) // #nosec -- id is validated and used for diagnostics.
-	}
 }
 
 // visibleSchemaIDs keeps platform ids and the tenant's own, up to limit.

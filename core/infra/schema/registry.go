@@ -16,10 +16,10 @@ import (
 const (
 	defaultRedisURL   = "redis://localhost:6379"
 	schemaIndexMaxLen = 500
-	// schemaOwnersKey maps a schema id to the tenant that owns it. It sits
-	// outside the schema: prefix, so no schema id can name it.
-	schemaOwnersKey = "cordum:schema:owners"
 )
+
+// ErrIDNotAvailable refuses a tenant write to an id it cannot own.
+var ErrIDNotAvailable = errors.New("schema id not available")
 
 // Registry stores JSON Schemas in Redis and validates payloads.
 type Registry struct {
@@ -111,7 +111,7 @@ func (r *Registry) Delete(ctx context.Context, id string) error {
 	pipe := r.client.TxPipeline()
 	pipe.Del(ctx, schemaKey(id))
 	pipe.ZRem(ctx, schemaIndexKey(), id)
-	pipe.HDel(ctx, schemaOwnersKey, id)
+	pipe.Del(ctx, ownerKey(id))
 	_, err := pipe.Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("delete schema %s: %w", id, err)
@@ -125,7 +125,7 @@ func (r *Registry) Owner(ctx context.Context, id string) (string, error) {
 		return "", fmt.Errorf("registry unavailable")
 	}
 	id = strings.TrimSpace(id)
-	owner, err := r.client.HGet(ctx, schemaOwnersKey, id).Result()
+	owner, err := r.client.Get(ctx, ownerKey(id)).Result()
 	if errors.Is(err, redis.Nil) {
 		return "", nil
 	}
@@ -145,44 +145,132 @@ func (r *Registry) Owners(ctx context.Context, ids []string) ([]string, error) {
 	if len(ids) == 0 {
 		return owners, nil
 	}
-	vals, err := r.client.HMGet(ctx, schemaOwnersKey, ids...).Result()
-	if err != nil {
+	pipe := r.client.Pipeline()
+	cmds := make([]*redis.StringCmd, len(ids))
+	for i, id := range ids {
+		cmds[i] = pipe.Get(ctx, ownerKey(id))
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return nil, fmt.Errorf("get schema owners: %w", err)
 	}
-	for i, v := range vals {
-		owners[i], _ = v.(string)
+	for i, cmd := range cmds {
+		owner, err := cmd.Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return nil, fmt.Errorf("get schema owner %s: %w", ids[i], err)
+		}
+		owners[i] = owner
 	}
 	return owners, nil
 }
 
-// ClaimOwner records tenant as the owner of id unless an owner is already
-// recorded, and returns the owner in force.
-func (r *Registry) ClaimOwner(ctx context.Context, id, tenant string) (string, error) {
-	if r == nil || r.client == nil {
-		return "", fmt.Errorf("registry unavailable")
-	}
-	id = strings.TrimSpace(id)
-	if id == "" || tenant == "" {
-		return "", fmt.Errorf("schema id and tenant required")
-	}
-	pipe := r.client.TxPipeline()
-	pipe.HSetNX(ctx, schemaOwnersKey, id, tenant)
-	owner := pipe.HGet(ctx, schemaOwnersKey, id)
-	if _, err := pipe.Exec(ctx); err != nil {
-		return "", fmt.Errorf("claim schema owner %s: %w", id, err)
-	}
-	return owner.Val(), nil
-}
-
-// ReleaseOwner removes the owner record of id.
-func (r *Registry) ReleaseOwner(ctx context.Context, id string) error {
+// RegisterOwned stores a document and its owner in one owner-checked step.
+func (r *Registry) RegisterOwned(ctx context.Context, id, tenant string, schema []byte) error {
 	if r == nil || r.client == nil {
 		return fmt.Errorf("registry unavailable")
 	}
-	if err := r.client.HDel(ctx, schemaOwnersKey, strings.TrimSpace(id)).Err(); err != nil {
-		return fmt.Errorf("release schema owner %s: %w", id, err)
+	id = strings.TrimSpace(id)
+	if id == "" || len(schema) == 0 {
+		return fmt.Errorf("schema id and body required")
+	}
+	err := redisutil.Retry(ctx, r.client, func(tx *redis.Tx) error {
+		owner, exists, err := ownedState(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		pipe := tx.TxPipeline()
+		// Even a refusal validates WATCH without changing stored state.
+		pipe.Exists(ctx, schemaKey(id))
+		var refusal error
+		if tenant == "" || (owner != tenant && (owner != "" || exists)) {
+			refusal = ErrIDNotAvailable
+		} else {
+			pipe.Set(ctx, schemaKey(id), schema, 0)
+			pipe.Set(ctx, ownerKey(id), tenant, 0)
+			pipe.ZAdd(ctx, schemaIndexKey(), redis.Z{Score: float64(time.Now().Unix()), Member: id})
+			pipe.ZRemRangeByRank(ctx, schemaIndexKey(), 0, -schemaIndexMaxLen-1)
+		}
+		if _, err := pipe.Exec(ctx); err != nil {
+			return err
+		}
+		return refusal
+	}, redisutil.WithKeys(ownerKey(id), schemaKey(id)))
+	if err != nil {
+		return fmt.Errorf("register schema %s: %w", id, err)
 	}
 	return nil
+}
+
+// DeleteOwned removes a document, owner and index entry in one checked step.
+func (r *Registry) DeleteOwned(ctx context.Context, id, tenant string) error {
+	if r == nil || r.client == nil {
+		return fmt.Errorf("registry unavailable")
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return fmt.Errorf("schema id required")
+	}
+	err := redisutil.Retry(ctx, r.client, func(tx *redis.Tx) error {
+		owner, exists, err := ownedState(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		pipe := tx.TxPipeline()
+		pipe.Exists(ctx, schemaKey(id))
+		var refusal error
+		if tenant != "" && owner == tenant {
+			pipe.Del(ctx, schemaKey(id), ownerKey(id))
+			pipe.ZRem(ctx, schemaIndexKey(), id)
+		} else if owner == "" && exists {
+			refusal = ErrIDNotAvailable
+		} else {
+			refusal = redis.Nil
+		}
+		if _, err := pipe.Exec(ctx); err != nil {
+			return err
+		}
+		return refusal
+	}, redisutil.WithKeys(ownerKey(id), schemaKey(id)))
+	if err != nil {
+		return fmt.Errorf("delete schema %s: %w", id, err)
+	}
+	return nil
+}
+
+func ownedState(ctx context.Context, tx *redis.Tx, id string) (string, bool, error) {
+	owner, err := tx.Get(ctx, ownerKey(id)).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return "", false, err
+	}
+	exists, err := tx.Exists(ctx, schemaKey(id)).Result()
+	return owner, exists != 0, err
+}
+
+// GetOwned reads the owner and document together, returning only visible bytes.
+func (r *Registry) GetOwned(ctx context.Context, id, tenant string) ([]byte, error) {
+	if r == nil || r.client == nil {
+		return nil, fmt.Errorf("registry unavailable")
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, fmt.Errorf("schema id required")
+	}
+	pipe := r.client.TxPipeline()
+	owner := pipe.Get(ctx, ownerKey(id))
+	doc := pipe.Get(ctx, schemaKey(id))
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("get schema %s: %w", id, err)
+	}
+	if err := owner.Err(); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("get schema owner %s: %w", id, err)
+	}
+	if owner.Val() != "" && owner.Val() != tenant {
+		return nil, fmt.Errorf("get schema %s: %w", id, redis.Nil)
+	}
+	data, err := doc.Bytes()
+	if err != nil {
+		return nil, fmt.Errorf("get schema %s: %w", id, err)
+	}
+	return data, nil
 }
 
 // List returns recent schema ids.
@@ -270,6 +358,10 @@ func (r *Registry) DeleteURL(ctx context.Context, url string) error {
 
 func schemaKey(id string) string {
 	return "schema:" + id
+}
+
+func ownerKey(id string) string {
+	return "cordum:schema:owner:{" + schemaKey(id) + "}"
 }
 
 func schemaURLKey(url string) string {

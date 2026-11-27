@@ -1222,6 +1222,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   release, by pack install or by a cross-tenant caller, are platform schemas:
   every tenant can read them and only a cross-tenant caller can change or
   delete them (task-01abd084).
+- Schemas: a tenant-bound register, read or delete checks the owner tenant and
+  acts on the schema document in one atomic Redis step. The owner tenant of a
+  schema id is stored at `cordum:schema:owner:{schema:<id>}`, in the same Redis
+  Cluster hash slot as the document (task-3963d7b0).
 - Edge approvals: a held MCP call whose arguments differ from a still-pending
   hold of the same tool in the same session now gets its own approval ref. It
   used to get the first hold's ref, so resuming it failed with `-32096`

@@ -111,11 +111,11 @@ var storeKeyManifest = []storeKeyEntry{
 	{"eval:run:{tenant}:idx:t", "core/infra/store", "tenant-in-key", "TestEvalRunTenantIsolation"},
 	{"eval:run:{tenant}:idx:ds:{dataset}", "core/infra/store", "tenant-in-key", "TestTenantIsolationEvalRunReadOnly"},
 	{"cap:replay:{hash}", "core/infra/replay", "tenant-in-key", "TestTenantIsolationReplayStoreKey"},
-	// The schema registry is DI-C56 in data-inventory.yaml. cordum:schema:owners
+	// The schema registry is DI-C56 in data-inventory.yaml. cordum:schema:owner:{schema:<id>}
 	// holds the owner tenant of each tenant-owned schema id; the pack-installed
 	// schema:url:{url} aliases are classified there as not tenant data.
 	{"schema:{id}", "core/infra/schema", "global-id", "TestSchemaRegistryTenantBound"},
-	{"cordum:schema:owners", "core/infra/schema", "tenant-in-value", "TestSchemaRegistryTenantBound"},
+	{"cordum:schema:owner:{schema:{id}}", "core/infra/schema", "tenant-in-value", "TestSchemaRegistryTenantBound"},
 	{"schema:index", "core/infra/schema", "global-id", "open-finding:PR1-51"},
 	{"sys:workers:snapshot", "core/infra/registry", "global-id", "open-finding:PR1-47"},
 	{"mem:{memory}:events", "core/contextwindow/engine", "tenant-in-key, enforced at store.TenantMemoryID", "TestTenantIsolationContextEngineBuildWindow"},
