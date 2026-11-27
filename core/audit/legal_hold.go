@@ -144,20 +144,15 @@ func (s *LegalHoldStore) ListHolds(ctx context.Context, tenant string) ([]*Legal
 			return nil, fmt.Errorf("redis smembers holds: %w", err)
 		}
 	} else {
-		// Scan all legal hold keys
-		var cursor uint64
-		for {
-			keys, next, err := s.client.Scan(ctx, cursor, legalHoldKeyPrefix+"*", 100).Result()
-			if err != nil {
-				return nil, fmt.Errorf("redis scan holds: %w", err)
-			}
+		// Scan all legal hold keys, on every master of a Redis Cluster.
+		err := redisutil.ScanKeys(ctx, s.client, legalHoldKeyPrefix+"*", 100, func(keys []string) error {
 			for _, key := range keys {
 				ids = append(ids, strings.TrimPrefix(key, legalHoldKeyPrefix))
 			}
-			cursor = next
-			if cursor == 0 {
-				break
-			}
+			return nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("redis scan holds: %w", err)
 		}
 	}
 
