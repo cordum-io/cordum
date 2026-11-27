@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Bus: on core NATS, `Subscribe` and `SubscribeWithContext` return after the server has
+  registered the subscription, as `QueueRespond` does, and a failed flush fails the call
+  (task-1d6b97fc).
+
 - Edge agentd: when a call waits inline for an approval, agentd's own decision event records the decision the hook applied: ALLOW once the approval is consumed, or DENY with the hook's reason when the approval is rejected, cannot be consumed, or comes back with constraints the hook cannot apply. A wait that ends unresolved still records REQUIRE_APPROVAL (task-4136b2a5).
 
 - Python SDK: `cordum_sdk._generated` is regenerated from the OpenAPI spec. It gains
