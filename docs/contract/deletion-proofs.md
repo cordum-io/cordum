@@ -15,7 +15,7 @@ in the writer client's Redis keyspace and every export the entry reaches.
 not other logical DBs. Use quiescent fixtures; SCAN is not a concurrent snapshot.
 Non-Redis stores need their own search. Name the exports in the proof.
 A category identifies a cleanup path, not a guarantee that every part of a mixed
-entry is erased. Partial paths (for example C12 chunks/summary, C24 state indexes,
+entry is erased. Partial paths (for example C12 chunks/summary, C24 deadline and tenant-active sets,
 C27 idempotency keys and C54 persistent config) must not be treated as full erasure.
 A failing proof stays an open finding under the review process, not a weaker test.
 
@@ -48,9 +48,9 @@ A failing proof stays an open finding under the review process, not a weaker tes
 | DI-C19 | explicit delete only | `core/audit/buffer.go` (`BufferedExporter.loop`); `core/audit/buffer.go` (`BufferedExporter.Close`) | none: Queue drain/flush or retry exhaustion, not retention erasure; exported copies remain. |
 | DI-C20 | no cleanup path | none | none: No Cordum remote deletion of downloaded evidence; recipient must remove its copies |
 | DI-C21 | retention cleanup | `core/infra/bus/nats.go` (`NatsBus.initJetStreamFromEnv`) | `TestRetentionProofDIC21/new_streams`, open finding PR2-08-F5 |
-| DI-C22 | retention cleanup | `core/infra/store/job_store.go` (`RedisJobStore.SetStateWithContext`); `core/infra/store/job_event_store.go` (`RedisJobStore.ApplyJobResult`); `core/infra/store/job_store.go` (`RedisJobStore.SetWorkerID`) | open finding PR2-08-F2 |
-| DI-C23 | no cleanup path | none | none: No code path deletes job:events lists or trace sets at reviewed_at |
-| DI-C24 | retention cleanup | `core/infra/store/job_store.go` (`RedisJobStore.SetStateWithContext`) | open finding PR2-08-F2 |
+| DI-C22 | retention cleanup | `core/infra/store/job_store.go` (`RedisJobStore.SetStateWithContext`); `core/infra/store/job_event_store.go` (`RedisJobStore.ApplyJobResult`); `core/infra/store/job_store.go` (`RedisJobStore.SetWorkerID`); `core/infra/store/job_index_sweep.go` (`RedisJobStore.SweepExpiredJobIndexes`) | `TestRetentionProofDIC22` |
+| DI-C23 | no cleanup path | none | none: No code path deletes trace sets at reviewed_at |
+| DI-C24 | retention cleanup | `core/infra/store/job_store.go` (`RedisJobStore.SetStateWithContext`); `core/infra/store/job_index_sweep.go` (`RedisJobStore.SweepExpiredJobIndexes`) | `TestRetentionProofDIC24` |
 | DI-C25 | retention cleanup | `core/infra/store/job_store.go` (`RedisJobStore.TrySetIdempotencyKeyScoped`); `core/infra/store/job_store.go` (`RedisJobStore.SetIdempotencyKeyScoped`) | `TestRetentionProofDIC25` |
 | DI-C26 | explicit delete only | `core/workflow/store_redis.go` (`RedisStore.DeleteWorkflow`) | none: Definitions persist until DeleteWorkflow. |
 | DI-C27 | explicit delete only | `core/workflow/store_redis.go` (`RedisStore.DeleteRun`); `core/workflow/store_redis.go` (`RedisStore.DeleteRunIdempotencyKey`); `core/workflow/store_redis.go` (`RedisStore.RemoveDelayTimer`); `core/workflow/store_redis.go` (`RedisStore.PopFiredDelays`); `core/workflow/store_redis.go` (`RedisStore.CleanStaleDelays`) | none: No TTL setting; runs persist until DeleteRun, timelines keep the newest 1000 events and run idempotency keys never expire. |
