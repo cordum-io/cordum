@@ -1210,6 +1210,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 			isWorkflowGate = true
 		}
 		policySnapshot := strings.TrimSpace(safetyRecord.PolicySnapshot)
+		var refreshedSafety *model.SafetyDecisionRecord
 		if isWorkflowGate {
 			if policySnapshot == "" {
 				policySnapshot = "workflow-gate"
@@ -1326,12 +1327,14 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 					pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS,
 					pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN:
 					// Fresh policy still admits this request (possibly with
-					// approval). Persist the FULL re-evaluated decision so
+					// approval). Store the FULL re-evaluated decision so
 					// the scheduler's fast-path sees the current rule / reason /
 					// constraints, not a hybrid of old decision + new snapshot.
 					// ApprovalRef and JobHash are preserved (approval identity
 					// is still this job); ApprovalRevision is bumped so
-					// downstream consumers can detect the drift.
+					// downstream consumers can detect the drift. ResolveApproval
+					// stores it with the approval, so a failed approve leaves
+					// the old record in place and can be retried.
 					// Informational: approval continues and records its own required audit entry below.
 					s.appendAuditEntryNamed(ctx, "approve_snapshot_refreshed", "job", jobID, "", policybundles.PolicyActorID(r), policybundles.PolicyRole(r),
 						fmt.Sprintf("policy snapshot refreshed during approval (was=%s now=%s decision=%s rule=%s)",
@@ -1346,16 +1349,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 					safetyRecord.ApprovalRequired = freshDecision == pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN
 					safetyRecord.CheckedAt = time.Now().UnixMicro()
 					safetyRecord.ApprovalRevision++
-					if err := s.jobStore.SetSafetyDecision(ctx, jobID, safetyRecord); err != nil {
-						// Persisting the re-evaluated decision is on the
-						// critical path — continuing would ship a job whose
-						// stored safety record still reflects the pre-drift
-						// policy. Fail closed and let the caller retry.
-						s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policybundles.PolicyActorID(r), policybundles.PolicyRole(r),
-							fmt.Sprintf("failed to persist refreshed safety decision: %v", err))
-						result = handlerResult{http.StatusServiceUnavailable, "failed to persist refreshed safety decision"}
-						return nil
-					}
+					refreshedSafety = &safetyRecord
 				default:
 					// DENY / THROTTLE / UNSPECIFIED — the drifted policy no
 					// longer permits this request at all. Fail closed and
@@ -1421,15 +1415,16 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 		resolved, err := s.jobStore.ResolveApproval(ctx, store.ApprovalResolutionParams{
-			JobID:          jobID,
-			Decision:       model.ApprovalDecisionApprove,
-			ResultState:    model.JobStatePending,
-			ApprovedBy:     approvedBy,
-			ApprovedRole:   approvalRole,
-			Reason:         reason,
-			Note:           note,
-			PolicySnapshot: policySnapshot,
-			LabelUpdates:   labelUpdates,
+			JobID:           jobID,
+			Decision:        model.ApprovalDecisionApprove,
+			ResultState:     model.JobStatePending,
+			ApprovedBy:      approvedBy,
+			ApprovedRole:    approvalRole,
+			Reason:          reason,
+			Note:            note,
+			PolicySnapshot:  policySnapshot,
+			LabelUpdates:    labelUpdates,
+			RefreshedSafety: refreshedSafety,
 		})
 		if err != nil {
 			s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, req.GetTopic(), approveActorID, approvalRole, fmt.Sprintf("approval resolution failed: %v", err))
