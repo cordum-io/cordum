@@ -462,9 +462,9 @@ func (s *RedisJobStore) CancelJob(ctx context.Context, jobID string) (model.JobS
 
 		// Remove from tenant active set — CANCELLED is terminal.
 		// No TTL on active set — it self-manages via SAdd/SRem on state transitions.
-		if tenant != "" {
-			pipe.SRem(ctx, tenantActiveKey(tenant), jobID)
-		}
+		// It runs with no stored tenant too: model.ActiveSetTenant keys that job
+		// under model.DefaultTenant, where the scheduler reserved its slot.
+		pipe.SRem(ctx, tenantActiveKey(model.ActiveSetTenant(tenant)), jobID)
 
 		pipe.ZAdd(ctx, "job:recent", redis.Z{Score: float64(now), Member: jobID})
 		pipe.ZRemRangeByRank(ctx, "job:recent", 0, -1001)
@@ -2668,8 +2668,8 @@ func (s *RedisJobStore) ApplyApprovalRepair(ctx context.Context, params Approval
 		if idx := stateIndexKey(params.Plan.TargetState); idx != "" {
 			pipe.ZAdd(ctx, idx, redis.Z{Score: float64(now), Member: jobID})
 		}
-		if tenant != "" {
-			activeKey := tenantActiveKey(tenant)
+		if tenant != "" || terminalStates[params.Plan.TargetState] {
+			activeKey := tenantActiveKey(model.ActiveSetTenant(tenant))
 			if isActiveState(params.Plan.TargetState) {
 				pipe.SAdd(ctx, activeKey, jobID)
 			} else if terminalStates[params.Plan.TargetState] {
@@ -3008,8 +3008,8 @@ func (s *RedisJobStore) ResolveApproval(ctx context.Context, params ApprovalReso
 			pipe.ZAdd(ctx, idx, redis.Z{Score: float64(now), Member: jobID})
 		}
 
-		if tenant != "" {
-			activeKey := tenantActiveKey(tenant)
+		if tenant != "" || terminalStates[params.ResultState] {
+			activeKey := tenantActiveKey(model.ActiveSetTenant(tenant))
 			if isActiveState(params.ResultState) {
 				pipe.SAdd(ctx, activeKey, jobID)
 			} else if terminalStates[params.ResultState] {
@@ -3416,8 +3416,8 @@ func (s *RedisJobStore) SetStateWithContext(ctx context.Context, jobID string, s
 			pipe.ZAdd(ctx, idx, redis.Z{Score: float64(now), Member: jobID})
 		}
 
-		if tenant != "" {
-			activeKey := tenantActiveKey(tenant)
+		if tenant != "" || terminalStates[state] {
+			activeKey := tenantActiveKey(model.ActiveSetTenant(tenant))
 			if isActiveState(state) {
 				pipe.SAdd(ctx, activeKey, jobID)
 			} else if terminalStates[state] {

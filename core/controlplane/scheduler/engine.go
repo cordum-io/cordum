@@ -1851,8 +1851,8 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 		}
 	}
 
-	slotTenant := ExtractTenant(req)
-	reserved, err := e.reserveTenantSlot(lockCtx, slotTenant, jobID, record.Constraints)
+	// The slot is keyed on the tenant the job meta stores (reserveJobTenantSlot).
+	slotTenant, reserved, err := e.reserveTenantSlot(lockCtx, jobID, record.Constraints)
 	if err != nil {
 		return err
 	}
@@ -2085,14 +2085,14 @@ func (e *Engine) rollbackFailedDispatch(
 	return true, nil
 }
 
-// reserveTenantSlot takes one of tenant's concurrency slots for jobID when the
-// policy cap (max_concurrent_jobs) or the tier limit applies, at the lower of
-// the two. At the cap it returns a retryable ErrTenantLimit, or the tier-limit
-// error when the tier limit is the one reached. It reports false when no limit
-// applies.
-func (e *Engine) reserveTenantSlot(ctx context.Context, tenant, jobID string, constraints *pb.PolicyConstraints) (bool, error) {
+// reserveTenantSlot takes a concurrency slot for jobID under its stored tenant
+// when the policy cap (max_concurrent_jobs) or the tier limit applies, at the
+// lower of the two, and returns that tenant ("" and false when it reserves
+// nothing). At the cap it returns a retryable ErrTenantLimit, or the tier-limit
+// error when the tier limit is the one reached.
+func (e *Engine) reserveTenantSlot(ctx context.Context, jobID string, constraints *pb.PolicyConstraints) (string, bool, error) {
 	if e.jobStore == nil {
-		return false, nil
+		return "", false, nil
 	}
 	policyCap := maxConcurrentFromConstraints(constraints)
 	entitlements := e.currentEntitlements()
@@ -2104,27 +2104,27 @@ func (e *Engine) reserveTenantSlot(ctx context.Context, tenant, jobID string, co
 		limit = max(tierCap, 0)
 	}
 	if limit < 0 {
-		return false, nil
+		return "", false, nil
 	}
 	storeCtx, cancel := context.WithTimeout(ctx, storeOpTimeout)
-	reserved, others, err := e.jobStore.ReserveTenantSlot(storeCtx, tenant, jobID, limit)
+	tenant, reserved, others, err := e.reserveJobTenantSlot(storeCtx, jobID, limit)
 	cancel()
 	if err != nil {
-		return false, RetryAfter(err, retryDelayStore)
+		return "", false, RetryAfter(err, retryDelayStore)
 	}
 	if reserved {
-		return true, nil
+		return tenant, true, nil
 	}
 	limitErr := licensing.CheckJobConcurrency(int64(others)+1, entitlements)
 	if limitErr == nil || (policyCap > 0 && int64(others) >= policyCap) {
 		slog.Info("tenant concurrency limit reached",
 			"job_id", jobID, "tenant", tenant, "active", others, "limit", limit)
-		return false, RetryAfter(ErrTenantLimit, retryDelayNoWorkers)
+		return "", false, RetryAfter(ErrTenantLimit, retryDelayNoWorkers)
 	}
 	slog.Info("tier concurrency limit reached",
 		"job_id", jobID, "tenant", tenant, "active", others,
 		"allowed", limitErr.Allowed, "upgrade_url", limitErr.UpgradeURL)
-	return false, RetryAfter(limitErr, retryDelayNoWorkers)
+	return "", false, RetryAfter(limitErr, retryDelayNoWorkers)
 }
 
 // releaseTenantSlot gives back a slot reserveTenantSlot took for a job that
@@ -3831,3 +3831,17 @@ const (
 	// the store are comparable.
 	defaultFlushBatchSize = 200
 )
+
+// reserveJobTenantSlot reserves jobID's slot in the active set of the tenant
+// its job meta stores, the set every terminal state write removes it from. A
+// job with no stored tenant counts under model.DefaultTenant. A failed tenant
+// read is returned, so the job requeues rather than dispatching.
+func (e *Engine) reserveJobTenantSlot(ctx context.Context, jobID string, limit int64) (string, bool, int, error) {
+	tenant, err := e.jobStore.GetTenant(ctx, jobID)
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return "", false, 0, err
+	}
+	tenant = model.ActiveSetTenant(tenant)
+	reserved, others, err := e.jobStore.ReserveTenantSlot(ctx, tenant, jobID, limit)
+	return tenant, reserved, others, err
+}

@@ -63,3 +63,14 @@ func ExtractPrincipal(req *pb.JobRequest) string {
 	}
 	return req.GetPrincipalId()
 }
+
+// ActiveSetTenant names the tenant active set (job:tenant:active:<tenant>) that
+// counts a job whose job meta stores tenant. A job with no stored tenant counts
+// under DefaultTenant, so the scheduler's slot reservation and every terminal
+// state write that frees the slot use the same key.
+func ActiveSetTenant(tenant string) string {
+	if tenant == "" {
+		return DefaultTenant
+	}
+	return tenant
+}
