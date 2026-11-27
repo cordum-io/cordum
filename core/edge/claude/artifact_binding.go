@@ -178,9 +178,9 @@ func artifactCollect(command, cwd string, env map[string]string) (*artifactInput
 // artifactWindowsUnreadable rejects, a directory or another non-regular file,
 // a file Git Bash's MSYS programs (bash, sh, perl) open differently from Go,
 // cannot be read at its stat size, or goes past the file limits. MSYS reads a
-// SYSTEM file as a symlink and opens a name ending in '.' as written, where
-// Windows strips the dot. A network path (//host/share, a share on Windows)
-// is never stat'ed, so naming one opens no connection.
+// SYSTEM file or a READONLY shortcut as a symlink and opens a name ending in
+// '.' as written, where Windows strips the dot. A network path (//host/share,
+// a share on Windows) is never stat'ed, so naming one opens no connection.
 func (in *artifactInputs) addFile(cwd, name string) string {
 	if name == "" {
 		return ""
@@ -198,7 +198,7 @@ func (in *artifactInputs) addFile(cwd, name string) string {
 		return ""
 	case err == nil && info.IsDir():
 		return "directory"
-	case err != nil || !info.Mode().IsRegular() || artifactSystemFile(info) ||
+	case err != nil || !info.Mode().IsRegular() || artifactMSYSLink(info) ||
 		runtime.GOOS == "windows" && artifactTrailingDot(name):
 		return "unreadable"
 	}

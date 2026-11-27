@@ -122,14 +122,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   an alias or a tag, leave the target unknown, and so do an unset `HOME` and, inside a
   pod, a context that names no namespace. On Windows, a name with a `:` after its
   drive, a file named with a `.` at the end of a path element and a file with the
-  SYSTEM attribute are unreadable, because Git Bash opens them as other files. Any
+  SYSTEM or READONLY attribute are unreadable, because Git Bash opens them as other
+  files: it follows a SYSTEM `!<symlink>` file and a READONLY `.lnk` shortcut. Any
   other call is labelled `artifact.binding=unbound` with an `artifact.unbound_reason`
   (an unrecognized command, inline code, shell syntax, a URL or network path, a Windows
   device or path that depends on the current drive, a directory, an unreadable or
   oversized file, a name under /proc, /dev or /sys, by any spelling or symlink, a
   Windows device or namespace link target, a read-size mismatch, files that take over a
   second to read, an unknown kube context, or a test or build command), so a policy can
-  deny it. Where inputs can be collected, the digest still covers the files it names.
+  deny it. A policy that requires binding therefore denies a call that names a READONLY
+  file on Windows until its attribute is cleared. Where inputs can be collected, the
+  digest still covers the files it names.
   Every tool other than Bash is labelled unbound without a digest, whatever its input
   holds, except Claude Code's tools that cannot run code (Read, Write, Edit, MultiEdit,
   NotebookEdit, Glob, Grep, LS, WebFetch, WebSearch and TodoWrite). Files a script or

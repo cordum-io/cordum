@@ -4,6 +4,6 @@ package claude
 
 import "io/fs"
 
-// artifactSystemFile reports a Windows SYSTEM file, which exists only on
-// Windows.
-func artifactSystemFile(fs.FileInfo) bool { return false }
+// artifactMSYSLink reports a Windows file Git Bash reads as a link, which
+// exists only on Windows.
+func artifactMSYSLink(fs.FileInfo) bool { return false }

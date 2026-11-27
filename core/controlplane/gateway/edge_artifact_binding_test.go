@@ -165,8 +165,9 @@ type artifactPolicyCase struct {
 }
 
 // artifactBindingPlatformCases returns the rows one platform sets up: a
-// reader-relative /proc name on Linux, and on Windows a SYSTEM file and a
-// name ending in '.', which Git Bash's MSYS bash opens as other files.
+// reader-relative /proc name on Linux, and on Windows a SYSTEM file, a
+// READONLY file and a name ending in '.', which Git Bash's MSYS bash opens as
+// other files.
 func artifactBindingPlatformCases(t *testing.T, cwd string) []artifactPolicyCase {
 	t.Helper()
 	switch runtime.GOOS {
@@ -186,7 +187,13 @@ func artifactBindingPlatformCases(t *testing.T, cwd string) []artifactPolicyCase
 		if out, err := exec.CommandContext(ctx, "attrib", "+s", link).CombinedOutput(); err != nil {
 			t.Fatalf("attrib: %v %s", err, out)
 		}
+		shortcut := filepath.Join(cwd, "link.lnk")
+		artifactBindingWrite(t, shortcut, "a Windows shortcut to deploy.sh\n")
+		if err := os.Chmod(shortcut, 0o400); err != nil {
+			t.Fatal(err)
+		}
 		return []artifactPolicyCase{{"system_attribute_denied_by_rule", "Bash", artifactBindingInput("bash link.sh"), 0},
+			{"readonly_attribute_denied_by_rule", "Bash", artifactBindingInput("bash link.lnk"), 0},
 			{"trailing_dot_denied_by_rule", "Bash", artifactBindingInput("bash deploy.sh."), 0}}
 	}
 	return nil

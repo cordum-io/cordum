@@ -7,11 +7,11 @@ import (
 	"syscall"
 )
 
-// artifactSystemFile reports a file with the SYSTEM attribute, or one whose
-// attributes cannot be read. Git Bash's MSYS programs (bash, sh, perl) read a
-// SYSTEM file that starts with !<symlink> as a link to another file, while
-// Go reads its own bytes.
-func artifactSystemFile(info fs.FileInfo) bool {
+// artifactMSYSLink reports a file with the SYSTEM or READONLY attribute, or
+// one whose attributes cannot be read. Git Bash's MSYS programs (bash, sh,
+// perl) read a SYSTEM file that starts with !<symlink>, and a READONLY Windows
+// shortcut (.lnk), as links to other files, while Go reads their own bytes.
+func artifactMSYSLink(info fs.FileInfo) bool {
 	data, ok := info.Sys().(*syscall.Win32FileAttributeData)
-	return !ok || data.FileAttributes&syscall.FILE_ATTRIBUTE_SYSTEM != 0
+	return !ok || data.FileAttributes&(syscall.FILE_ATTRIBUTE_SYSTEM|syscall.FILE_ATTRIBUTE_READONLY) != 0
 }
