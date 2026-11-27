@@ -9,6 +9,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 - Dashboard: policy edit, publish, tenant, output-rule and quarantine-release controls are shown only to the `admin` role, the role the gateway admits on those routes (task-20c071ba).
 - Gateway: the in-memory API rate limiter (`REDIS_RATE_LIMIT=false`, or no Redis) applies the same license-tier clamp as the Redis limiter. `API_RATE_LIMIT_RPS` and `API_RATE_LIMIT_BURST` can lower the tier's requests per second and burst, not raise them (task-91836669).
+- API rate limit: after a license reload or a license state change, the Redis and the in-memory API limiters apply the new state's rate and burst (tier defaults, then `API_RATE_LIMIT_RPS` and `API_RATE_LIMIT_BURST`, then the license cap) from the next request on. At that change the in-memory limiter gives each client a full bucket of the new burst, and Redis counters for the current second carry over (task-52e234cb).
 - License break-glass: `GET /api/v1/governance/health` takes the break-glass decision
   for `governance.read`, so it answers in grace and answers 503 with code
   `license.degraded` in degraded and invalid. `POST /api/v1/policy/bundles/{id}/resign`
