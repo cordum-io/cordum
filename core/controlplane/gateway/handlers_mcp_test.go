@@ -755,3 +755,22 @@ func TestLoadMCPConfigDefaultsAndOverrides(t *testing.T) {
 		t.Fatalf("expected mcp.port=8089, got %d", cfg.Port)
 	}
 }
+
+// openMCPSSE opens /mcp/sse as key (query is an optional raw query string) and
+// returns the server-assigned session id; the stream closes at test cleanup.
+func openMCPSSE(t *testing.T, baseURL, key, query string) string {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, baseURL+"/mcp/sse?"+query, nil)
+	req.Header.Set("X-API-Key", key)
+	req.Header.Set("X-Tenant-ID", "default")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("open sse: %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	sessionID := resp.Header.Get("X-MCP-Session-ID")
+	if resp.StatusCode != http.StatusOK || sessionID == "" {
+		t.Fatalf("open sse: status %d session %q", resp.StatusCode, sessionID)
+	}
+	return sessionID
+}

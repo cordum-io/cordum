@@ -27,9 +27,13 @@ import (
 // handler from finishing). It pairs with the source-level rail
 // (`grep '\\btime\\.After\\b' core/mcp/transport_http.go` returns
 // empty) which is the load-bearing assertion for the fix.
+//
+// It must not call t.Parallel: runtime.NumGoroutine counts the whole test
+// process, and a sequential top-level test never overlaps the package's
+// parallel tests. The client gets its own http.Transport, and the final
+// sample waits for exiting goroutines to finish, so only a goroutine that
+// outlives its request can push the count past the slack.
 func TestHTTPTransport_TimerStoppedOnEarlyReturn(t *testing.T) {
-	t.Parallel()
-
 	const responseTimeout = time.Hour
 	transport := NewHTTPTransport(DefaultMaxMessageBytes, responseTimeout)
 	t.Cleanup(func() { _ = transport.Close() })
@@ -59,7 +63,9 @@ func TestHTTPTransport_TimerStoppedOnEarlyReturn(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	const N = 100
-	client := &http.Client{Timeout: 10 * time.Second}
+	clientTransport := &http.Transport{}
+	t.Cleanup(clientTransport.CloseIdleConnections)
+	client := &http.Client{Timeout: 10 * time.Second, Transport: clientTransport}
 
 	// Warm up to settle the http transport's internal goroutine pool
 	// (idle connection reader, keepalive). Then sample baseline.
@@ -96,15 +102,29 @@ func TestHTTPTransport_TimerStoppedOnEarlyReturn(t *testing.T) {
 		}
 	}
 
-	runtime.GC()
-	runtime.Gosched()
-	after := runtime.NumGoroutine()
-
-	// Allow generous slack for net/http's idle-conn pool; the test
-	// fails on order-of-magnitude growth that would indicate a
-	// per-request goroutine leak.
-	if delta := after - baseline; delta > 25 {
+	// Closing the idle connection ends its reader and writer goroutines on
+	// both sides. A per-request leak adds at least N goroutines, far above
+	// the slack, and keeps the count there until the settle deadline.
+	clientTransport.CloseIdleConnections()
+	const leakSlack = 25
+	after := settledGoroutineCount(baseline+leakSlack, 5*time.Second)
+	if delta := after - baseline; delta > leakSlack {
 		t.Fatalf("goroutine leak suspected after %d roundtrips: baseline=%d after=%d delta=%d",
 			N, baseline, after, delta)
+	}
+}
+
+// settledGoroutineCount polls runtime.NumGoroutine until it is at most limit
+// or the deadline passes, and returns the last count. Goroutines that are
+// already exiting get time to finish; a leaked goroutine never does.
+func settledGoroutineCount(limit int, deadline time.Duration) int {
+	end := time.Now().Add(deadline)
+	for {
+		runtime.GC()
+		n := runtime.NumGoroutine()
+		if n <= limit || time.Now().After(end) {
+			return n
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
