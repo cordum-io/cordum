@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Job store: result pointer, safety decision and output decision writes no longer span two Redis Cluster hash slots; each secondary copy is written before job metadata.
+
 - MCP: the gateway's HTTP MCP endpoint now serves nine read tools instead of answering
   501 `read_only_unsupported`: listing jobs, runs, workflows, topics, agents and pending
   approvals, reading a run and its timeline, and verifying the audit chain. Each read runs through
