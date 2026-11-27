@@ -11,6 +11,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   registered the subscription, as `QueueRespond` does, and a failed flush fails the call
   (task-1d6b97fc).
 
+- Edge agentd: when a call waits inline for an approval, agentd's own decision event records the decision the hook applied: ALLOW once the approval is consumed, or DENY with the hook's reason when the approval is rejected, cannot be consumed, or comes back with constraints the hook cannot apply. A wait that ends unresolved still records REQUIRE_APPROVAL (task-4136b2a5).
+
 - Python SDK: `cordum_sdk._generated` is regenerated from the OpenAPI spec. It gains
   the `create_edge_calibration_report` and `get_edge_calibration_report` endpoints and
   `EdgeSession.assurance_state`. `make openapi-validate`, which the OpenAPI Validate
@@ -579,6 +581,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   instead of TanStack, without changing table behavior (task-fc8b600a).
 
 ### Added
+
+- Safety kernel: when one of its action-layer gates denies a request, the kernel
+  publishes an `actiongate.denied` audit event on `sys.audit.export`, which the
+  gateway's audit consumer exports to SIEM and appends to the audit chain. The kernel
+  uses the shadow-evaluation audit publisher for these events, with its service token
+  when a key is configured. Without NATS, or where that publisher cannot be built
+  (production without a usable `CORDUM_AUDIT_SIGNING_KEY`, or a malformed key), the
+  kernel logs these decisions only, warns once at startup, and still starts
+  (task-ad7391d0).
 
 - Managed API keys: the scope resource `mcpgateway` covers the gateway's MCP endpoints.
   `GET /mcp/sse` and `GET /mcp/status` need `mcpgateway:read`, and `POST /mcp/message`
