@@ -74,7 +74,7 @@ For succeeded jobs, scheduler output safety handling is:
 
 Output safety runs in two phases with **different** failure semantics:
 
-- **Sync metadata check** (`CheckOutputMeta`, hot path): always **fail-open** on checker error or timeout. The record stays at `ALLOW`, `cordum_output_policy_skipped_total` is incremented, and the job stays `SUCCEEDED`. This phase has no configurable fail mode — it is always fail-open so a degraded checker cannot block the result pipeline (`engine.go`, `CheckOutputMeta` error branch).
+- **Sync metadata check** (`CheckOutputMeta`, hot path): always **fail-open** on checker error or timeout. The record stays at `ALLOW`, `cordum_scheduler_output_policy_skipped_total` is incremented, and the job stays `SUCCEEDED`. This phase has no configurable fail mode — it is always fail-open so a degraded checker cannot block the result pipeline (`engine.go`, `CheckOutputMeta` error branch).
 - **Async content check** (background): follows the config-service key `scheduler.output_fail_mode`. Unset is `closed`, and the production identity profile forces `closed`. The table gives the documented behavior of each mode; output-check outage outcomes are not measured ([failure and partition behavior](contract/failure-behavior.md#scope-and-operator-modes)):
 
 | Mode | Behavior | When to use |
@@ -99,13 +99,13 @@ A Redis-backed circuit breaker (3 failures → open for 30s → half-open probe)
 
 ## Metrics
 Scheduler exports output safety metrics:
-- `cordum_output_policy_checked_total`
-- `cordum_output_policy_quarantined_total`
-- `cordum_output_policy_skipped_total`
-- `cordum_output_check_latency_seconds{phase="sync|async"}`
+- `cordum_scheduler_output_policy_checked_total`
+- `cordum_scheduler_output_policy_quarantined_total`
+- `cordum_scheduler_output_policy_skipped_total`
+- `cordum_scheduler_output_check_latency_seconds{phase="sync|async"}`
 
 ## Failure Modes
-- Checker unavailable/error: the sync metadata check is fail-open. The async content check follows `scheduler.output_fail_mode`: `closed` (the default when unset) is documented to quarantine the job, and `open` allows the result and increments `cordum_output_policy_skipped_total`. Outage outcomes are not measured.
+- Checker unavailable/error: the sync metadata check is fail-open. The async content check follows `scheduler.output_fail_mode`: `closed` (the default when unset) is documented to quarantine the job, and `open` allows the result and increments `cordum_scheduler_output_policy_skipped_total`. Outage outcomes are not measured.
 - Circuit breaker open (3+ consecutive failures): the checker is not called until the breaker goes half-open after 30 seconds; each check in that window is handled as a checker error (above).
 - Missing request context for result: check skipped (metadata unavailable, not a checker failure).
 - Corrupt stored output safety payload: gateway/store tolerate and return empty record.

@@ -37,6 +37,8 @@ import type {
   EdgeApprovalPageResponse,
   EdgeBadGatewayResponse,
   EdgeBadRequestResponse,
+  EdgeCalibrationReport,
+  EdgeCalibrationReportRequest,
   EdgeConflictResponse,
   EdgeEndExecutionRequest,
   EdgeEndSessionRequest,
@@ -793,6 +795,310 @@ export const useEndEdgeSession = <
 > => {
   return useMutation(getEndEdgeSessionMutationOptions(options), queryClient);
 };
+/**
+ * Summarizes the policy decisions recorded on the Edge events of the
+ * tenant's observe-mode sessions in the window [since, until), narrowed
+ * to the given repositories and labels when set. The window may not
+ * exceed 90 days. The report is stored under its content-derived id and
+ * returned. Requires policy.write or the admin role.
+ * @summary Generate an Edge calibration report
+ */
+export const createEdgeCalibrationReport = (
+  edgeCalibrationReportRequest: EdgeCalibrationReportRequest,
+  signal?: AbortSignal,
+) => {
+  return apiClient<EdgeCalibrationReport>({
+    url: `/api/v1/edge/calibration-reports`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: edgeCalibrationReportRequest,
+    signal,
+  });
+};
+
+export const getCreateEdgeCalibrationReportMutationKey = () =>
+  ["createEdgeCalibrationReport"] as const;
+
+export const getCreateEdgeCalibrationReportMutationOptions = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createEdgeCalibrationReport>>,
+    TError,
+    CreateEdgeCalibrationReportMutationVariables,
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createEdgeCalibrationReport>>,
+  TError,
+  CreateEdgeCalibrationReportMutationVariables,
+  TContext
+> => {
+  const mutationKey = getCreateEdgeCalibrationReportMutationKey();
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createEdgeCalibrationReport>>,
+    CreateEdgeCalibrationReportMutationVariables
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createEdgeCalibrationReport(data);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateEdgeCalibrationReportMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createEdgeCalibrationReport>>
+>;
+export type CreateEdgeCalibrationReportMutationBody =
+  EdgeCalibrationReportRequest;
+export type CreateEdgeCalibrationReportMutationError =
+  | EdgeBadRequestResponse
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
+export type CreateEdgeCalibrationReportMutationVariables = {
+  data: EdgeCalibrationReportRequest;
+};
+
+/**
+ * @summary Generate an Edge calibration report
+ */
+export const useCreateEdgeCalibrationReport = <
+  TError =
+    | EdgeBadRequestResponse
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof createEdgeCalibrationReport>>,
+      TError,
+      CreateEdgeCalibrationReportMutationVariables,
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof createEdgeCalibrationReport>>,
+  TError,
+  CreateEdgeCalibrationReportMutationVariables,
+  TContext
+> => {
+  return useMutation(
+    getCreateEdgeCalibrationReportMutationOptions(options),
+    queryClient,
+  );
+};
+/**
+ * Returns the report stored under id for the caller's tenant. An id that
+ * is not cal- followed by 32 hex characters, or that belongs to another
+ * tenant, returns 404. Requires policy.read or the admin role.
+ * @summary Fetch a stored Edge calibration report
+ */
+export const getEdgeCalibrationReport = (id: string, signal?: AbortSignal) => {
+  return apiClient<EdgeCalibrationReport>({
+    url: `/api/v1/edge/calibration-reports/${id}`,
+    method: "GET",
+    signal,
+  });
+};
+
+export const getGetEdgeCalibrationReportQueryKey = (id: string) => {
+  return [`/api/v1/edge/calibration-reports/${id}`] as const;
+};
+
+export const getGetEdgeCalibrationReportQueryOptions = <
+  TData = Awaited<ReturnType<typeof getEdgeCalibrationReport>>,
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEdgeCalibrationReport>>,
+        TError,
+        TData
+      >
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetEdgeCalibrationReportQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getEdgeCalibrationReport>>
+  > = ({ signal }) => getEdgeCalibrationReport(id, signal);
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: id !== null && id !== undefined,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getEdgeCalibrationReport>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type GetEdgeCalibrationReportQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getEdgeCalibrationReport>>
+>;
+export type GetEdgeCalibrationReportQueryError =
+  | EdgeUnauthorizedResponse
+  | EdgeForbiddenResponse
+  | EdgeNotFoundResponse
+  | EdgeInternalServerErrorResponse
+  | EdgeServiceUnavailableResponse;
+
+export function useGetEdgeCalibrationReport<
+  TData = Awaited<ReturnType<typeof getEdgeCalibrationReport>>,
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  id: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEdgeCalibrationReport>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getEdgeCalibrationReport>>,
+          TError,
+          Awaited<ReturnType<typeof getEdgeCalibrationReport>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetEdgeCalibrationReport<
+  TData = Awaited<ReturnType<typeof getEdgeCalibrationReport>>,
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEdgeCalibrationReport>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getEdgeCalibrationReport>>,
+          TError,
+          Awaited<ReturnType<typeof getEdgeCalibrationReport>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetEdgeCalibrationReport<
+  TData = Awaited<ReturnType<typeof getEdgeCalibrationReport>>,
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEdgeCalibrationReport>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary Fetch a stored Edge calibration report
+ */
+
+export function useGetEdgeCalibrationReport<
+  TData = Awaited<ReturnType<typeof getEdgeCalibrationReport>>,
+  TError =
+    | EdgeUnauthorizedResponse
+    | EdgeForbiddenResponse
+    | EdgeNotFoundResponse
+    | EdgeInternalServerErrorResponse
+    | EdgeServiceUnavailableResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEdgeCalibrationReport>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getGetEdgeCalibrationReportQueryOptions(id, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
 /**
  * @summary List Edge agent executions for a tenant
  */

@@ -1667,7 +1667,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 		e.emitDelegationLineageAudit(lockCtx, req, lineage)
 	}
 
-	record, err := e.checkSafetyDecisionTraced(lockCtx, req)
+	record, err := e.checkSafetyDecisionTraced(lockCtx, req, delegationIssuerChain(lineage)...)
 	if err != nil {
 		if errors.Is(err, errApprovalHashFenceRead) {
 			slog.Error("approval hash fence read failed, retrying without fail-open",
@@ -1851,44 +1851,23 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 		}
 	}
 
-	if maxConcurrent := maxConcurrentFromConstraints(record.Constraints); maxConcurrent > 0 && e.jobStore != nil {
-		tenant := ExtractTenant(req)
-		ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
-		active, err := e.jobStore.CountActiveByTenant(ctx, tenant)
-		cancel()
-		if err != nil {
-			return RetryAfter(err, retryDelayStore)
-		}
-		if int64(active) >= maxConcurrent {
-			slog.Info("tenant concurrency limit reached",
-				"job_id", jobID,
-				"tenant", tenant,
-				"active", active,
-				"limit", maxConcurrent,
-			)
-			return RetryAfter(ErrTenantLimit, retryDelayNoWorkers)
-		}
+	// The slot is keyed on the tenant the job meta stores (reserveJobTenantSlot).
+	slotTenant, reserved, err := e.reserveTenantSlot(lockCtx, jobID, record.Constraints)
+	if err != nil {
+		return err
 	}
-	if e.jobStore != nil {
-		tenant := ExtractTenant(req)
-		if strings.TrimSpace(tenant) != "" {
-			ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
-			active, err := e.jobStore.CountActiveByTenant(ctx, tenant)
-			cancel()
-			if err != nil {
-				return RetryAfter(err, retryDelayStore)
+	// The slot goes back on every return below unless the job was published,
+	// or a failed publish could not be rolled back and may still run. Once the
+	// lock fence is lost (errLockAbandoned, or an engine stop) the release
+	// writes nothing (CRD-14), and the job keeps the slot until it is
+	// processed again or a terminal state removes it.
+	keepSlot := false
+	if reserved {
+		defer func() {
+			if !keepSlot {
+				e.releaseTenantSlot(lockCtx, slotTenant, jobID)
 			}
-			if limitErr := licensing.CheckJobConcurrency(int64(active+1), e.currentEntitlements()); limitErr != nil {
-				slog.Info("tier concurrency limit reached",
-					"job_id", jobID,
-					"tenant", tenant,
-					"active", active,
-					"allowed", limitErr.Allowed,
-					"upgrade_url", limitErr.UpgradeURL,
-				)
-				return RetryAfter(limitErr, retryDelayNoWorkers)
-			}
-		}
+		}()
 	}
 
 	if budget := req.GetBudget(); budget != nil && budget.GetDeadlineMs() > 0 && e.jobStore != nil {
@@ -2066,16 +2045,19 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			"subject", subject,
 			"error", err,
 		)
-		if rbErr := e.rollbackFailedDispatch(lockCtx, jobID, dispatchID, dispatchAttempt); rbErr != nil {
+		rolledBack, rbErr := e.rollbackFailedDispatch(lockCtx, jobID, dispatchID, dispatchAttempt)
+		if rbErr != nil {
 			slog.Error("dispatch rollback failed",
 				"job_id", jobID, "error", rbErr)
 		}
+		keepSlot = !rolledBack
 		if e.metrics != nil {
 			e.metrics.IncDispatchRollback(topic)
 		}
 		return RetryAfter(err, backoffDelay(attempts, backoffBase, backoffMax))
 	}
 
+	keepSlot = true
 	e.incJobsDispatched(topic)
 	if e.metrics != nil {
 		e.metrics.ObserveDispatchLatency(topic, time.Since(dispatchStart).Seconds())
@@ -2086,20 +2068,78 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 	return nil
 }
 
+// rollbackFailedDispatch puts a job whose publish failed back to SCHEDULED
+// and reports whether it did. It does not when the dispatch fence has moved on.
 func (e *Engine) rollbackFailedDispatch(
 	ctx context.Context, jobID, dispatchID string, attempt int,
-) error {
+) (bool, error) {
 	if durable, ok := e.jobStore.(model.DurableJobEventStore); ok && dispatchID != "" {
 		rolledBack, err := durable.RollbackDispatch(ctx, jobID, dispatchID, attempt)
-		if err != nil {
-			return err
+		if err != nil || !rolledBack {
+			return false, err
 		}
-		if rolledBack {
-			return e.setJobState(ctx, jobID, JobStateScheduled)
-		}
-		return nil
 	}
-	return e.setJobState(ctx, jobID, JobStateScheduled)
+	if err := e.setJobState(ctx, jobID, JobStateScheduled); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// reserveTenantSlot takes a concurrency slot for jobID under its stored tenant
+// when the policy cap (max_concurrent_jobs) or the tier limit applies, at the
+// lower of the two, and returns that tenant ("" and false when it reserves
+// nothing). At the cap it returns a retryable ErrTenantLimit, or the tier-limit
+// error when the tier limit is the one reached.
+func (e *Engine) reserveTenantSlot(ctx context.Context, jobID string, constraints *pb.PolicyConstraints) (string, bool, error) {
+	if e.jobStore == nil {
+		return "", false, nil
+	}
+	policyCap := maxConcurrentFromConstraints(constraints)
+	entitlements := e.currentEntitlements()
+	limit := int64(-1)
+	if policyCap > 0 {
+		limit = policyCap
+	}
+	if tierCap := entitlements.MaxConcurrentJobs; tierCap != licensing.Unlimited && (limit < 0 || tierCap < limit) {
+		limit = max(tierCap, 0)
+	}
+	if limit < 0 {
+		return "", false, nil
+	}
+	storeCtx, cancel := context.WithTimeout(ctx, storeOpTimeout)
+	tenant, reserved, others, err := e.reserveJobTenantSlot(storeCtx, jobID, limit)
+	cancel()
+	if err != nil {
+		return "", false, RetryAfter(err, retryDelayStore)
+	}
+	if reserved {
+		return tenant, true, nil
+	}
+	limitErr := licensing.CheckJobConcurrency(int64(others)+1, entitlements)
+	if limitErr == nil || (policyCap > 0 && int64(others) >= policyCap) {
+		slog.Info("tenant concurrency limit reached",
+			"job_id", jobID, "tenant", tenant, "active", others, "limit", limit)
+		return "", false, RetryAfter(ErrTenantLimit, retryDelayNoWorkers)
+	}
+	slog.Info("tier concurrency limit reached",
+		"job_id", jobID, "tenant", tenant, "active", others,
+		"allowed", limitErr.Allowed, "upgrade_url", limitErr.UpgradeURL)
+	return "", false, RetryAfter(limitErr, retryDelayNoWorkers)
+}
+
+// releaseTenantSlot gives back a slot reserveTenantSlot took for a job that
+// was not dispatched. It writes under the job lock's fence, like every other
+// store write there: once the fence is lost (errLockAbandoned, or an engine
+// stop) the release writes nothing (CRD-14), because a successor may hold the
+// job's slot. The job then keeps the slot until it is processed again or a
+// terminal state removes it.
+func (e *Engine) releaseTenantSlot(ctx context.Context, tenant, jobID string) {
+	storeCtx, cancel := context.WithTimeout(ctx, storeOpTimeout)
+	defer cancel()
+	if err := e.jobStore.ReleaseTenantSlot(storeCtx, tenant, jobID); err != nil {
+		slog.Warn("tenant slot release failed; the job holds it until a terminal state",
+			"job_id", jobID, "tenant", tenant, "error", err)
+	}
 }
 
 func isRetryableSchedulingError(err error) bool {
@@ -2263,7 +2303,7 @@ func (e *Engine) failSchemaValidation(ctx context.Context, req *pb.JobRequest, t
 	return true, nil
 }
 
-func (e *Engine) checkSafetyDecisionTraced(ctx context.Context, req *pb.JobRequest) (SafetyDecisionRecord, error) {
+func (e *Engine) checkSafetyDecisionTraced(ctx context.Context, req *pb.JobRequest, issuerChain ...string) (SafetyDecisionRecord, error) {
 	tracer := cordumotel.Tracer("cordum-scheduler")
 	_, safetySpan := tracer.Start(ctx, "scheduler.safety_check",
 		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
@@ -2274,7 +2314,7 @@ func (e *Engine) checkSafetyDecisionTraced(ctx context.Context, req *pb.JobReque
 		safetySpan.SetAttributes(attribute.String("cordum.job_id", strings.TrimSpace(req.JobId)))
 	}
 
-	record, err := e.checkSafetyDecision(ctx, req)
+	record, err := e.checkSafetyDecision(ctx, req, issuerChain...)
 	if err != nil {
 		safetySpan.SetStatus(otelcodes.Error, err.Error())
 		safetySpan.RecordError(err)
@@ -2349,7 +2389,9 @@ func loadApproval(ctx context.Context, store JobStore, jobID string) (SafetyDeci
 // lock-fenced context from withJobLock — any state mutations derived from this
 // call (notably the approval fast-path SetSafetyDecision) must be cancelled
 // when the lock is lost to prevent stale-lock writes racing a takeover handler.
-func (e *Engine) checkSafetyDecision(ctx context.Context, req *pb.JobRequest) (SafetyDecisionRecord, error) {
+// issuerChain names the job's dispatch-time delegation issuers, root first; both
+// persisted records carry it.
+func (e *Engine) checkSafetyDecision(ctx context.Context, req *pb.JobRequest, issuerChain ...string) (SafetyDecisionRecord, error) {
 	if ctx == nil {
 		ctx = e.ctx
 	}
@@ -2379,6 +2421,8 @@ func (e *Engine) checkSafetyDecision(ctx context.Context, req *pb.JobRequest) (S
 				PolicySnapshot: prev.PolicySnapshot,
 				RuleID:         prev.RuleID,
 				JobHash:        prev.JobHash,
+
+				DelegationIssuerChain: issuerChain,
 			}
 			// Derive the store-op timeout from the caller's lock-fenced ctx,
 			// NOT e.ctx. If the lock is lost mid-evaluation the fenced ctx is
@@ -2461,6 +2505,7 @@ func (e *Engine) checkSafetyDecision(ctx context.Context, req *pb.JobRequest) (S
 			slog.Error("job hash failed", "job_id", jobID, "error", err)
 		}
 	}
+	record.DelegationIssuerChain = issuerChain
 	if e.jobStore != nil {
 		storeCtx, cancel := context.WithTimeout(ctx, storeOpTimeout)
 		defer cancel()
@@ -3340,15 +3385,14 @@ func (e *Engine) observeOutputEvalDuration(topic string, seconds float64) {
 	}
 }
 
-// attachServiceToken stamps a short-TTL control-plane service token on an
-// internal broadcast the scheduler publishes to a SUBSCRIBED, gated subject
-// (sys.job.submit / sys.job.result / sys.job.cancel), so peer schedulers admit it under
-// CORDUM_SDK_HANDSHAKE=enforce. It is best-effort and fails SAFE: on a mint
+// attachServiceToken stamps a short-TTL control-plane service token on a
+// control-plane packet the scheduler publishes (sys.job.submit / sys.job.result /
+// sys.job.cancel, the DLQ and the output-policy audit subject), so a consumer
+// can tell it came from the scheduler. It is best-effort and fails SAFE: on a mint
 // error it logs at ERROR and proceeds WITHOUT a token, so a peer under enforce
 // REJECTS the token-less packet rather than admitting an unauthenticated one.
 // When the gate is Off/disabled the middleware returns ("",nil) and no token is
-// attached (back-compat). Call this for scheduler-owned authenticated
-// control-plane publishes, never for unsubscribed DLQ/audit traffic.
+// attached (back-compat). Call it immediately before the Publish.
 func (e *Engine) attachServiceToken(pkt *pb.BusPacket) {
 	if e == nil || pkt == nil || e.sessionMiddleware == nil {
 		return
@@ -3445,6 +3489,7 @@ func (e *Engine) replayApprovalPublish(traceID string, req *pb.JobRequest, appro
 				},
 			},
 		}
+		e.attachServiceToken(packet)
 		if err := e.bus.Publish(capsdk.SubjectDLQ, packet); err != nil {
 			return fmt.Errorf("replay approval dlq publish: %w", err)
 		}
@@ -3511,6 +3556,7 @@ func (e *Engine) emitDLQ(jobID, topic string, status pb.JobStatus, reason string
 			},
 		},
 	}
+	e.attachServiceToken(packet)
 	return e.bus.Publish(dlqSubject, packet)
 }
 
@@ -3622,6 +3668,7 @@ func (e *Engine) emitOutputAuditEvent(jobID, topic, code, reason string, decisio
 			},
 		},
 	}
+	e.attachServiceToken(packet)
 	if err := e.bus.Publish(outputPolicyAudit, packet); err != nil {
 		slog.Error("output audit event publish failed", "job_id", jobID, "code", code, "error", err)
 	}
@@ -3784,3 +3831,17 @@ const (
 	// the store are comparable.
 	defaultFlushBatchSize = 200
 )
+
+// reserveJobTenantSlot reserves jobID's slot in the active set of the tenant
+// its job meta stores, the set every terminal state write removes it from. A
+// job with no stored tenant counts under model.DefaultTenant. A failed tenant
+// read is returned, so the job requeues rather than dispatching.
+func (e *Engine) reserveJobTenantSlot(ctx context.Context, jobID string, limit int64) (string, bool, int, error) {
+	tenant, err := e.jobStore.GetTenant(ctx, jobID)
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return "", false, 0, err
+	}
+	tenant = model.ActiveSetTenant(tenant)
+	reserved, others, err := e.jobStore.ReserveTenantSlot(ctx, tenant, jobID, limit)
+	return tenant, reserved, others, err
+}

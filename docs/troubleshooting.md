@@ -371,7 +371,7 @@ cordumctl topic list
 
 ## 3. Safety Kernel Unavailable
 
-**Symptoms**: `cordum_safety_unavailable_total` rising, jobs stuck, scheduler logs show `safety_unavailable`.
+**Symptoms**: `cordum_scheduler_safety_unavailable_total` rising, jobs stuck, scheduler logs show `safety_unavailable`.
 
 ### TLS misconfiguration
 
@@ -422,7 +422,7 @@ cat config/safety.yaml | python -c "import yaml, sys; yaml.safe_load(sys.stdin.r
 
 **Fix**:
 - Fix YAML syntax errors in `config/safety.yaml`
-- If signature verification is required (`SAFETY_POLICY_SIGNATURE_REQUIRED=true`), ensure `SAFETY_POLICY_PUBLIC_KEY` is set
+- If signature verification is enforced (production with `CORDUM_POLICY_STRICT` unset, `CORDUM_POLICY_STRICT=enforce`, or `SAFETY_POLICY_SIGNATURE_REQUIRED=true`), ensure a trusted public key is set: `CORDUM_POLICY_PUBLIC_KEY_<ID>` or the legacy `SAFETY_POLICY_PUBLIC_KEY`
 - In production, the safety kernel refuses to start without a valid policy
 
 ---

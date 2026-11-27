@@ -128,9 +128,9 @@ type server struct {
 	// gateway never trigger action gates.
 	actionExtractor ActionDescriptorExtractor
 	// actionGateAuditSink is invoked when the action-gate pipeline fires
-	// a non-allow decision. Production wires this to a function that
-	// records the SIEMEvent into the BufferedExporter and appends to the
-	// audit Chainer. Nil = log-only.
+	// a non-allow decision. RunWithEntitlements wires it to the kernel's
+	// NATS audit publisher (sys.audit.export), or to a log-only sink when
+	// no publisher can be built. Nil = no record at all.
 	actionGateAuditSink func(ctx context.Context, event audit.SIEMEvent)
 
 	// governanceEvaluator runs deterministic multi-agent governance
@@ -203,8 +203,8 @@ func (s *server) SetActionDescriptorExtractor(fn ActionDescriptorExtractor) {
 
 // SetActionGateAuditSink installs the audit emission hook. Invoked
 // synchronously when an action-gate pipeline fires a non-allow decision.
-// Production wires this to a function that fans out to the SIEM
-// BufferedExporter and the per-tenant audit Chainer.
+// RunWithEntitlements installs newKernelActionGateAuditSink, which publishes
+// through the kernel's NATS audit publisher when one exists, else only logs.
 func (s *server) SetActionGateAuditSink(fn func(ctx context.Context, event audit.SIEMEvent)) {
 	s.mu.Lock()
 	s.actionGateAuditSink = fn
@@ -305,6 +305,52 @@ func Run(cfg *config.Config) error {
 	return RunWithEntitlements(cfg, nil)
 }
 
+func serverTransportCredentials(ctx context.Context) (grpc.ServerOption, error) {
+	serverCreds := grpc.Creds(insecure.NewCredentials())
+	cert := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_TLS_CERT"))
+	key := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_TLS_KEY"))
+	clientCA := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_TLS_CLIENT_CA"))
+	if clientCA != "" && (cert == "" || key == "") {
+		return nil, fmt.Errorf("SAFETY_KERNEL_TLS_CLIENT_CA requires SAFETY_KERNEL_TLS_CERT and SAFETY_KERNEL_TLS_KEY")
+	}
+	if env.IsProduction() && cert == "" {
+		return nil, fmt.Errorf("safety kernel tls required in production")
+	}
+	if env.IsProduction() && clientCA == "" {
+		return nil, fmt.Errorf("SAFETY_KERNEL_TLS_CLIENT_CA required in production")
+	}
+	if cert != "" || key != "" {
+		if cert == "" || key == "" {
+			return nil, fmt.Errorf("safety kernel tls requires both SAFETY_KERNEL_TLS_CERT and SAFETY_KERNEL_TLS_KEY")
+		}
+		reloader, err := tlsreload.NewCertReloader(cert, key, "safety-kernel")
+		if err != nil {
+			return nil, fmt.Errorf("safety kernel tls keypair: %w", err)
+		}
+		tlsCfg := &tls.Config{
+			GetCertificate: reloader.GetCertificate,
+			MinVersion:     tls.VersionTLS12,
+		}
+		if env.TLSMinVersion() == tls.VersionTLS13 {
+			tlsCfg.MinVersion = tls.VersionTLS13
+		}
+		if clientCA != "" {
+			pem, err := os.ReadFile(clientCA) // #nosec G304 -- the client CA path is configured by the operator.
+			if err != nil {
+				return nil, fmt.Errorf("read SAFETY_KERNEL_TLS_CLIENT_CA: %w", err)
+			}
+			tlsCfg.ClientCAs = x509.NewCertPool()
+			if !tlsCfg.ClientCAs.AppendCertsFromPEM(pem) {
+				return nil, fmt.Errorf("SAFETY_KERNEL_TLS_CLIENT_CA contains no certificates")
+			}
+			tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
+		}
+		go reloader.WatchLoop(ctx, 30*time.Second)
+		serverCreds = grpc.Creds(credentials.NewTLS(tlsCfg))
+	}
+	return serverCreds, nil
+}
+
 // RunWithEntitlements starts the Safety Kernel with an optional shared
 // entitlement resolver. Nil falls back to community defaults.
 func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementResolver) error {
@@ -347,29 +393,9 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 		return fmt.Errorf("listen %s: %w", cfg.SafetyKernelAddr, err)
 	}
 
-	serverCreds := grpc.Creds(insecure.NewCredentials())
-	cert := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_TLS_CERT"))
-	key := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_TLS_KEY"))
-	if cert != "" || key != "" {
-		if cert == "" || key == "" {
-			return fmt.Errorf("safety kernel tls requires both SAFETY_KERNEL_TLS_CERT and SAFETY_KERNEL_TLS_KEY")
-		}
-		reloader, err := tlsreload.NewCertReloader(cert, key, "safety-kernel")
-		if err != nil {
-			return fmt.Errorf("safety kernel tls keypair: %w", err)
-		}
-		go reloader.WatchLoop(context.Background(), 30*time.Second)
-		tlsCfg := &tls.Config{
-			GetCertificate: reloader.GetCertificate,
-			MinVersion:     tls.VersionTLS12,
-		}
-		if env.TLSMinVersion() == tls.VersionTLS13 {
-			tlsCfg.MinVersion = tls.VersionTLS13
-		}
-		serverCreds = grpc.Creds(credentials.NewTLS(tlsCfg))
-	}
-	if env.IsProduction() && cert == "" {
-		return fmt.Errorf("safety kernel tls required in production")
+	serverCreds, err := serverTransportCredentials(context.Background())
+	if err != nil {
+		return err
 	}
 
 	cacheMax := resolveDecisionCacheMax()
@@ -443,7 +469,10 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	// pipeline silently disabled. The kernel's pipeline runs defensive
 	// gates with no backend dependencies; the gateway path holds the
 	// primary enforcement surface with full approval+chain lookups.
-	if err := wireActionGatePipeline(srv, nil); err != nil {
+	// Gate denials share the shadow audit publisher; without one they are
+	// only logged, and boot does not fail on that.
+	auditSender, auditSenderErr := chooseShadowAuditSender(natsBus)
+	if err := wireActionGatePipeline(srv, actionGateAuditSender(auditSender, auditSenderErr)); err != nil {
 		return fmt.Errorf("wire action gate pipeline: %w", err)
 	}
 	srv.SetGovernanceEvaluator(evaluator.New(), config.DefaultGovernancePolicy())
@@ -451,10 +480,15 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	// Phase-2 shadow dual-evaluation: constructs the shadow loader +
 	// evaluator and attaches them to srv via SetShadowEvaluator so
 	// evaluate() can Submit active decisions without a nil-panic. When
-	// configsvc or NATS is unavailable setupShadowEvaluation returns
-	// (nil, nil) and the kernel still boots with shadow eval as a no-op
-	// — see shadow_eval.go for the fallback chain.
-	shadowLoader, shadowEvaluator := setupShadowEvaluation(srv, loader, natsBus)
+	// shadow eval is disabled or configsvc is unavailable it returns nils
+	// and the kernel still boots with shadow eval as a no-op. With NATS,
+	// a malformed audit publisher key, or none under the production
+	// profile, is an error and the kernel refuses to start — see
+	// shadow_eval.go for the fallback chain.
+	shadowLoader, shadowEvaluator, err := setupShadowEvaluation(srv, loader, auditSender, auditSenderErr)
+	if err != nil {
+		return fmt.Errorf("safety-kernel: shadow evaluation: %w", err)
+	}
 	if shadowEvaluator != nil {
 		defer shadowEvaluator.Close()
 	}
@@ -482,28 +516,7 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	// Report this kernel's loader configuration on the same lifecycle.
 	startPolicySignatureReporter(lifecycleCtx, &wg, resultClient)
 
-	grpcServer := grpc.NewServer(
-		serverCreds,
-		grpc.StatsHandler(otelgrpc.NewServerHandler()),
-		grpc.KeepaliveParams(keepalive.ServerParameters{
-			MaxConnectionAge:      env.DurationOr(envGRPCServerMaxConnectionAge, 2*time.Hour),
-			MaxConnectionAgeGrace: env.DurationOr(envGRPCServerMaxConnectionGrace, 30*time.Second),
-			Time:                  env.DurationOr(envGRPCServerKeepaliveTime, 30*time.Second),
-			Timeout:               env.DurationOr(envGRPCServerKeepaliveTimeout, 10*time.Second),
-		}),
-		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
-			MinTime:             env.DurationOr(envGRPCServerEnforcementMinTime, 15*time.Second),
-			PermitWithoutStream: true,
-		}),
-	)
-	pb.RegisterSafetyKernelServer(grpcServer, srv)
-	pb.RegisterOutputPolicyServiceServer(grpcServer, srv)
-	healthSrv := health.NewServer()
-	healthpb.RegisterHealthServer(grpcServer, healthSrv)
-	healthSrv.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
-	if env.Bool(env.EnvGRPCReflection) {
-		reflection.Register(grpcServer)
-	}
+	grpcServer := newGRPCServer(srv, serverCreds)
 
 	// Admin HTTP server for health probes (Docker/K8s).
 	adminAddr := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_ADMIN_ADDR"))
@@ -598,6 +611,32 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 		return fmt.Errorf("grpc serve: %w", serveErr)
 	}
 	return nil
+}
+
+func newGRPCServer(srv *server, serverCreds grpc.ServerOption) *grpc.Server {
+	grpcServer := grpc.NewServer(
+		serverCreds,
+		grpc.StatsHandler(otelgrpc.NewServerHandler()),
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			MaxConnectionAge:      env.DurationOr(envGRPCServerMaxConnectionAge, 2*time.Hour),
+			MaxConnectionAgeGrace: env.DurationOr(envGRPCServerMaxConnectionGrace, 30*time.Second),
+			Time:                  env.DurationOr(envGRPCServerKeepaliveTime, 30*time.Second),
+			Timeout:               env.DurationOr(envGRPCServerKeepaliveTimeout, 10*time.Second),
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             env.DurationOr(envGRPCServerEnforcementMinTime, 15*time.Second),
+			PermitWithoutStream: true,
+		}),
+	)
+	pb.RegisterSafetyKernelServer(grpcServer, srv)
+	pb.RegisterOutputPolicyServiceServer(grpcServer, srv)
+	healthSrv := health.NewServer()
+	healthpb.RegisterHealthServer(grpcServer, healthSrv)
+	healthSrv.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
+	if env.Bool(env.EnvGRPCReflection) {
+		reflection.Register(grpcServer)
+	}
+	return grpcServer
 }
 
 func (s *server) currentEntitlements() licensing.Entitlements {
@@ -720,7 +759,7 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	s.mu.RUnlock()
 
 	workflowID, scopedJobID := resolvePolicyScope(req)
-	evalPolicy := scopedPolicyForRequest(policy, global, workflowID, scopedJobID, topic, req.GetLabels())
+	evalPolicy := scopedPolicyForRequest(policy, global, workflowID, scopedJobID, topic)
 	inputRules = selectInputRulesForScope(inputRules, workflowID, scopedJobID)
 
 	// Bypass decision cache when the active policy has effective velocity rules.
@@ -1279,15 +1318,9 @@ func toProtoRemediations(remediations []config.PolicyRemediation) []*pb.PolicyRe
 // to avoid per-evaluation Redis lookups.
 //
 // tenant must be the calling request's own tenant (already resolved by the
-// caller — see evaluate()). The AgentIdentityStore lookup below uses an
-// empty-tenant lookup, which is a system-level bypass that skips the
-// store's own tenant check, so it must be verified here: without it, a
-// worker credential (or guessed agent_id) linked to another tenant's agent
-// identity could have that agent's risk_tier / data_classifications
-// influence policy decisions for jobs submitted by a different tenant. The
-// cache key includes the tenant for the same reason — keying on agentID
-// alone would let a cross-tenant lookup poison the cache entry that a
-// same-tenant request later reads.
+// caller — see evaluate()). Both the store lookup and the cache key are
+// scoped to that tenant, so cached identities stay within the request's
+// tenant as well as its agent ID.
 func (s *server) enrichAgentContext(ctx context.Context, tenant string, labels map[string]string, input *config.PolicyInput) {
 	if s.agentStore == nil || len(labels) == 0 {
 		return
@@ -1308,7 +1341,7 @@ func (s *server) enrichAgentContext(ctx context.Context, tenant string, labels m
 	identity := s.getAgentFromCache(cacheKey)
 	if identity == nil {
 		var err error
-		identity, err = s.agentStore.Get(ctx, "", agentID)
+		identity, err = s.agentStore.Get(ctx, tenant, agentID)
 		if err != nil {
 			slog.Warn("safety-kernel: agent identity lookup failed", "agent_id", agentID, "error", err)
 			return

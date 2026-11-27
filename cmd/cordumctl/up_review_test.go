@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -15,12 +16,50 @@ import (
 
 func TestDevBootstrapAdminPasswordPassesValidation(t *testing.T) {
 	t.Setenv("CORDUM_ADMIN_PASSWORD", "")
-	result, err := ensureDevBootstrapEnv(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
+	// No other generated credential has a validator outside production.
+	for i := range 8 {
+		result, err := ensureDevBootstrapEnv(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := auth.ValidatePassword(readEnvFile(result.EnvPath, "CORDUM_ADMIN_PASSWORD")); err != nil {
+			t.Fatalf("generation %d fails gateway validation: %v", i, err)
+		}
 	}
-	if err := auth.ValidatePassword(readEnvFile(result.EnvPath, "CORDUM_ADMIN_PASSWORD")); err != nil {
-		t.Fatalf("generated password fails gateway validation: %v", err)
+}
+
+func TestDevBootstrapFillsEmptyKeyInPlace(t *testing.T) {
+	definition := regexp.MustCompile(`(?m)^\s*(export\s+)?CORDUM_API_KEY\s*[=:]`)
+	for _, tc := range []struct{ name, content string }{
+		{"quoted empty with comment", "CORDUM_API_KEY=\"\" # initialize locally\n"},
+		{"bare export", "export CORDUM_API_KEY=\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CORDUM_API_KEY", "")
+			t.Setenv("API_KEY", "")
+			dir := t.TempDir()
+			path := filepath.Join(dir, ".env")
+			if err := os.WriteFile(path, []byte(tc.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			result, err := ensureDevBootstrapEnv(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			written, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if count := len(definition.FindAll(written, -1)); count != 1 {
+				t.Fatalf("got %d API key definitions, want one filled in place", count)
+			}
+			if result.APIKey == "" {
+				t.Fatal("bootstrap returned an empty API key")
+			}
+			if got := readEnvFile(path, "CORDUM_API_KEY"); got != result.APIKey {
+				t.Fatal("written API key differs from bootstrap")
+			}
+		})
 	}
 }
 

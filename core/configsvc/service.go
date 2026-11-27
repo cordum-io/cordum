@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/cordum/cordum/core/infra/redisutil"
@@ -15,6 +17,10 @@ import (
 // ErrRevisionConflict is returned when a concurrent writer modified the
 // document between Get and Set. Callers should re-read and retry.
 var ErrRevisionConflict = errors.New("config revision conflict: document was modified by another writer")
+
+// ErrTenantMismatch is returned by Set when the team, workflow or step
+// document stored at the key does not record the tenant of its id.
+var ErrTenantMismatch = errors.New("config document does not record the tenant of its id")
 
 // Scope levels for configuration inheritance.
 type Scope string
@@ -27,10 +33,51 @@ const (
 	ScopeStep     Scope = "step"
 )
 
+// TenantScopeID qualifies team, workflow and step ids with their tenant.
+func TenantScopeID(scope Scope, tenant, id string) string {
+	switch scope {
+	case ScopeTeam, ScopeWorkflow, ScopeStep:
+		tenant, id = strings.TrimSpace(tenant), strings.TrimSpace(id)
+		if tenant == "" || id == "" {
+			return ""
+		}
+		return url.PathEscape(tenant) + "/" + id
+	default:
+		return id
+	}
+}
+
+// scopeIDTenant returns the tenant of a team, workflow or step id in
+// TenantScopeID's exact form, and "" for any other id or scope.
+func scopeIDTenant(scope Scope, id string) string {
+	escaped, rest, ok := strings.Cut(id, "/")
+	if !ok {
+		return ""
+	}
+	tenant, err := url.PathUnescape(escaped)
+	if err != nil || TenantScopeID(scope, tenant, rest) != id {
+		return ""
+	}
+	return tenant
+}
+
+// isDocumentAt reports whether stored is the document at (scope, id). At team,
+// workflow and step scope its scope, scope_id and tenant must all match.
+func isDocumentAt(stored *Document, scope Scope, id string) bool {
+	switch scope {
+	case ScopeTeam, ScopeWorkflow, ScopeStep:
+		tenant := scopeIDTenant(scope, id)
+		return tenant != "" && stored.Tenant == tenant && stored.Scope == scope && stored.ScopeID == id
+	default:
+		return true
+	}
+}
+
 // Document is a config fragment at a given scope.
 type Document struct {
 	Scope    Scope             `json:"scope"`
-	ScopeID  string            `json:"scope_id"` // system may use "default"
+	ScopeID  string            `json:"scope_id"`         // system may use "default"
+	Tenant   string            `json:"tenant,omitempty"` // team, workflow and step only; Set records it from ScopeID
 	Data     map[string]any    `json:"data"`
 	Revision int64             `json:"revision"`
 	Updated  time.Time         `json:"updated_at"`
@@ -80,7 +127,9 @@ func (s *Service) Close() error {
 
 // Set stores a config document with optimistic locking. If another writer
 // modified the document since it was read, ErrRevisionConflict is returned.
-// The caller should re-read with Get and retry.
+// The caller should re-read with Get and retry. Set records doc.Tenant from
+// doc.ScopeID, and returns ErrTenantMismatch rather than replace a stored
+// document that is not the one at (doc.Scope, doc.ScopeID).
 func (s *Service) Set(ctx context.Context, doc *Document) error {
 	if doc == nil || doc.Scope == "" {
 		return fmt.Errorf("scope required")
@@ -88,6 +137,7 @@ func (s *Service) Set(ctx context.Context, doc *Document) error {
 	if doc.Scope != ScopeSystem && doc.ScopeID == "" {
 		return fmt.Errorf("scope_id required for non-system scope")
 	}
+	doc.Tenant = scopeIDTenant(doc.Scope, doc.ScopeID)
 	key := cfgKey(doc.Scope, doc.ScopeID)
 	expectedRevision := doc.Revision
 
@@ -101,6 +151,9 @@ func (s *Service) Set(ctx context.Context, doc *Document) error {
 			var existing Document
 			if err := json.Unmarshal(stored, &existing); err != nil {
 				return fmt.Errorf("unmarshal existing config: %w", err)
+			}
+			if !isDocumentAt(&existing, doc.Scope, doc.ScopeID) {
+				return ErrTenantMismatch
 			}
 			if existing.Revision != expectedRevision {
 				return ErrRevisionConflict
@@ -146,7 +199,8 @@ func (s *Service) Set(ctx context.Context, doc *Document) error {
 	return nil
 }
 
-// Get fetches a config document at a given scope/id.
+// Get fetches a config document at a given scope/id. A stored document that
+// is not the one at (scope, id) is returned as redis.Nil.
 func (s *Service) Get(ctx context.Context, scope Scope, id string) (*Document, error) {
 	if scope == "" {
 		return nil, fmt.Errorf("scope required")
@@ -158,6 +212,9 @@ func (s *Service) Get(ctx context.Context, scope Scope, id string) (*Document, e
 	var doc Document
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("unmarshal doc: %w", err)
+	}
+	if !isDocumentAt(&doc, scope, id) {
+		return nil, redis.Nil
 	}
 	return &doc, nil
 }
@@ -183,9 +240,9 @@ func (s *Service) EffectiveSnapshot(ctx context.Context, orgID, teamID, workflow
 	}{
 		{ScopeSystem, "default"},
 		{ScopeOrg, orgID},
-		{ScopeTeam, teamID},
-		{ScopeWorkflow, workflowID},
-		{ScopeStep, stepID},
+		{ScopeTeam, TenantScopeID(ScopeTeam, orgID, teamID)},
+		{ScopeWorkflow, TenantScopeID(ScopeWorkflow, orgID, workflowID)},
+		{ScopeStep, TenantScopeID(ScopeStep, orgID, stepID)},
 	}
 	result := make(map[string]any)
 	revisions := make(map[Scope]int64, len(order))
@@ -297,7 +354,21 @@ func (s *Service) EnsureDefault(ctx context.Context) error {
 // SetWithRetry wraps Set with automatic retry on ErrRevisionConflict.
 // On conflict, it re-reads the document, calls applyFn to re-apply the
 // caller's changes to the fresh document, and retries up to maxAttempts times.
+// For system/default it deep-merges applyFn's result over the document it
+// read, so a key applyFn drops is kept; use ReplaceWithRetry to delete keys.
 func (s *Service) SetWithRetry(ctx context.Context, scope Scope, scopeID string, maxAttempts int, applyFn func(doc *Document) error) error {
+	return s.setWithRetry(ctx, scope, scopeID, maxAttempts, shouldPreserveSystemDefaultKeys(scope, scopeID), applyFn)
+}
+
+// ReplaceWithRetry is SetWithRetry without the system/default merge: the
+// stored document is exactly what applyFn leaves, so a key it deletes stays
+// deleted. applyFn must edit the document it is given in place and never
+// replace doc.Data with a subset, or every key it leaves out is deleted too.
+func (s *Service) ReplaceWithRetry(ctx context.Context, scope Scope, scopeID string, maxAttempts int, applyFn func(doc *Document) error) error {
+	return s.setWithRetry(ctx, scope, scopeID, maxAttempts, false, applyFn)
+}
+
+func (s *Service) setWithRetry(ctx context.Context, scope Scope, scopeID string, maxAttempts int, preserve bool, applyFn func(doc *Document) error) error {
 	for attempt := range maxAttempts {
 		doc, err := s.Get(ctx, scope, scopeID)
 		if err != nil {
@@ -314,7 +385,7 @@ func (s *Service) SetWithRetry(ctx context.Context, scope Scope, scopeID string,
 		if err := applyFn(doc); err != nil {
 			return fmt.Errorf("apply config changes: %w", err)
 		}
-		if shouldPreserveSystemDefaultKeys(scope, scopeID) {
+		if preserve {
 			// Protect the shared system/default document from partial overwrite
 			// patterns where a caller replaces doc.Data with a subset map.
 			doc.Data = mergePreservingKeys(originalData, doc.Data)

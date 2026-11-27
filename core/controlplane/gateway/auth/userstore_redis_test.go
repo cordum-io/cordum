@@ -70,14 +70,14 @@ func TestLoginThrottle_BlocksAfterMaxAttempts(t *testing.T) {
 
 	// First 5 attempts should not be throttled.
 	for i := 0; i < maxLoginAttempts(); i++ {
-		if err := store.CheckLoginThrottle(ctx, username, "10.0.0.1"); err != nil {
+		if err := store.CheckLoginThrottle(ctx, "default", username, "10.0.0.1"); err != nil {
 			t.Fatalf("attempt %d: unexpected throttle: %v", i+1, err)
 		}
-		store.RecordFailedLogin(ctx, username, "10.0.0.1")
+		store.RecordFailedLogin(ctx, "default", username, "10.0.0.1")
 	}
 
 	// 6th attempt should be throttled.
-	if err := store.CheckLoginThrottle(ctx, username, "10.0.0.1"); err == nil {
+	if err := store.CheckLoginThrottle(ctx, "default", username, "10.0.0.1"); err == nil {
 		t.Fatal("expected throttle after max attempts, got nil")
 	} else if err != ErrLoginThrottled {
 		t.Fatalf("expected ErrLoginThrottled, got: %v", err)
@@ -91,27 +91,27 @@ func TestLoginThrottle_SuccessfulLoginResetsCounter(t *testing.T) {
 
 	// Record 3 failed attempts.
 	for i := 0; i < 3; i++ {
-		store.RecordFailedLogin(ctx, username, "10.0.0.1")
+		store.RecordFailedLogin(ctx, "default", username, "10.0.0.1")
 	}
 
 	// Not yet throttled.
-	if err := store.CheckLoginThrottle(ctx, username, "10.0.0.1"); err != nil {
+	if err := store.CheckLoginThrottle(ctx, "default", username, "10.0.0.1"); err != nil {
 		t.Fatalf("unexpected throttle after 3 attempts: %v", err)
 	}
 
 	// Successful login clears the counter.
-	store.ClearFailedLogins(ctx, username, "10.0.0.1")
+	store.ClearFailedLogins(ctx, "default", username, "10.0.0.1")
 
 	// Can now do 5 more failures without being throttled.
 	for i := 0; i < maxLoginAttempts(); i++ {
-		if err := store.CheckLoginThrottle(ctx, username, "10.0.0.1"); err != nil {
+		if err := store.CheckLoginThrottle(ctx, "default", username, "10.0.0.1"); err != nil {
 			t.Fatalf("attempt %d after reset: unexpected throttle: %v", i+1, err)
 		}
-		store.RecordFailedLogin(ctx, username, "10.0.0.1")
+		store.RecordFailedLogin(ctx, "default", username, "10.0.0.1")
 	}
 
 	// Now should be throttled again.
-	if err := store.CheckLoginThrottle(ctx, username, "10.0.0.1"); err == nil {
+	if err := store.CheckLoginThrottle(ctx, "default", username, "10.0.0.1"); err == nil {
 		t.Fatal("expected throttle after max attempts post-reset")
 	}
 }
@@ -122,16 +122,16 @@ func TestLoginThrottle_IndependentPerUsername(t *testing.T) {
 
 	// Lock out alice.
 	for i := 0; i < maxLoginAttempts(); i++ {
-		store.RecordFailedLogin(ctx, "alice", "10.0.0.1")
+		store.RecordFailedLogin(ctx, "default", "alice", "10.0.0.1")
 	}
 
 	// Alice is throttled.
-	if err := store.CheckLoginThrottle(ctx, "alice", "10.0.0.1"); err == nil {
+	if err := store.CheckLoginThrottle(ctx, "default", "alice", "10.0.0.1"); err == nil {
 		t.Fatal("expected alice to be throttled")
 	}
 
 	// Bob is NOT throttled.
-	if err := store.CheckLoginThrottle(ctx, "bob", "10.0.0.1"); err != nil {
+	if err := store.CheckLoginThrottle(ctx, "default", "bob", "10.0.0.1"); err != nil {
 		t.Fatalf("bob should not be throttled: %v", err)
 	}
 }
@@ -147,8 +147,8 @@ func TestLoginThrottleLogsOnRedisFailure(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(previous) })
 
 	srv.Close()
-	store.RecordFailedLogin(ctx, "alice", "10.0.0.1")
-	store.ClearFailedLogins(ctx, "alice", "10.0.0.1")
+	store.RecordFailedLogin(ctx, "default", "alice", "10.0.0.1")
+	store.ClearFailedLogins(ctx, "default", "alice", "10.0.0.1")
 
 	logs := buf.String()
 	if !strings.Contains(logs, "failed to record login attempt") {
@@ -179,21 +179,21 @@ func TestLoginThrottleFallbackOnRedisUnavailable(t *testing.T) {
 
 	// First N failed attempts should pass (fallback allows up to threshold).
 	for i := 0; i < max; i++ {
-		if err := store.CheckLoginThrottle(ctx, "attacker", "10.0.0.1"); err != nil {
+		if err := store.CheckLoginThrottle(ctx, "default", "attacker", "10.0.0.1"); err != nil {
 			t.Fatalf("attempt %d: expected pass during fallback, got: %v", i+1, err)
 		}
-		store.RecordFailedLogin(ctx, "attacker", "10.0.0.1")
+		store.RecordFailedLogin(ctx, "default", "attacker", "10.0.0.1")
 	}
 
 	// Next attempt should be throttled by fallback.
-	if err := store.CheckLoginThrottle(ctx, "attacker", "10.0.0.1"); err == nil {
+	if err := store.CheckLoginThrottle(ctx, "default", "attacker", "10.0.0.1"); err == nil {
 		t.Fatal("expected fallback throttle after max attempts, got nil")
 	} else if err != ErrLoginThrottled {
 		t.Fatalf("expected ErrLoginThrottled, got: %v", err)
 	}
 
 	// Different IP should still be allowed (per-IP isolation).
-	if err := store.CheckLoginThrottle(ctx, "attacker", "10.0.0.2"); err != nil {
+	if err := store.CheckLoginThrottle(ctx, "default", "attacker", "10.0.0.2"); err != nil {
 		t.Fatalf("different IP should not be throttled: %v", err)
 	}
 }
@@ -214,10 +214,10 @@ func TestLoginThrottleRecoveryFromRedisOutage(t *testing.T) {
 	// Phase 1: Redis down — use fallback.
 	srv.Close()
 	for i := 0; i < 3; i++ {
-		if err := store.CheckLoginThrottle(ctx, "recovery-user", "10.0.0.1"); err != nil {
+		if err := store.CheckLoginThrottle(ctx, "default", "recovery-user", "10.0.0.1"); err != nil {
 			t.Fatalf("fallback attempt %d: %v", i+1, err)
 		}
-		store.RecordFailedLogin(ctx, "recovery-user", "10.0.0.1")
+		store.RecordFailedLogin(ctx, "default", "recovery-user", "10.0.0.1")
 	}
 
 	// Phase 2: Redis comes back — should use Redis (fresh counters).
@@ -225,17 +225,17 @@ func TestLoginThrottleRecoveryFromRedisOutage(t *testing.T) {
 		t.Fatalf("failed to restart redis: %v", err)
 	}
 	waitForRedisClient(t, store)
-	if err := store.CheckLoginThrottle(ctx, "recovery-user", "10.0.0.1"); err != nil {
+	if err := store.CheckLoginThrottle(ctx, "default", "recovery-user", "10.0.0.1"); err != nil {
 		t.Fatalf("expected pass after Redis recovery, got: %v", err)
 	}
 
 	// Record some failures via Redis path.
 	for i := 0; i < maxLoginAttempts(); i++ {
-		store.RecordFailedLogin(ctx, "recovery-user", "10.0.0.1")
+		store.RecordFailedLogin(ctx, "default", "recovery-user", "10.0.0.1")
 	}
 
 	// Now should be throttled via Redis.
-	if err := store.CheckLoginThrottle(ctx, "recovery-user", "10.0.0.1"); err == nil {
+	if err := store.CheckLoginThrottle(ctx, "default", "recovery-user", "10.0.0.1"); err == nil {
 		t.Fatal("expected Redis throttle after max attempts post-recovery")
 	}
 }
@@ -270,17 +270,17 @@ func TestLoginThrottleFallbackClearedAfterSuccessfulLogin(t *testing.T) {
 	srv.Close()
 
 	for i := 0; i < maxLoginAttempts(); i++ {
-		if err := store.CheckLoginThrottle(ctx, "valid-user", "10.0.0.1"); err != nil {
+		if err := store.CheckLoginThrottle(ctx, "default", "valid-user", "10.0.0.1"); err != nil {
 			t.Fatalf("attempt %d: expected pass during fallback, got: %v", i+1, err)
 		}
-		store.RecordFailedLogin(ctx, "valid-user", "10.0.0.1")
+		store.RecordFailedLogin(ctx, "default", "valid-user", "10.0.0.1")
 	}
-	if err := store.CheckLoginThrottle(ctx, "valid-user", "10.0.0.1"); err == nil {
+	if err := store.CheckLoginThrottle(ctx, "default", "valid-user", "10.0.0.1"); err == nil {
 		t.Fatal("expected fallback throttle before clearing, got nil")
 	}
 
-	store.ClearFailedLogins(ctx, "valid-user", "10.0.0.1")
-	if err := store.CheckLoginThrottle(ctx, "valid-user", "10.0.0.1"); err != nil {
+	store.ClearFailedLogins(ctx, "default", "valid-user", "10.0.0.1")
+	if err := store.CheckLoginThrottle(ctx, "default", "valid-user", "10.0.0.1"); err != nil {
 		t.Fatalf("expected fallback counter to clear after successful login, got: %v", err)
 	}
 }
@@ -356,11 +356,11 @@ func TestLoginThrottle_TTLExpiry(t *testing.T) {
 
 	// Lock out charlie.
 	for i := 0; i < maxLoginAttempts(); i++ {
-		store.RecordFailedLogin(ctx, username, "10.0.0.1")
+		store.RecordFailedLogin(ctx, "default", username, "10.0.0.1")
 	}
 
 	// Charlie is throttled.
-	if err := store.CheckLoginThrottle(ctx, username, "10.0.0.1"); err == nil {
+	if err := store.CheckLoginThrottle(ctx, "default", username, "10.0.0.1"); err == nil {
 		t.Fatal("expected throttle")
 	}
 
@@ -368,7 +368,7 @@ func TestLoginThrottle_TTLExpiry(t *testing.T) {
 	srv.FastForward(loginLockoutPeriod() + 1)
 
 	// Charlie can try again.
-	if err := store.CheckLoginThrottle(ctx, username, "10.0.0.1"); err != nil {
+	if err := store.CheckLoginThrottle(ctx, "default", username, "10.0.0.1"); err != nil {
 		t.Fatalf("expected throttle to expire: %v", err)
 	}
 }
@@ -380,16 +380,16 @@ func TestLoginThrottle_IndependentPerIP(t *testing.T) {
 
 	// Lock out dave from IP 10.0.0.1.
 	for i := 0; i < maxLoginAttempts(); i++ {
-		store.RecordFailedLogin(ctx, username, "10.0.0.1")
+		store.RecordFailedLogin(ctx, "default", username, "10.0.0.1")
 	}
 
 	// dave is throttled from 10.0.0.1.
-	if err := store.CheckLoginThrottle(ctx, username, "10.0.0.1"); err == nil {
+	if err := store.CheckLoginThrottle(ctx, "default", username, "10.0.0.1"); err == nil {
 		t.Fatal("expected throttle from 10.0.0.1")
 	}
 
 	// dave is NOT throttled from 10.0.0.2 (different IP).
-	if err := store.CheckLoginThrottle(ctx, username, "10.0.0.2"); err != nil {
+	if err := store.CheckLoginThrottle(ctx, "default", username, "10.0.0.2"); err != nil {
 		t.Fatalf("should not be throttled from different IP: %v", err)
 	}
 }
@@ -403,11 +403,11 @@ func TestLoginThrottle_GlobalCounterTriggersAcrossIPs(t *testing.T) {
 	// Spread failures across many IPs to stay under per-IP limit but exceed global.
 	for i := 0; i < globalMax; i++ {
 		ip := fmt.Sprintf("10.0.%d.%d", i/256, i%256)
-		store.RecordFailedLogin(ctx, username, ip)
+		store.RecordFailedLogin(ctx, "default", username, ip)
 	}
 
 	// Should be throttled from a fresh IP because global counter exceeded.
-	if err := store.CheckLoginThrottle(ctx, username, "192.168.0.1"); err == nil {
+	if err := store.CheckLoginThrottle(ctx, "default", username, "192.168.0.1"); err == nil {
 		t.Fatal("expected throttle from global counter")
 	}
 }

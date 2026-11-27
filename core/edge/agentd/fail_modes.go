@@ -37,10 +37,12 @@ type FailModeContext struct {
 	// fail-mode then denies on Gateway failure.
 	WorkflowEdgeRequired bool
 
-	// ActionIsKnownSafe is true when the EDGE-008 classifier produced a
-	// safe-build/test/etc capability with no destructive/network/secrets risk
-	// tags. observe lets known-safe through on Gateway failure; enforce still
-	// allows known-safe; enterprise-strict still denies.
+	// ActionIsKnownSafe is true when the EDGE-008 classifier labelled the
+	// action command.class=safe (the read-only git shapes) with no
+	// destructive/network/secrets risk tags. Build and test commands are
+	// command.class=arbitrary_code and never known-safe. observe lets every
+	// action through on Gateway failure; enforce allows only known-safe;
+	// enterprise-strict still denies.
 	ActionIsKnownSafe bool
 
 	// HasFreshDecision is true when Evaluate returned a parsed response with a

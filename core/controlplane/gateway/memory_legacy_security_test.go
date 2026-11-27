@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 
 	agentv1 "github.com/cordum-io/cap/v2/cordum/agent/v1"
@@ -15,6 +17,43 @@ import (
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
+
+func TestLegacyMemoryEndpointRefusesTenantQualifiedKeys(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.WithLegacyMemoryCompatibility(nil)
+	ctx := context.Background()
+	const marker = "tenant-b-private-memory-marker"
+	if err := s.jobStore.SetTenant(ctx, "job-qualified", "tenant-b"); err != nil {
+		t.Fatalf("SetTenant() error = %v", err)
+	}
+	seedChatRun(t, s, "run-qualified", "wf-qualified", "tenant-b")
+	for _, key := range []string{"mem:tenant-b/job-qualified:events", "mem:tenant-b/run:run-qualified:events"} {
+		if err := s.jobStore.Client().RPush(ctx, key, marker).Err(); err != nil {
+			t.Fatalf("seed memory: %v", err)
+		}
+		for _, tenant := range []string{"tenant-b", "tenant-a"} {
+			for _, parameter := range []string{"key", "ptr"} {
+				t.Run(key+"/"+tenant+"/"+parameter, func(t *testing.T) {
+					value := key
+					if parameter == "ptr" {
+						value = "redis://" + key
+					}
+					query := url.Values{parameter: {value}}
+					req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/memory?"+query.Encode(), nil),
+						&auth.AuthContext{Tenant: tenant, Role: "admin"})
+					rec := httptest.NewRecorder()
+					s.handleGetMemory(rec, req)
+					if strings.Contains(rec.Body.String(), marker) {
+						t.Fatal("response released tenant-b memory")
+					}
+					if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "invalid memory location") {
+						t.Fatalf("status = %d, want 400 invalid memory location; body = %s", rec.Code, rec.Body.String())
+					}
+				})
+			}
+		}
+	}
+}
 
 func TestHandleGetMemoryCompatibilityFailsClosedOnOwnership(t *testing.T) {
 	tests := []struct {

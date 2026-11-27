@@ -100,8 +100,11 @@ enqueues a **new** approval. That second retry is what `idempotency_key` is for:
 set it once per logical call and the downstream gateway dedupes, returning the
 prior result without re-creating the resource.
 
-Approval records expire after 30 minutes (configurable via
-`CORDUM_MCP_APPROVAL_TTL`). After expiry, the next retry enqueues a fresh approval
+A pending approval expires 5 minutes after the gate requests it: the gate sets no
+TTL of its own, so the store default applies. Expiry ends the approval, not its
+stored records. The MCP approval record and its index expire 1 minute later, and
+an Edge approval record written alongside it has no TTL (DI-C46 and DI-C02 in
+`docs/contract/data-inventory.yaml`). After expiry, the next retry enqueues a fresh approval
 — the LLM should surface the new link to the operator.
 
 ## Catalogue

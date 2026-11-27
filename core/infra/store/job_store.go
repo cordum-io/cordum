@@ -64,6 +64,7 @@ const (
 	metaFieldSafetyChecked         = "safety_checked_at"
 	metaFieldSafetyConstraints     = "safety_constraints"
 	metaFieldSafetyRemediations    = "safety_remediations"
+	metaFieldSafetyIssuerChain     = "safety_delegation_issuer_chain"
 	metaFieldOutputSafety          = "output_safety"
 	metaFieldApprovalRequired      = "safety_approval_required"
 	metaFieldApprovalRef           = "safety_approval_ref"
@@ -237,6 +238,10 @@ type ApprovalResolutionParams struct {
 	PolicySnapshot string
 	LabelUpdates   map[string]string
 	PublishTarget  model.ApprovalPublishTarget
+	// RefreshedSafety, when set, is stored with the resolution in the same
+	// transaction, as SetSafetyDecision would store it, so a failed resolution
+	// leaves the earlier safety record in place.
+	RefreshedSafety *model.SafetyDecisionRecord
 }
 
 type ApprovalResolutionResult struct {
@@ -457,9 +462,9 @@ func (s *RedisJobStore) CancelJob(ctx context.Context, jobID string) (model.JobS
 
 		// Remove from tenant active set — CANCELLED is terminal.
 		// No TTL on active set — it self-manages via SAdd/SRem on state transitions.
-		if tenant != "" {
-			pipe.SRem(ctx, tenantActiveKey(tenant), jobID)
-		}
+		// It runs with no stored tenant too: model.ActiveSetTenant keys that job
+		// under model.DefaultTenant, where the scheduler reserved its slot.
+		pipe.SRem(ctx, tenantActiveKey(model.ActiveSetTenant(tenant)), jobID)
 
 		pipe.ZAdd(ctx, "job:recent", redis.Z{Score: float64(now), Member: jobID})
 		pipe.ZRemRangeByRank(ctx, "job:recent", 0, -1001)
@@ -1610,6 +1615,59 @@ func (s *RedisJobStore) CountActiveByTenant(ctx context.Context, tenant string) 
 	return int(count), nil
 }
 
+// reserveTenantSlotScript checks the tenant's active set and claims a slot in
+// it as one Redis operation, so admissions on any number of scheduler replicas
+// cannot both take the last slot. The job never counts against itself, and a
+// refused job leaves the set, so queued jobs cannot keep each other out.
+var reserveTenantSlotScript = redis.NewScript(`
+local member = redis.call('SISMEMBER', KEYS[1], ARGV[1])
+local others = redis.call('SCARD', KEYS[1]) - member
+if others >= tonumber(ARGV[2]) then
+  if member == 1 then
+    redis.call('SREM', KEYS[1], ARGV[1])
+  end
+  return {0, others}
+end
+redis.call('SADD', KEYS[1], ARGV[1])
+if tonumber(ARGV[3]) > 0 then
+  redis.call('EXPIRE', KEYS[1], ARGV[3])
+end
+return {1, others}
+`)
+
+// ReserveTenantSlot adds jobID to tenant's active set when fewer than limit
+// other jobs are in it. See model.JobStore.ReserveTenantSlot.
+func (s *RedisJobStore) ReserveTenantSlot(ctx context.Context, tenant, jobID string, limit int64) (bool, int, error) {
+	if tenant == "" || jobID == "" {
+		return false, 0, fmt.Errorf("tenant and jobID required")
+	}
+	ttl := int64(s.metaTTL / time.Second)
+	res, err := reserveTenantSlotScript.Run(ctx, s.client, []string{tenantActiveKey(tenant)},
+		jobID, strconv.FormatInt(limit, 10), strconv.FormatInt(ttl, 10)).Result()
+	if err != nil {
+		return false, 0, fmt.Errorf("job store reserve tenant slot %s: %w", tenant, err)
+	}
+	values, ok := res.([]interface{})
+	if !ok || len(values) != 2 {
+		return false, 0, fmt.Errorf("job store reserve tenant slot %s: malformed script result", tenant)
+	}
+	reserved, _ := values[0].(int64)
+	others, _ := values[1].(int64)
+	return reserved == 1, int(others), nil
+}
+
+// ReleaseTenantSlot removes jobID from tenant's active set. See
+// model.JobStore.ReleaseTenantSlot.
+func (s *RedisJobStore) ReleaseTenantSlot(ctx context.Context, tenant, jobID string) error {
+	if tenant == "" || jobID == "" {
+		return fmt.Errorf("tenant and jobID required")
+	}
+	if err := s.client.SRem(ctx, tenantActiveKey(tenant), jobID).Err(); err != nil {
+		return fmt.Errorf("job store release tenant slot %s: %w", tenant, err)
+	}
+	return nil
+}
+
 func (s *RedisJobStore) SetFailureReason(ctx context.Context, jobID, reason string) error {
 	if jobID == "" {
 		return fmt.Errorf("jobID required")
@@ -1663,8 +1721,8 @@ func (s *RedisJobStore) TrySetIdempotencyKeyScoped(ctx context.Context, tenant, 
 			if tErr != nil && tErr != redis.Nil {
 				return false, "", fmt.Errorf("job store idempotency tenant check %s: %w", jobID, tErr)
 			}
-			// Match if: no tenant in meta, empty tenant, or same tenant.
-			if metaTenant == "" || metaTenant == tenant {
+			// Match only when the legacy job's stored tenant is the caller's.
+			if metaTenant == tenant {
 				return false, legacyID, nil
 			}
 		}
@@ -1734,7 +1792,7 @@ func (s *RedisJobStore) GetJobByIdempotencyKeyScoped(ctx context.Context, tenant
 	if terr != nil && terr != redis.Nil {
 		return "", fmt.Errorf("job store get job by idempotency key scoped: %w", terr)
 	}
-	if legacyTenant != "" && legacyTenant != tenant {
+	if legacyTenant != tenant {
 		return "", redis.Nil
 	}
 	_ = s.SetIdempotencyKeyScoped(ctx, tenant, key, legacyID)
@@ -1753,6 +1811,24 @@ func (s *RedisJobStore) SetSafetyDecision(ctx context.Context, jobID string, rec
 	if jobID == "" {
 		return fmt.Errorf("jobID required")
 	}
+	fields, entry := safetyDecisionWrite(record)
+	pipe := s.client.TxPipeline()
+	pipe.HSet(ctx, jobMetaKey(jobID), fields)
+	pipe.RPush(ctx, jobDecisionKey(jobID), entry)
+	if s.metaTTL > 0 {
+		pipe.Expire(ctx, jobMetaKey(jobID), s.metaTTL)
+		pipe.Expire(ctx, jobDecisionKey(jobID), s.metaTTL)
+	}
+	_, err := pipe.Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("job store set safety decision %s: %w", jobID, err)
+	}
+	return nil
+}
+
+// safetyDecisionWrite returns the job meta fields and the decision-history
+// entry that store record.
+func safetyDecisionWrite(record model.SafetyDecisionRecord) (map[string]any, string) {
 	if record.CheckedAt == 0 {
 		record.CheckedAt = nowUnixMicros()
 	}
@@ -1812,6 +1888,11 @@ func (s *RedisJobStore) SetSafetyDecision(ctx context.Context, jobID string, rec
 	if remediationsJSON != "" {
 		fields[metaFieldSafetyRemediations] = remediationsJSON
 	}
+	if len(record.DelegationIssuerChain) > 0 {
+		if data, err := json.Marshal(record.DelegationIssuerChain); err == nil {
+			fields[metaFieldSafetyIssuerChain] = string(data)
+		}
+	}
 
 	var rawConstraints json.RawMessage
 	if constraintsJSON != "" {
@@ -1838,19 +1919,7 @@ func (s *RedisJobStore) SetSafetyDecision(ctx context.Context, jobID string, rec
 		"approval_decision": record.ApprovalDecision,
 	}
 	encoded, _ := json.Marshal(entry)
-
-	pipe := s.client.TxPipeline()
-	pipe.HSet(ctx, jobMetaKey(jobID), fields)
-	pipe.RPush(ctx, jobDecisionKey(jobID), string(encoded))
-	if s.metaTTL > 0 {
-		pipe.Expire(ctx, jobMetaKey(jobID), s.metaTTL)
-		pipe.Expire(ctx, jobDecisionKey(jobID), s.metaTTL)
-	}
-	_, err := pipe.Exec(ctx)
-	if err != nil {
-		return fmt.Errorf("job store set safety decision %s: %w", jobID, err)
-	}
-	return nil
+	return fields, string(encoded)
 }
 
 // SetDelegationLineage stores the verified dispatch-time delegation lineage on
@@ -2599,8 +2668,8 @@ func (s *RedisJobStore) ApplyApprovalRepair(ctx context.Context, params Approval
 		if idx := stateIndexKey(params.Plan.TargetState); idx != "" {
 			pipe.ZAdd(ctx, idx, redis.Z{Score: float64(now), Member: jobID})
 		}
-		if tenant != "" {
-			activeKey := tenantActiveKey(tenant)
+		if tenant != "" || terminalStates[params.Plan.TargetState] {
+			activeKey := tenantActiveKey(model.ActiveSetTenant(tenant))
 			if isActiveState(params.Plan.TargetState) {
 				pipe.SAdd(ctx, activeKey, jobID)
 			} else if terminalStates[params.Plan.TargetState] {
@@ -2675,6 +2744,16 @@ func (s *RedisJobStore) ResolveApproval(ctx context.Context, params ApprovalReso
 		meta, err := tx.HGetAll(ctx, metaKey).Result()
 		if err != nil && err != redis.Nil {
 			return fmt.Errorf("job store resolve approval %s: %w", jobID, err)
+		}
+		// Read the refreshed record as if it were already stored, so every
+		// check below sees what a SetSafetyDecision before this call would.
+		var refreshedFields map[string]any
+		var refreshedEntry string
+		if params.RefreshedSafety != nil {
+			refreshedFields, refreshedEntry = safetyDecisionWrite(*params.RefreshedSafety)
+			for field, value := range refreshedFields {
+				meta[field] = fmt.Sprint(value)
+			}
 		}
 		stateValue := meta["state"]
 		if stateValue == "" {
@@ -2903,6 +2982,14 @@ func (s *RedisJobStore) ResolveApproval(ctx context.Context, params ApprovalReso
 		}
 
 		pipe := tx.TxPipeline()
+		if refreshedFields != nil {
+			// Written first, so the resolution's fields win where both set one.
+			pipe.HSet(ctx, metaKey, refreshedFields)
+			pipe.RPush(ctx, jobDecisionKey(jobID), refreshedEntry)
+			if s.metaTTL > 0 {
+				pipe.Expire(ctx, jobDecisionKey(jobID), s.metaTTL)
+			}
+		}
 		pipe.HSet(ctx, metaKey, fields)
 		if s.metaTTL > 0 {
 			pipe.Expire(ctx, metaKey, s.metaTTL)
@@ -2921,8 +3008,8 @@ func (s *RedisJobStore) ResolveApproval(ctx context.Context, params ApprovalReso
 			pipe.ZAdd(ctx, idx, redis.Z{Score: float64(now), Member: jobID})
 		}
 
-		if tenant != "" {
-			activeKey := tenantActiveKey(tenant)
+		if tenant != "" || terminalStates[params.ResultState] {
+			activeKey := tenantActiveKey(model.ActiveSetTenant(tenant))
 			if isActiveState(params.ResultState) {
 				pipe.SAdd(ctx, activeKey, jobID)
 			} else if terminalStates[params.ResultState] {
@@ -3014,6 +3101,12 @@ func (s *RedisJobStore) GetSafetyDecision(ctx context.Context, jobID string) (mo
 		var remediations []*pb.PolicyRemediation
 		if err := json.Unmarshal([]byte(raw), &remediations); err == nil {
 			record.Remediations = remediations
+		}
+	}
+	if raw := data[metaFieldSafetyIssuerChain]; raw != "" {
+		var chain []string
+		if err := json.Unmarshal([]byte(raw), &chain); err == nil {
+			record.DelegationIssuerChain = chain
 		}
 	}
 	return record, nil
@@ -3323,8 +3416,8 @@ func (s *RedisJobStore) SetStateWithContext(ctx context.Context, jobID string, s
 			pipe.ZAdd(ctx, idx, redis.Z{Score: float64(now), Member: jobID})
 		}
 
-		if tenant != "" {
-			activeKey := tenantActiveKey(tenant)
+		if tenant != "" || terminalStates[state] {
+			activeKey := tenantActiveKey(model.ActiveSetTenant(tenant))
 			if isActiveState(state) {
 				pipe.SAdd(ctx, activeKey, jobID)
 			} else if terminalStates[state] {

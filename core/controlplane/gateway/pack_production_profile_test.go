@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http/httptest"
 	"os"
@@ -207,6 +208,58 @@ func prodPackLogs(t *testing.T) *bytes.Buffer {
 	return &logs
 }
 
+const (
+	policyWarnUnsigned  = "policy store content will be stored unsigned"
+	policyWarnUntrusted = "policy store content signed with an untrusted key"
+)
+
+// newPolicyWarnLogger writes JSON records to buf. policy_mode is a policysign.Mode, an int that JSON would
+// encode as a number, so it is rendered through String() as the text handler used to.
+func newPolicyWarnLogger(buf *syncBuffer) *slog.Logger {
+	return slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
+		if a.Key == "policy_mode" {
+			return slog.String(a.Key, a.Value.String())
+		}
+		return a
+	}}))
+}
+
+// prodPackPolicyLogs captures the process-global slog default as JSON until the test ends.
+// The returned func snapshots the captured text.
+func prodPackPolicyLogs(t *testing.T) func() string {
+	t.Helper()
+	var buf syncBuffer
+	previous := slog.Default()
+	slog.SetDefault(newPolicyWarnLogger(&buf))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	return buf.String
+}
+
+// checkPolicyWarning requires exactly one WARN across the two policy-store signer messages, and that record to
+// carry wantMsg, policy_mode=mode and subject "pack "+matrixPackID. Every other record is ignored.
+func checkPolicyWarning(raw, wantMsg, mode string) error {
+	var policy []map[string]any
+	dec := json.NewDecoder(strings.NewReader(raw))
+	for dec.More() {
+		var rec map[string]any
+		if err := dec.Decode(&rec); err != nil {
+			return fmt.Errorf("decode log record: %w", err)
+		}
+		if msg := rec["msg"]; rec["level"] == "WARN" && (msg == policyWarnUnsigned || msg == policyWarnUntrusted) {
+			policy = append(policy, rec)
+		}
+	}
+	if len(policy) != 1 {
+		return fmt.Errorf("got %d policy-store WARN records, want exactly 1: %v", len(policy), policy)
+	}
+	for _, want := range [][2]string{{"msg", wantMsg}, {"policy_mode", mode}, {"subject", "pack " + matrixPackID}} {
+		if got := policy[0][want[0]]; got != want[1] {
+			return fmt.Errorf("policy-store WARN %s = %v, want %q", want[0], got, want[1])
+		}
+	}
+	return nil
+}
+
 func TestGatewayPackStrictResolution_DowngradeIsLogged(t *testing.T) {
 	for _, source := range []string{gatewayPackStrictEnv, gatewayStrictRedisKey, "production", "development"} {
 		t.Run(source, func(t *testing.T) {
@@ -360,7 +413,9 @@ func TestPackPolicyFragment_ExplicitWarnStoresUnsignedFragment(t *testing.T) {
 					t.Setenv("CORDUM_POLICY_SIGNING_KEY", "private-invalid-marker")
 				}
 				h := prodPackPrepare(t, key, "signed", "upload")
-				logs := prodPackLogs(t)
+				logs := prodPackPolicyLogs(t)
+				// Unrelated process-global WARN noise, with the attributes the policy warning carries.
+				slog.Warn("test-only unrelated warning", "subject", "pack "+matrixPackID, "policy_mode", mode)
 				assertPackAccepted(t, h.s, h.before, h.drive(), packSignatureWant{status: 200, signed: true}, h.bundle.content, "upload")
 				fragment := packMatrixFragment(t, h.s)
 				if keyState == "untrusted" {
@@ -372,14 +427,84 @@ func TestPackPolicyFragment_ExplicitWarnStoresUnsignedFragment(t *testing.T) {
 				} else {
 					require.NotContains(t, fragment, "_signature")
 				}
-				require.Equal(t, 1, strings.Count(logs.String(), "level=WARN"))
-				require.Contains(t, logs.String(), "policy_mode="+mode)
-				require.Contains(t, logs.String(), matrixPackID)
+				raw := logs()
+				wantMsg := policyWarnUnsigned
+				if keyState == "untrusted" {
+					wantMsg = policyWarnUntrusted
+				}
+				require.NoError(t, checkPolicyWarning(raw, wantMsg, mode))
 				if material := os.Getenv("CORDUM_POLICY_SIGNING_KEY"); material != "" {
-					require.NotContains(t, logs.String(), material)
+					require.NotContains(t, raw, material)
 				}
 			})
 		}
+	}
+}
+
+type policyLogRec struct {
+	level   slog.Level
+	msg     string
+	mode    policysign.Mode
+	subject string
+	attr    string // extra "reason" attribute when set
+}
+
+func TestPackPolicyWarningRecords(t *testing.T) {
+	pack := "pack " + matrixPackID
+	unsigned := policyLogRec{level: slog.LevelWarn, msg: policyWarnUnsigned, mode: policysign.ModeWarn, subject: pack}
+	untrusted, noise, info, inAttr, wrongMode, wrongSubject := unsigned, unsigned, unsigned, unsigned, unsigned, unsigned
+	untrusted.msg = policyWarnUntrusted
+	noise.msg = "unrelated warning"
+	info.level = slog.LevelInfo
+	inAttr.msg, inAttr.attr = "unrelated warning", policyWarnUnsigned
+	wrongMode.mode = policysign.ModeOff
+	wrongSubject.subject = "pack other"
+	// warns is the count of WARN records of any message, which the old assertion required to be 1.
+	cases := []struct {
+		name    string
+		logs    []policyLogRec
+		wantMsg string // default: the unsigned message
+		warns   int
+		wantErr string // "" means accepted
+	}{
+		{"no records", nil, "", 0, "got 0 "},
+		{"unrelated WARN only", []policyLogRec{noise}, "", 1, "got 0 "},
+		{"exact message at INFO", []policyLogRec{info}, "", 0, "got 0 "},
+		{"message text only in an attribute", []policyLogRec{inAttr}, "", 1, "got 0 "},
+		{"unsigned", []policyLogRec{unsigned}, "", 1, ""},
+		{"untrusted", []policyLogRec{untrusted}, policyWarnUntrusted, 1, ""},
+		{"valid plus unrelated WARN", []policyLogRec{noise, unsigned, noise}, "", 3, ""},
+		{"duplicate message", []policyLogRec{unsigned, unsigned}, "", 2, "got 2 "},
+		{"mixed messages", []policyLogRec{unsigned, untrusted}, "", 2, "got 2 "},
+		{"opposite message", []policyLogRec{untrusted}, "", 1, "msg ="},
+		{"wrong policy_mode", []policyLogRec{wrongMode}, "", 1, "policy_mode ="},
+		{"wrong subject", []policyLogRec{wrongSubject}, "", 1, "subject ="},
+		{"wrong attrs despite correct noise", []policyLogRec{noise, wrongMode}, "", 2, "policy_mode ="},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf syncBuffer
+			logger := newPolicyWarnLogger(&buf)
+			for _, r := range tc.logs {
+				attrs := []any{"subject", r.subject, "policy_mode", r.mode}
+				if r.attr != "" {
+					attrs = append(attrs, "reason", r.attr)
+				}
+				logger.Log(context.Background(), r.level, r.msg, attrs...)
+			}
+			raw := buf.String()
+			require.Equal(t, tc.warns, strings.Count(raw, `"level":"WARN"`))
+			wantMsg := tc.wantMsg
+			if wantMsg == "" {
+				wantMsg = policyWarnUnsigned
+			}
+			err := checkPolicyWarning(raw, wantMsg, "warn")
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, tc.wantErr)
+			}
+		})
 	}
 }
 
@@ -391,7 +516,7 @@ func TestPackPolicyFragment_EmptyContentSkipsSigning(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "empty.yaml"), nil, 0600))
 	signer, err := resolvePolicyStoreSigner("test pack")
 	require.NoError(t, err)
-	_, err = s.applyPolicyOverlay(context.Background(), packs.PackPolicyOverlay{Name: "safety", Path: "empty.yaml"}, matrixPackID, "0.1.0", dir, signer)
+	_, err = s.applyPolicyOverlays(context.Background(), []packs.PackPolicyOverlay{{Name: "safety", Path: "empty.yaml"}}, matrixPackID, "0.1.0", dir, signer, "")
 	require.NoError(t, err)
 	fragment := packMatrixFragment(t, s)
 	require.Equal(t, json.RawMessage(`""`), fragment["content"])

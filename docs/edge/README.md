@@ -80,12 +80,25 @@ redacted summaries, hashes, and artifact pointers.
 
 ## Policy modes and fail behavior
 
-| Mode | Intent | Governance-unavailable behavior |
+| Mode | Intent | Measured outage result |
 | --- | --- | --- |
-| `observe` | Development visibility and low-friction evidence. | Allow degraded actions while recording evidence where possible. |
-| `enforce` / `local-dev-enforce` | Local enforcement for risky or unknown actions. | Known-safe actions may proceed; risky or unclassified actions deny/fail closed. `cordumctl edge claude` renders `CORDUM_AGENTD_FAIL_CLOSED=true` and `"onFailure": "block"` on the blocking hooks for every mode except `observe` (`onFailure` needs Claude Code v2.1.295+). That variable defaults to `false`, so fail-open is only possible for hand-wired hook settings without them: those still deny `PreToolUse` on agentd error/timeout but let other hook events through, and let any action through if the hook process itself fails. `cordumctl edge doctor` reports the effective posture. |
-| `enterprise-strict` | Managed enterprise enforcement. | Fail closed when Cordum governance is unavailable. |
-| `requires-edge-governance` tag | Production workflow action that must be governed. | Fail closed on Gateway miss regardless of session mode. |
+| `observe` | Development visibility. | Hook emits empty allow/no-op output with a degraded warning when agentd is unavailable (gateway-from-edge/low [b]). |
+| `enforce` / `local-dev-enforce` | Local enforcement. | In the enforce `PreToolUse` probes, the hook emits deny on a safe-command agentd timeout without `CORDUM_AGENTD_FAIL_CLOSED`, or a degraded agentd answer for Edit (gateway-from-edge/low [a], protected [a]). These contract probes cover `enforce`, not the alias. |
+| `enterprise-strict` | Managed enterprise rollout. | agentd returns degraded DENY in Gateway/policy-unavailable probes (gateway-from-edge/low [c]); the hook emits deny for a malformed agentd response (protected [b]). |
+
+Measured cells in the [failure and partition behavior contract](../contract/failure-behavior.md#behavior-table):
+
+- gateway-from-edge/low [a]: `TestRunEnforceModeDeniesPreToolUseOnAgentdTimeoutWithoutFailClosed`;
+  protected [a]: `TestRunEnforceDeniesDegradedPreToolUse`.
+- gateway-from-edge/low [b]: `TestRunObserveModeAllowsNoopWhenAgentdUnavailable`.
+- gateway-from-edge/low [c]: the enterprise-strict cases of
+  `TestApplyFailModeMatrixCoversObserveEnforceEnterpriseStrict`;
+  protected [b]: `TestRunEnterpriseStrictDeniesMalformedAgentdResponse`.
+
+These are component probes, not a full hook-to-Gateway outage qualification.
+agentd's Gateway-outage handling in enforce and observe is not measured (G04).
+The contract's Scope paragraph also marks agent-runtime compliance with hook
+decisions as not measured; observe does not guarantee evidence survives an outage.
 
 The exact hook output mapping is in [cordum-hook](cordum-hook.md) and the
 evaluate/cache/approval behavior is in [cordum-agentd](cordum-agentd.md).

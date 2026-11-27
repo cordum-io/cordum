@@ -5,10 +5,13 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"google.golang.org/grpc/metadata"
 )
 
 type fakeKeyStore struct {
@@ -70,7 +73,7 @@ func TestUsageRecordingDrain(t *testing.T) {
 	}
 
 	for i := 0; i < calls; i++ {
-		if _, err := b.authenticate(context.Background(), "managed-key", ""); err != nil {
+		if _, err := b.authenticateHTTP(context.Background(), "managed-key", "", http.MethodGet, "/api/v1/jobs"); err != nil {
 			t.Fatalf("authenticate() error = %v", err)
 		}
 	}
@@ -203,7 +206,7 @@ func TestManagedKeyScope_ReflectedInAuthContext(t *testing.T) {
 				defaultTenant: "default",
 				keyStore:      ks,
 			}
-			authCtx, err := b.authenticate(context.Background(), "test-key", "")
+			authCtx, err := b.authenticateHTTP(context.Background(), "test-key", "", http.MethodGet, "/api/v1/jobs")
 			if err != nil {
 				t.Fatalf("authenticate() error = %v", err)
 			}
@@ -236,7 +239,7 @@ func TestUsageRecordingErrorLogged(t *testing.T) {
 		keyStore:      ks,
 	}
 
-	if _, err := b.authenticate(context.Background(), "managed-key", ""); err != nil {
+	if _, err := b.authenticateHTTP(context.Background(), "managed-key", "", http.MethodGet, "/api/v1/jobs"); err != nil {
 		t.Fatalf("authenticate() error = %v", err)
 	}
 
@@ -341,7 +344,7 @@ func TestKeyIDAndName_PopulatedInAuthContext(t *testing.T) {
 		}
 		b := &BasicAuthProvider{defaultTenant: "default", keyStore: ks}
 
-		ac, err := b.authenticate(context.Background(), "managed-raw-secret", "")
+		ac, err := b.authenticateHTTP(context.Background(), "managed-raw-secret", "", http.MethodGet, "/api/v1/jobs")
 		if err != nil {
 			t.Fatalf("authenticate() error = %v", err)
 		}
@@ -364,7 +367,7 @@ func TestKeyIDAndName_PopulatedInAuthContext(t *testing.T) {
 			}),
 		}
 
-		ac, err := b.authenticate(context.Background(), raw, "")
+		ac, err := b.authenticateHTTP(context.Background(), raw, "", http.MethodGet, "/api/v1/jobs")
 		if err != nil {
 			t.Fatalf("authenticate() error = %v", err)
 		}
@@ -382,6 +385,42 @@ func TestKeyIDAndName_PopulatedInAuthContext(t *testing.T) {
 		}
 		if ac.KeyName != "" {
 			t.Fatalf("static KeyName = %q, want empty (apiKeyMeta carries no name field)", ac.KeyName)
+		}
+	})
+}
+
+func TestAuthenticateGRPCRefusesUserSession(t *testing.T) {
+	store, _ := newTestUserStore(t)
+	const token = "session-grpc-refused"
+	user := &User{ID: "u-grpc", Username: "grpc-user", Tenant: "default", Role: "admin"}
+	if err := store.StoreSession(context.Background(), token, user, 5*time.Minute); err != nil {
+		t.Fatalf("StoreSession: %v", err)
+	}
+	b := &BasicAuthProvider{defaultTenant: "default", userStore: store}
+
+	for _, tc := range []struct{ name, header, value, wantErr string }{
+		{"x-api-key", "x-api-key", token, "invalid api key"},
+		{"api-key", "api-key", token, "invalid api key"},
+		{"authorization", "authorization", "Bearer " + token, "jwt auth not configured"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(tc.header, tc.value))
+			authCtx, err := b.AuthenticateGRPC(ctx)
+			if err == nil || err.Error() != tc.wantErr || authCtx != nil {
+				t.Fatalf("AuthenticateGRPC = (%+v, %v), want (nil, %q)", authCtx, err, tc.wantErr)
+			}
+		})
+	}
+
+	t.Run("http", func(t *testing.T) {
+		r, err := http.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		r.Header.Set("X-API-Key", token)
+		authCtx, err := b.AuthenticateHTTP(r)
+		if err != nil || authCtx.AuthSource != AuthSourceSession || authCtx.PrincipalID != user.ID {
+			t.Fatalf("AuthenticateHTTP = (%+v, %v), want session for %s", authCtx, err, user.ID)
 		}
 	})
 }

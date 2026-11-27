@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 from datetime import datetime, timezone
 from email.utils import format_datetime
 
@@ -134,6 +135,59 @@ def test_post_with_idempotency_key_retries() -> None:
     assert response.status_code == 200
     assert route.call_count == 2
     assert sleeps == [0.5]
+
+
+_NO_WAIT = RetryPolicy(initial_backoff_s=0, jitter=False)
+_NO_WAIT_POST_LISTED = RetryPolicy(
+    initial_backoff_s=0, jitter=False, retryable_methods=frozenset({"GET", "POST"})
+)
+
+
+@pytest.mark.parametrize(
+    ("method", "headers", "policy", "expected_requests"),
+    [
+        pytest.param("POST", {"Idempotency-Key": ""}, _NO_WAIT, 1, id="post-blank-key"),
+        pytest.param("POST", {"Idempotency-Key": "   "}, _NO_WAIT, 1, id="post-whitespace-key"),
+        pytest.param(
+            "POST",
+            {"Idempotency-Key": "k-1"},
+            _NO_WAIT,
+            1 + _NO_WAIT.max_retries,
+            id="post-real-key",
+        ),
+        pytest.param(
+            "POST",
+            {"X-Idempotency-Key": "k-1"},
+            _NO_WAIT,
+            1 + _NO_WAIT.max_retries,
+            id="post-real-x-key",
+        ),
+        pytest.param(
+            "POST",
+            {"idempotency-key": "  ", "Idempotency-Key": "k-1"},
+            _NO_WAIT,
+            1,
+            id="post-blank-and-real-case-variants",
+        ),
+        pytest.param("POST", {}, _NO_WAIT_POST_LISTED, 1, id="post-listed-without-key"),
+        pytest.param("GET", {}, _NO_WAIT, 1 + _NO_WAIT.max_retries, id="get-control"),
+    ],
+)
+def test_post_retries_only_with_non_blank_idempotency_key(
+    method: str, headers: dict[str, str], policy: RetryPolicy, expected_requests: int
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(503)
+
+    transport = RetryTransport(policy=policy, transport=httpx.MockTransport(handler))
+    with httpx.Client(base_url="https://api.cordum.example", transport=transport) as client:
+        with contextlib.suppress(RetryExhaustedError):
+            client.request(method, "/jobs", headers=headers)
+
+    assert len(requests) == expected_requests
 
 
 def test_exhaustion_raises_with_last_response_preserved() -> None:
