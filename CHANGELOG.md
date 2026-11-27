@@ -12,6 +12,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   a DLQ delete removes the index entry before the record, and a decision-log append whose index
   write fails removes its record.
 
+- MCP: tool approvals now queue on Redis Cluster instead of failing with `CROSSSLOT` and returning `approval_store_unavailable`.
+
 - Gateway: key, user, RBAC and legal-hold stores now use the shared cluster-aware Redis client.
 
 - Workflows: saving and deleting workflows, and creating, updating and deleting workflow runs,

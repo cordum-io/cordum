@@ -38,6 +38,55 @@ func testReq() *MCPApprovalRequest {
 	}
 }
 
+type failOnceApprovalIndex struct {
+	pipelineOutageHook
+	failed bool
+	err    error
+}
+
+func (h *failOnceApprovalIndex) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		if len(cmds) > 0 && cmds[0].Name() == "multi" && !h.failed {
+			h.failed = true
+			for _, cmd := range cmds {
+				cmd.SetErr(h.err)
+			}
+			return h.err
+		}
+		return next(ctx, cmds)
+	}
+}
+
+func TestEnqueueMCPApprovalOrphanedRecord(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(testRedisOptions(mr.Addr()))
+	t.Cleanup(func() { _ = client.Close() })
+	injected := errors.New("index write interrupted")
+	client.AddHook(&failOnceApprovalIndex{err: injected})
+	s, ctx := NewMCPApprovalStore(client), context.Background()
+	req := testReq()
+	req.ID = "orphaned-record"
+	if rec, err := s.EnqueueMCPApproval(ctx, req); rec != nil || !errors.Is(err, injected) {
+		t.Fatalf("enqueue = %v, %v; want injected error", rec, err)
+	}
+	key := mcpApprovalKey(req.ID)
+	if !mr.Exists(key) || mr.TTL(key) <= 0 || mr.TTL(key) > req.TTL+time.Minute {
+		t.Fatalf("orphan exists=%v TTL=%v; want (0, TTL+1m]", mr.Exists(key), mr.TTL(key))
+	}
+	idx := mcpApprovalIndexKey(req.Tenant, req.AgentID, req.ToolName, req.ArgsHash)
+	if ids, err := client.SMembers(ctx, idx).Result(); err != nil || len(ids) != 0 {
+		t.Fatalf("orphan index = %v, %v; want empty", ids, err)
+	}
+	req.ID = ""
+	if rec, err := s.EnqueueMCPApproval(ctx, req); err != nil || rec.ID == "orphaned-record" || rec.Status != model.ApprovalStatusPending {
+		t.Fatalf("repeat = %v, %v; want a new pending record", rec, err)
+	}
+	mr.FastForward(req.TTL + time.Minute + time.Second)
+	if mr.Exists(key) {
+		t.Fatal("orphan survived its TTL")
+	}
+}
+
 // TestEnqueueMCPApprovalValidatesRequiredFields ensures a partial
 // request is rejected before any Redis write — a half-populated record
 // in Redis would leak through to the dashboard and confuse the
