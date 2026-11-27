@@ -1,9 +1,13 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -11,11 +15,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/copilot"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 	"github.com/cordum/cordum/core/evals/runner"
 	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/model"
+	"github.com/cordum/cordum/core/telemetry"
 )
 
 func init() {
@@ -41,6 +49,12 @@ func init() {
 		crossTenantCase{"DELETE /api/v1/evals/runs/{run_id}", "eval-run-delete", func(t *testing.T, sw *crossTenantSweep) {
 			crossTenantPlatformEvalRequest(t, sw, http.MethodDelete, "/api/v1/evals/runs/{run}?force=true", "", false)
 		}},
+		crossTenantCase{"POST /api/v1/license/reload", "license-reload", crossTenantPlatformLicenseReload},
+		crossTenantCase{"POST /api/v1/telemetry/consent", "telemetry-consent", crossTenantPlatformConsent},
+		crossTenantCase{"POST /api/v1/packs/install", "pack-install", crossTenantPlatformPackInstall},
+		crossTenantCase{"POST /api/v1/packs/{id}/uninstall", "pack-uninstall", crossTenantPlatformPackAction("uninstall", `{"purge":true}`)},
+		crossTenantCase{"POST /api/v1/packs/{id}/verify", "pack-verify", crossTenantPlatformPackAction("verify", "")},
+		crossTenantCase{"POST /api/v1/marketplace/install", "marketplace-install", crossTenantPlatformMarketplace},
 	)
 }
 
@@ -298,14 +312,39 @@ func crossTenantPlatformEvalIncidents(t *testing.T, sw *crossTenantSweep) {
 
 func crossTenantPlatformAdmin(t *testing.T, sw *crossTenantSweep, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	return crossTenantPlatformSend(t, sw, crossTenantPlatformRoot(sw), crossTenantPlatformJSON(method, path, body)())
+}
+
+// crossTenantPlatformRoot is the AllowCrossTenant platform admin that seeds
+// system state and runs the positive controls.
+func crossTenantPlatformRoot(sw *crossTenantSweep) *auth.AuthContext {
+	return &auth.AuthContext{Role: "admin", Tenant: sw.tenantB.tenantID, AllowCrossTenant: true}
+}
+
+func crossTenantPlatformJSON(method, path, body string) func() *http.Request {
+	return func() *http.Request {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		return req
+	}
+}
+
+// crossTenantPlatformSend serves req with tenant A's API key when ac is nil,
+// otherwise with ac through the mux.
+func crossTenantPlatformSend(t *testing.T, sw *crossTenantSweep, ac *auth.AuthContext, req *http.Request) *httptest.ResponseRecorder {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	req := httptest.NewRequest(method, path, strings.NewReader(body)).WithContext(ctx)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Tenant-ID", sw.tenantB.tenantID)
-	admin := &auth.AuthContext{Role: "admin", Tenant: sw.tenantB.tenantID, AllowCrossTenant: true}
+	req = req.WithContext(ctx)
 	rr := httptest.NewRecorder()
-	sw.mux.ServeHTTP(rr, withAuth(req, admin))
+	if ac == nil {
+		req.Header.Set("X-API-Key", sw.tenantA.apiKey)
+		req.Header.Set("X-Tenant-ID", sw.tenantA.tenantID)
+		sw.handler.ServeHTTP(rr, req)
+		return rr
+	}
+	req.Header.Set("X-Tenant-ID", ac.Tenant)
+	sw.mux.ServeHTTP(rr, withAuth(req, ac))
 	return rr
 }
 
@@ -494,4 +533,242 @@ func crossTenantPlatformConfigWrites(method string) func(*testing.T, *crossTenan
 			})
 		}
 	}
+}
+
+// seedCrossTenantPlatformSystem turns Enterprise RBAC on, so the built-in
+// operator role holds packs.install without config.write, and seeds B's config.
+func seedCrossTenantPlatformSystem(t *testing.T, sw *crossTenantSweep) (map[string]systemConfigTarget, string) {
+	t.Helper()
+	setTestEntitlements(t, sw.server, licensing.PlanEnterprise, nil)
+	return seedCrossTenantPlatformConfig(t, sw)
+}
+
+// crossTenantPlatformSystemState covers the license, telemetry mode, config
+// documents (pack registry, topics, workers, B's documents), schemas with
+// their schema:url: aliases and owners, and workflows.
+func crossTenantPlatformSystemState(t *testing.T, sw *crossTenantSweep) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	rdb := sw.server.jobStore.Client()
+	state := map[string]any{"license": sw.server.currentLicenseInfo()}
+	if sw.server.telemetry != nil {
+		state["telemetry"] = sw.server.telemetry.Mode()
+	}
+	for _, pattern := range []string{"cfg:*", "schema:*", "cordum:schema:*", "wf:def:*", "wf:index:*", "cordum:telemetry:consent:*"} {
+		keys, err := rdb.Keys(ctx, pattern).Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, key := range keys {
+			var value any
+			switch kind := rdb.Type(ctx, key).Val(); kind {
+			case "string":
+				value, err = rdb.Get(ctx, key).Result()
+			case "hash":
+				value, err = rdb.HGetAll(ctx, key).Result()
+			case "zset":
+				value, err = rdb.ZRangeWithScores(ctx, key, 0, -1).Result()
+			default:
+				t.Fatalf("system state key %s has unexpected type %q", key, kind)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			state[key] = value
+		}
+	}
+	data, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// crossTenantPlatformSystemAttempts sends req as A's admin API key and as a
+// tenant-A operator. Each attempt must leave the system state and B's
+// documents unchanged, publish nothing, and return no B data.
+func crossTenantPlatformSystemAttempts(t *testing.T, sw *crossTenantSweep, marker string, req func() *http.Request) {
+	t.Helper()
+	operator := &auth.AuthContext{Role: "operator", Tenant: sw.tenantA.tenantID, PrincipalID: "principal-operator-a"}
+	for label, ac := range map[string]*auth.AuthContext{"A admin": nil, "A operator": operator} {
+		before, mark := crossTenantPlatformSystemState(t, sw), sw.publishMark()
+		rr := crossTenantPlatformSend(t, sw, ac, req())
+		if rr.Code == http.StatusForbidden || rr.Code == http.StatusNotFound {
+			assertCrossTenantRefused(t, rr, label, marker, sw.tenantB.tenantID)
+		} else {
+			assertCrossTenantAbsent(t, rr, label, marker, sw.tenantB.tenantID)
+		}
+		if before != crossTenantPlatformSystemState(t, sw) || len(sw.publishedSince(mark)) != 0 {
+			t.Errorf("%s changed system state or B documents, or published", label)
+		}
+	}
+}
+
+func assertCrossTenantPlatformControl(t *testing.T, rr *httptest.ResponseRecorder, want string) {
+	t.Helper()
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), want) {
+		t.Errorf("platform control: status=%d, want 200 with %q; body=%s", rr.Code, want, rr.Body.String())
+	}
+}
+
+func crossTenantPlatformLicenseReload(t *testing.T, sw *crossTenantSweep) {
+	_, marker := seedCrossTenantPlatformSystem(t, sw)
+	installReloadableLicense(t, licensing.Claims{OrgID: "platform-org", LicenseID: "platform-license", Plan: "enterprise",
+		ExpiresAt: time.Now().UTC().Add(time.Hour).Format(time.RFC3339)})
+	req := crossTenantPlatformJSON(http.MethodPost, "/api/v1/license/reload", "")
+	crossTenantPlatformSystemAttempts(t, sw, marker, req)
+	assertCrossTenantPlatformControl(t, crossTenantPlatformSend(t, sw, crossTenantPlatformRoot(sw), req()), "platform-license")
+}
+
+func crossTenantPlatformConsent(t *testing.T, sw *crossTenantSweep) {
+	_, marker := seedCrossTenantPlatformSystem(t, sw)
+	seedTelemetryCollector(t, sw.server)
+	sw.server.telemetryState = telemetry.NewStoreWithClient(sw.server.jobStore.Client())
+	if err := sw.server.telemetryState.SetConsentMode(context.Background(), "local_only"); err != nil {
+		t.Fatal(err)
+	}
+	req := crossTenantPlatformJSON(http.MethodPost, "/api/v1/telemetry/consent", `{"mode":"off"}`)
+	crossTenantPlatformSystemAttempts(t, sw, marker, req)
+	assertCrossTenantPlatformControl(t, crossTenantPlatformSend(t, sw, crossTenantPlatformRoot(sw), req()), "updated")
+	if sw.server.telemetry.Mode() != telemetry.ModeOff {
+		t.Error("platform consent control was not applied")
+	}
+}
+
+// crossTenantPlatformPackBundle builds a pack whose pools overlay targets
+// scope/scopeID and which carries schemaID with a $id URL alias.
+func crossTenantPlatformPackBundle(t *testing.T, id, scope, scopeID, schemaID string) []byte {
+	t.Helper()
+	manifest := fmt.Sprintf(`apiVersion: cordum.io/v1alpha1
+kind: Pack
+metadata: {id: %[1]s, version: 0.1.0}
+compatibility: {protocolVersion: 1}
+topics: [{name: job.%[1]s.collect}]
+resources:
+  schemas: [{id: %[4]q, path: schemas/s.json}]
+overlays:
+  config: [{name: pools, scope: %[2]s, scope_id: %[3]q, key: pools, strategy: json_merge_patch, path: overlays/pools.yaml}]
+tests:
+  policySimulations: [{name: simulate, request: {topic: job.%[1]s.collect}}]
+`, id, scope, scopeID, schemaID)
+	return buildTarGz(t, map[string]string{
+		"pack.yaml":           manifest,
+		"schemas/s.json":      fmt.Sprintf(`{"$id":"https://schemas.example.test/%s","type":"object"}`, id),
+		"overlays/pools.yaml": fmt.Sprintf("topics: {job.%[1]s.collect: [%[1]s]}\npools: {%[1]s: {requires: []}}\n", id),
+	})
+}
+
+func crossTenantPlatformInstall(t *testing.T, bundle []byte) func() *http.Request {
+	return func() *http.Request {
+		var body bytes.Buffer
+		writer := multipart.NewWriter(&body)
+		part, err := writer.CreateFormFile("bundle", "pack.tgz")
+		if err == nil {
+			_, err = part.Write(bundle)
+		}
+		if err == nil {
+			err = writer.WriteField("upgrade", "true")
+		}
+		if err == nil {
+			err = writer.Close()
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/packs/install", &body)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		return req
+	}
+}
+
+// seedCrossTenantPlatformPack has the platform admin install a pack with an
+// overlay on B's org document.
+func seedCrossTenantPlatformPack(t *testing.T, sw *crossTenantSweep, id string) {
+	t.Helper()
+	crossTenantPlatformMapTopic(t, sw, id)
+	bundle := crossTenantPlatformPackBundle(t, id, "org", sw.tenantB.tenantID, id+"/S")
+	assertCrossTenantPlatformControl(t, crossTenantPlatformSend(t, sw, crossTenantPlatformRoot(sw), crossTenantPlatformInstall(t, bundle)()), id)
+	assertCrossTenantPlatformOrgOverlay(t, sw, id, true)
+}
+
+// crossTenantPlatformMapTopic maps the pack's topic to the seeded pool, which
+// the install's topic registration requires.
+func crossTenantPlatformMapTopic(t *testing.T, sw *crossTenantSweep, id string) {
+	t.Helper()
+	path := "/api/v1/pools/platform-config-b/topics/job." + id + ".collect"
+	assertCrossTenantAbsent(t, crossTenantPlatformAdmin(t, sw, http.MethodPut, path, ""), "platform topic seed")
+}
+
+func assertCrossTenantPlatformOrgOverlay(t *testing.T, sw *crossTenantSweep, id string, want bool) {
+	t.Helper()
+	topic := "job." + id + ".collect"
+	rr := sw.as(t, sw.tenantB, http.MethodGet, "/api/v1/config?scope=org&scope_id="+sw.tenantB.tenantID, "")
+	if rr.Code != http.StatusOK || strings.Contains(rr.Body.String(), topic) != want {
+		t.Errorf("B org document: status=%d, want overlay topic %s present=%t; body=%s", rr.Code, topic, want, rr.Body.String())
+	}
+}
+
+func crossTenantPlatformPackInstall(t *testing.T, sw *crossTenantSweep) {
+	targets, marker := seedCrossTenantPlatformSystem(t, sw)
+	schemaID := "platform-b/" + marker
+	body := fmt.Sprintf(`{"id":%q,"schema":{"type":"object","description":%q}}`, schemaID, marker)
+	assertCrossTenantAbsent(t, sw.as(t, sw.tenantB, http.MethodPost, "/api/v1/schemas", body), "B schema seed")
+	overlays := []systemConfigTarget{{"org", "org", sw.tenantB.tenantID}, {"system", "system", "default"}}
+	for _, scope := range []string{"team", "workflow", "step"} {
+		id := targets[scope].id
+		overlays = append(overlays, systemConfigTarget{scope, scope, id}, systemConfigTarget{scope, scope, sw.tenantB.tenantID + "/" + id})
+	}
+	for i, overlay := range overlays {
+		id := fmt.Sprintf("xt-install-%d", i)
+		crossTenantPlatformMapTopic(t, sw, id)
+		bundle := crossTenantPlatformPackBundle(t, id, overlay.scope, overlay.id, schemaID)
+		crossTenantPlatformSystemAttempts(t, sw, marker, crossTenantPlatformInstall(t, bundle))
+	}
+	seedCrossTenantPlatformPack(t, sw, "xt-install-control")
+}
+
+// crossTenantPlatformPackAction covers uninstall and verify of a pack the
+// platform admin installed with an overlay on B's org document.
+func crossTenantPlatformPackAction(action, body string) func(*testing.T, *crossTenantSweep) {
+	return func(t *testing.T, sw *crossTenantSweep) {
+		_, marker := seedCrossTenantPlatformSystem(t, sw)
+		id := "xt-" + action
+		seedCrossTenantPlatformPack(t, sw, id)
+		req := crossTenantPlatformJSON(http.MethodPost, "/api/v1/packs/"+id+"/"+action, body)
+		crossTenantPlatformSystemAttempts(t, sw, marker, req)
+		if action == "verify" {
+			assertCrossTenantPlatformControl(t, crossTenantPlatformSend(t, sw, crossTenantPlatformRoot(sw), req()), "simulate")
+			return
+		}
+		assertCrossTenantPlatformControl(t, crossTenantPlatformSend(t, sw, crossTenantPlatformRoot(sw), req()), "DISABLED")
+		assertCrossTenantPlatformOrgOverlay(t, sw, id, false)
+	}
+}
+
+func crossTenantPlatformMarketplace(t *testing.T, sw *crossTenantSweep) {
+	_, marker := seedCrossTenantPlatformSystem(t, sw)
+	const id = "xt-market"
+	crossTenantPlatformMapTopic(t, sw, id)
+	bundle := crossTenantPlatformPackBundle(t, id, "org", sw.tenantB.tenantID, id+"/S")
+	sum := sha256.Sum256(bundle)
+	catalog := packs.MarketplaceCatalogFile{UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+		Packs: []packs.MarketplaceCatalogPack{{ID: id, Version: "0.1.0", Title: id, Sha256: hex.EncodeToString(sum[:])}}}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/catalog.json" {
+			_ = json.NewEncoder(w).Encode(catalog)
+			return
+		}
+		_, _ = w.Write(bundle)
+	}))
+	t.Cleanup(srv.Close)
+	catalog.Packs[0].URL = srv.URL + "/" + id + ".tgz"
+	if err := sw.server.configSvc.Set(context.Background(), &configsvc.Document{Scope: configsvc.ScopeSystem, ScopeID: packs.PackCatalogID,
+		Data: map[string]any{"catalogs": []any{map[string]any{"id": "official", "url": srv.URL + "/catalog.json", "enabled": true}}}}); err != nil {
+		t.Fatal(err)
+	}
+	req := crossTenantPlatformJSON(http.MethodPost, "/api/v1/marketplace/install", `{"catalog_id":"official","pack_id":"`+id+`"}`)
+	crossTenantPlatformSystemAttempts(t, sw, marker, req)
+	assertCrossTenantPlatformControl(t, crossTenantPlatformSend(t, sw, crossTenantPlatformRoot(sw), req()), id)
+	assertCrossTenantPlatformOrgOverlay(t, sw, id, true)
 }
