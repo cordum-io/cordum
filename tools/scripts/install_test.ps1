@@ -16,7 +16,9 @@
 #Requires -Version 5.1
 [CmdletBinding()]
 param(
-    [string]$GpgExe = 'gpg.exe'
+    [string]$GpgExe = 'gpg.exe',
+    # Shell that runs install.ps1: pwsh 7, or Windows PowerShell 5.1.
+    [ValidateSet('pwsh', 'powershell')][string]$InstallerShell = 'pwsh'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -48,7 +50,7 @@ try {
     $gpgHomeArg = ConvertTo-CordumGpgArgPath -Path $gpgHome -Mode $gpgMode
     $privKeyArg = ConvertTo-CordumGpgArgPath -Path $privKey -Mode $gpgMode
 
-    $importOut = & $gpgCmd.Source --homedir $gpgHomeArg --batch --quiet --import $privKeyArg 2>&1
+    $importOut = Invoke-CordumNative $gpgCmd.Source @('--homedir', $gpgHomeArg, '--batch', '--quiet', '--import', $privKeyArg)
     if ($LASTEXITCODE -ne 0) {
         $diag = ($importOut | Out-String).Trim()
         throw "install_test.ps1: gpg --import of TEST-ONLY private key failed (exit=$LASTEXITCODE)`n$diag"
@@ -77,8 +79,8 @@ try {
         $sigPath = Join-Path $Dest 'SHA256SUMS.asc'
         $manifestArg = ConvertTo-CordumGpgArgPath -Path $manifestPath -Mode $gpgMode
         $sigArg      = ConvertTo-CordumGpgArgPath -Path $sigPath      -Mode $gpgMode
-        $signOut = & $gpgCmd.Source --homedir $gpgHomeArg --batch --yes --quiet --detach-sign --armor `
-            --output $sigArg $manifestArg 2>&1
+        $signOut = Invoke-CordumNative $gpgCmd.Source @('--homedir', $gpgHomeArg, '--batch', '--yes', '--quiet',
+            '--detach-sign', '--armor', '--output', $sigArg, $manifestArg)
         if ($LASTEXITCODE -ne 0) {
             $diag = ($signOut | Out-String).Trim()
             throw "install_test.ps1: gpg --detach-sign failed for $Dest (exit=$LASTEXITCODE)`n$diag"
@@ -116,7 +118,7 @@ try {
         if ($FloorFile)       { $argsList += @('-FloorFile', $FloorFile) }
         if ($RollbackOverride.IsPresent) { $argsList += '-RollbackOperatorOverride' }
         if ($RollbackReason)  { $argsList += @('-RollbackReason', $RollbackReason) }
-        return (& pwsh @argsList 2>&1)
+        return (Invoke-CordumNative $InstallerShell $argsList)
     }
 
     function Expect-VerifyFail {
@@ -386,7 +388,8 @@ exit 0
         if ($Label -like 'keyless-missing-override*') { $flags += '-InsecureAllowMissingCosign'; $scheme = 'unverified' }
         $env:FAKE_COSIGN_ARGS = $argsLog; $env:FAKE_COSIGN_EXPECT_IDENTITY = $identity
         $env:CORDUM_COSIGN_IDENTITY_REGEXP = ''
-        $out = & pwsh -NoProfile -File $installPs1 -ReleaseDir $release -InstallDir $dest -FloorFile $floor -CosignExe $verifier @flags 2>&1
+        $out = Invoke-CordumNative $InstallerShell (@('-NoProfile', '-File', $installPs1, '-ReleaseDir', $release,
+            '-InstallDir', $dest, '-FloorFile', $floor, '-CosignExe', $verifier) + $flags)
         $rc = $LASTEXITCODE; $text = $out | Out-String
         if (Assert-KeylessResult) {
             Write-Host "PASS [$Label]: signature, checksum and activation effects checked"

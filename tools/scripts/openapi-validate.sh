@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Full OpenAPI validation pipeline:
-#   1. redocly lint for schema-level issues
-#   2. openapi-audit for route <-> spec coverage
-#   3. oasdiff breaking check against the committed base
+#   1. Python SDK endpoint coverage: one generated module per operationId
+#   2. redocly lint for schema-level issues
+#   3. openapi-audit for route <-> spec coverage
+#   4. oasdiff breaking check against the committed base
 #
 # oasdiff emits ERR-level findings for removed operations, narrowed schemas,
 # and other backward-incompatible changes. Additive changes pass freely. A
@@ -16,6 +17,17 @@ SPEC="$ROOT_DIR/docs/api/openapi/cordum-api.yaml"
 GATEWAY_DIR="$ROOT_DIR/core/controlplane/gateway"
 
 GO_CMD="${GO_CMD:-go}"
+
+echo "==> Python SDK endpoint coverage"
+# sdk/python/tests/test_generated_coverage.py makes the same count, but sdk-python CI runs only
+# when sdk/python changes, so a spec-only change could leave the Python client behind.
+SDK_API_DIR="$ROOT_DIR/sdk/python/src/cordum_sdk/_generated/api"
+OPERATION_IDS="$(grep -c -E '^[[:space:]]*operationId:[[:space:]]*[^[:space:]]' "$SPEC")"
+SDK_MODULES="$(find "$SDK_API_DIR" -name '*.py' ! -name '__init__.py' | wc -l)"
+if [[ "$OPERATION_IDS" -ne "$SDK_MODULES" ]]; then
+	echo "error: $SDK_MODULES Python SDK endpoint modules for $OPERATION_IDS operationIds; regenerate sdk/python (sdk/python/README.md, Regenerating from the spec)" >&2
+	exit 1
+fi
 
 echo "==> redocly lint"
 # Pin @redocly/cli so CI behaviour is deterministic across runs; bump

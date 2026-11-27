@@ -160,7 +160,7 @@ func TestConfigAndPolicyOverlayRollback(t *testing.T) {
 		t.Fatalf("seed policy doc: %v", err)
 	}
 	policyOverlay := packs.PackAppliedPolicyOverlay{Name: "default", FragmentID: fragmentID}
-	if err := s.removePolicyOverlay(ctx, policyOverlay); err != nil {
+	if err := s.removePolicyOverlays(ctx, "pack", []packs.PackAppliedPolicyOverlay{policyOverlay}, "", ""); err != nil {
 		t.Fatalf("remove policy overlay: %v", err)
 	}
 	doc, err = s.configSvc.Get(ctx, configsvc.ScopeSystem, packs.PolicyConfigID)
@@ -173,7 +173,7 @@ func TestConfigAndPolicyOverlayRollback(t *testing.T) {
 		}
 	}
 	policyChange := packs.AppliedPolicyChange{Overlay: policyOverlay, Previous: map[string]any{"content": "policy"}, HadPrevious: true}
-	if err := s.restorePolicyOverlay(ctx, policyChange); err != nil {
+	if err := s.restorePolicyOverlays(ctx, "pack", []packs.AppliedPolicyChange{policyChange}, ""); err != nil {
 		t.Fatalf("restore policy overlay: %v", err)
 	}
 }

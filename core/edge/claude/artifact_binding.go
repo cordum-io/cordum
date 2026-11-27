@@ -30,10 +30,15 @@ const (
 	artifactMaxFiles      = 16
 	artifactMaxFileBytes  = 8 << 20
 	artifactBindingBudget = time.Second
-	// artifactShellSyntax makes the shell, not the command line, decide what
-	// a command reads.
-	artifactShellSyntax = "'\"\\;&|<>`$(){}*?[~\n#!^"
+	// artifactPlainBytes are the only bytes a bound command holds. Any other
+	// byte (a quote, a control character such as CR, a non-ASCII byte) lets
+	// the shell, or a parser below it, read the command differently.
+	artifactPlainBytes = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 \t-_./,:=@+"
 )
+
+// artifactNoCodeTools are the Claude Code tools that cannot run code. They get
+// no binding labels; every other tool but Bash is unbound.
+var artifactNoCodeTools = []string{"Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Glob", "Grep", "LS", "WebFetch", "WebSearch", "TodoWrite"}
 
 // artifactInputs is what the binding digest covers. Files maps each resolved
 // path to the sha256 of its content; json.Marshal sorts the keys.
@@ -44,17 +49,15 @@ type artifactInputs struct {
 	KubeNamespace string            `json:"kube_namespace,omitempty"`
 }
 
-// artifactBindingLabels returns binding labels for PreToolUse commands. Only
-// Bash is modeled; other command tools are unbound. Non-command hooks get no
-// labels. family is the call's command.family label.
+// artifactBindingLabels returns binding labels for PreToolUse calls. Only the
+// Bash tool is modeled; every other tool is unbound, whatever its input holds,
+// except artifactNoCodeTools, which get no labels. Other hooks get no labels.
+// family is the call's command.family label.
 func artifactBindingLabels(ctx context.Context, input HookInput, env map[string]string, family string) map[string]string {
-	if input.HookEventName != "PreToolUse" {
+	if input.HookEventName != "PreToolUse" || slices.Contains(artifactNoCodeTools, input.ToolName) {
 		return nil
 	}
-	if !strings.EqualFold(input.ToolName, "Bash") {
-		if _, runs := input.ToolInput["command"]; !runs {
-			return nil
-		}
+	if input.ToolName != "Bash" {
 		return map[string]string{"artifact.binding": "unbound", "artifact.unbound_reason": "unrecognized"}
 	}
 	command, _ := input.ToolInput["command"].(string)
@@ -143,11 +146,11 @@ func artifactWithinBudget(ctx context.Context, collect func() (*artifactInputs, 
 // reason when they cannot be determined, and the inputs with the
 // artifactRecognized reason when they can.
 func artifactCollect(command, cwd string, env map[string]string) (*artifactInputs, string) {
-	if strings.ContainsAny(command, artifactShellSyntax) {
+	if strings.Trim(command, artifactPlainBytes) != "" {
 		return nil, "shell-syntax"
 	}
-	// Bash splits words on space and tab only (newline is rejected above), so
-	// a field here is the word bash will see.
+	// Bash splits words on space and tab only, so a field here is the word
+	// bash will see.
 	fields := strings.FieldsFunc(command, func(r rune) bool { return r == ' ' || r == '\t' })
 	if slices.ContainsFunc(fields, artifactZshEquals) {
 		return nil, "shell-syntax"
@@ -171,11 +174,13 @@ func artifactCollect(command, cwd string, env map[string]string) (*artifactInput
 }
 
 // addFile records name when it names a regular file. It returns the unbound
-// reason when name is a URL or a network path, a Windows name that depends on
-// a current drive or names a device, a directory or another non-regular file,
-// cannot be read at its stat size, or goes past the file limits. A network
-// path (//host/share, a share on Windows) is never stat'ed, so naming one
-// opens no connection.
+// reason when name is a URL or a network path, a Windows name
+// artifactWindowsUnreadable rejects, a directory or another non-regular file,
+// a file Git Bash's MSYS programs (bash, sh, perl) open differently from Go,
+// cannot be read at its stat size, or goes past the file limits. MSYS reads a
+// SYSTEM file or a READONLY shortcut as a symlink and opens a name ending in
+// '.' as written, where Windows strips the dot. A network path (//host/share,
+// a share on Windows) is never stat'ed, so naming one opens no connection.
 func (in *artifactInputs) addFile(cwd, name string) string {
 	if name == "" {
 		return ""
@@ -183,15 +188,8 @@ func (in *artifactInputs) addFile(cwd, name string) string {
 	if strings.Contains(name, "://") || strings.HasPrefix(name, "//") {
 		return "url"
 	}
-	if runtime.GOOS == "windows" && (artifactWindowsDevice(name) || !filepath.IsAbs(name) && (name[0] == '/' || filepath.VolumeName(name) != "")) {
-		// Windows resolves a rooted (/dir) or drive-relative (D:dir) name
-		// against a current drive the binding does not know, and Git Bash
-		// rewrites a rooted name through its mount table first. Device
-		// names are not files, even when stat of cwd/name says missing.
-		return "unreadable"
-	}
 	path := artifactPath(cwd, name)
-	if artifactSpecialPath(path) {
+	if runtime.GOOS == "windows" && artifactWindowsUnreadable(name) || artifactSpecialPath(path) {
 		return "unreadable"
 	}
 	info, err := os.Stat(path)
@@ -200,7 +198,8 @@ func (in *artifactInputs) addFile(cwd, name string) string {
 		return ""
 	case err == nil && info.IsDir():
 		return "directory"
-	case err != nil || !info.Mode().IsRegular():
+	case err != nil || !info.Mode().IsRegular() || artifactMSYSLink(info) ||
+		runtime.GOOS == "windows" && artifactTrailingDot(name):
 		return "unreadable"
 	}
 	if _, seen := in.Files[path]; seen {

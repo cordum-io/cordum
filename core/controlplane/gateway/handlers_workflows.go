@@ -262,7 +262,10 @@ func (s *server) handleCreateWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to save workflow")
 		return
 	}
-	s.appendAuditEntryNamed(r.Context(), "create", "workflow", wfDef.ID, wfDef.Name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "create workflow "+wfDef.ID)
+	if err := s.appendNamedAuditEntry(r.Context(), "create", "workflow", wfDef.ID, wfDef.Name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "create workflow "+wfDef.ID); err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "workflow created but its audit entry was not stored")
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, map[string]string{"id": wfDef.ID})
@@ -318,6 +321,7 @@ func (s *server) handleDeleteWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to delete workflow")
 		return
 	}
+	// Must-complete: the workflow is already deleted, which stops its future runs; a lost entry is logged.
 	s.appendAuditEntryNamed(r.Context(), "delete", "workflow", id, delWfName, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "delete workflow "+id)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -542,6 +546,21 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		run.Metadata["dry_run"] = "true"
 		run.Labels = map[string]string{"dry_run": "true"}
 	}
+	startWfName := ""
+	if wfDef != nil {
+		startWfName = wfDef.Name
+	}
+	// The entry is stored before the run exists: a run whose entry was not
+	// stored is never created, so nothing can start it.
+	actorID, role := policybundles.PolicyActorID(r), policybundles.PolicyRole(r)
+	if err := s.appendNamedAuditEntry(r.Context(), "start", "run", runID, startWfName, actorID, role, "start run "+runID); err != nil {
+		if reservedKey && idempotencyKey != "" {
+			cleanupRunIdempotencyReservation(r.Context(), idempotencyKey, runID,
+				"failed to cleanup idempotency key after run audit failure", s.workflowStore.DeleteRunIdempotencyKey)
+		}
+		writeErrorJSON(w, http.StatusInternalServerError, "run not dispatched: its audit entry was not stored")
+		return
+	}
 	if err := s.workflowStore.CreateRun(r.Context(), run); err != nil {
 		if reservedKey && idempotencyKey != "" {
 			cleanupRunIdempotencyReservation(
@@ -553,6 +572,7 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 			)
 		}
 		slog.Error("run create failed", "error", err, "run_id", runID)
+		s.appendAuditEntryNamed(r.Context(), "start_failed", "run", runID, startWfName, actorID, role, "start run "+runID+" failed: run not created")
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to create run")
 		return
 	}
@@ -583,6 +603,7 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		if startErr != nil {
 			slog.Error("start workflow run failed", "workflow_id", wfID, "run_id", runID, "error", startErr)
 			markRunFailedAfterStartError(r.Context(), s.workflowStore, runID, startErr, "failed to persist run failure status", "failed to append run failure timeline event")
+			s.appendAuditEntryNamed(r.Context(), "start_failed", "run", runID, startWfName, actorID, role, "start run "+runID+" failed: run did not start")
 		}
 		if startErr == nil && s.workflowStore != nil {
 			if updated, err := s.workflowStore.GetRun(r.Context(), runID); err == nil && updated != nil && updated.Status == wf.RunStatusFailed {
@@ -590,16 +611,11 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	startWfName := ""
-	if wfDef != nil {
-		startWfName = wfDef.Name
-	}
 	loggerFromContext(r.Context()).Info("workflow run started",
 		"runId", runID,
 		"workflowId", wfID,
 		"requestId", reqID,
 	)
-	s.appendAuditEntryNamed(r.Context(), "start", "run", runID, startWfName, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "start run "+runID)
 	// For workflows, the runId serves as the traceId for the entire execution tree.
 	w.Header().Set("X-Trace-Id", runID)
 	w.Header().Set("Content-Type", "application/json")
@@ -692,6 +708,19 @@ func (s *server) handleRerunRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	wfID := newRun.WorkflowID
+	rerunWfName := ""
+	if wfDef, err := s.workflowStore.GetWorkflow(r.Context(), wfID); err == nil && wfDef != nil {
+		rerunWfName = wfDef.Name
+	}
+	// RerunFrom has created the pending run; its entry is stored before it
+	// starts. A run whose entry was not stored is set failed, so the
+	// reconciler never starts it either.
+	actorID, role := policybundles.PolicyActorID(r), policybundles.PolicyRole(r)
+	if err := s.appendNamedAuditEntry(r.Context(), "rerun", "run", newID, rerunWfName, actorID, role, "rerun run "+newID); err != nil {
+		markRunFailedAfterStartError(r.Context(), s.workflowStore, newID, errors.New("rerun audit entry not stored"), "failed to persist rerun failure status", "failed to append rerun failure timeline event")
+		writeErrorJSON(w, http.StatusInternalServerError, "rerun not dispatched: its audit entry was not stored")
+		return
+	}
 	startErr := func() error {
 		if s.jobStore != nil {
 			lockKey := "cordum:wf:run:lock:" + newID
@@ -713,14 +742,8 @@ func (s *server) handleRerunRun(w http.ResponseWriter, r *http.Request) {
 	if startErr != nil {
 		slog.Error("start rerun failed", "workflow_id", wfID, "run_id", newID, "error", startErr)
 		markRunFailedAfterStartError(r.Context(), s.workflowStore, newID, startErr, "failed to persist rerun failure status", "failed to append rerun failure timeline event")
+		s.appendAuditEntryNamed(r.Context(), "rerun_failed", "run", newID, rerunWfName, actorID, role, "rerun run "+newID+" failed: run did not start")
 	}
-	rerunWfName := ""
-	if s.workflowStore != nil {
-		if wfDef, err := s.workflowStore.GetWorkflow(r.Context(), wfID); err == nil && wfDef != nil {
-			rerunWfName = wfDef.Name
-		}
-	}
-	s.appendAuditEntryNamed(r.Context(), "rerun", "run", newID, rerunWfName, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "rerun run "+newID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]string{"run_id": newID})
 }
@@ -972,7 +995,10 @@ func (s *server) handleDeleteRun(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to delete run")
 		return
 	}
-	s.appendAuditEntryNamed(r.Context(), "delete", "run", id, delRunWfName, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "delete run "+id)
+	if err := s.appendNamedAuditEntry(r.Context(), "delete", "run", id, delRunWfName, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "delete run "+id); err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "run deleted but its audit entry was not stored")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

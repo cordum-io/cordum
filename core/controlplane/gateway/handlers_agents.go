@@ -198,7 +198,10 @@ func (s *server) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 		"actor", policybundles.PolicyActorID(r),
 		"role", policybundles.PolicyRole(r),
 	)
-	s.appendAuditEntryNamed(r.Context(), "create", "agent_identity", created.ID, created.Name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "create agent identity "+created.Name)
+	if err := s.appendNamedAuditEntry(r.Context(), "create", "agent_identity", created.ID, created.Name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "create agent identity "+created.Name); err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "agent identity created but its audit entry was not stored")
+		return
+	}
 
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, agentResponseFromIdentity(created))
@@ -464,7 +467,10 @@ func (s *server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		"actor", policybundles.PolicyActorID(r),
 		"role", policybundles.PolicyRole(r),
 	)
-	s.appendAuditEntryNamed(r.Context(), "update", "agent_identity", updated.ID, updated.Name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "update agent identity "+updated.Name)
+	if err := s.appendNamedAuditEntry(r.Context(), "update", "agent_identity", updated.ID, updated.Name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "update agent identity "+updated.Name); err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "agent identity updated but its audit entry was not stored")
+		return
+	}
 
 	writeJSON(w, agentResponseFromIdentity(updated))
 }
@@ -557,6 +563,7 @@ func (s *server) handleDeleteAgent(w http.ResponseWriter, r *http.Request) {
 		"actor", policybundles.PolicyActorID(r),
 		"role", policybundles.PolicyRole(r),
 	)
+	// Must complete: the revoke removes authority, so a lost entry is only logged (ERROR).
 	s.appendAuditEntryNamed(r.Context(), "revoke", "agent_identity", id, existing.Name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "revoke agent identity "+existing.Name)
 
 	w.WriteHeader(http.StatusNoContent)

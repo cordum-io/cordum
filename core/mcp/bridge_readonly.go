@@ -23,8 +23,9 @@ import (
 //
 // The DirectServiceBridge in bridge.go bypasses HTTP: the gateway's HTTP
 // MCP runtime binds it to in-process handlers. GetJob and GetStatus call
-// the hooks it was given; every other read method, and either of those
-// two without a hook, returns a 501 read_only_unsupported BridgeError.
+// their own hooks, and nine more reads share the code below through the
+// GetJSONFunc hook. ListPacks, ListWorkers and QueryAudit, and any read
+// without its hook, return a 501 read_only_unsupported BridgeError.
 
 // ErrReadOnlyUnsupported signals that a ServiceBridge implementation
 // does not provide the read-only surface (e.g. DirectServiceBridge).
@@ -138,13 +139,93 @@ func itemsFromResponse(raw map[string]any) *ListPage {
 	return page
 }
 
-// ListJobs — HTTP bridge implementation.
-func (b *HTTPServiceBridge) ListJobs(ctx context.Context, req ListInput) (*ListPage, error) {
-	var raw map[string]any
-	if err := b.getJSON(ctx, "/api/v1/jobs", listQuery(req), &raw); err != nil {
+// jsonGetter fetches one gateway read route and decodes its JSON answer.
+// HTTPServiceBridge passes its getJSON and DirectServiceBridge its
+// GetJSONFunc hook, so both transports share the reads below.
+type jsonGetter func(ctx context.Context, path string, query url.Values, out any) error
+
+// readJSON fetches path and returns its answer as an object. A route that
+// answers a bare JSON array (handleListWorkflows, handleGetRunTimeline), or
+// null for an empty one, has it placed under arrayKey.
+func readJSON(ctx context.Context, get jsonGetter, path string, q url.Values, arrayKey string) (map[string]any, error) {
+	var raw any
+	if err := get(ctx, path, q, &raw); err != nil {
+		return nil, err
+	}
+	switch v := raw.(type) {
+	case map[string]any:
+		return v, nil
+	case []any:
+		return map[string]any{arrayKey: v}, nil
+	case nil:
+		return map[string]any{arrayKey: []any{}}, nil
+	}
+	return nil, fmt.Errorf("decode %s: unexpected JSON %T", path, raw)
+}
+
+func readList(ctx context.Context, get jsonGetter, path string, q url.Values) (*ListPage, error) {
+	raw, err := readJSON(ctx, get, path, q, "items")
+	if err != nil {
 		return nil, err
 	}
 	return itemsFromResponse(raw), nil
+}
+
+func readRun(ctx context.Context, get jsonGetter, runID, suffix, kind string) (*ResourceItem, error) {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return nil, fmt.Errorf("%w: run_id required", ErrInvalidParams)
+	}
+	raw, err := readJSON(ctx, get, "/api/v1/workflow-runs/"+url.PathEscape(runID)+suffix, nil, "events")
+	if err != nil {
+		return nil, err
+	}
+	return &ResourceItem{ID: runID, Kind: kind, Data: raw}, nil
+}
+
+func listJobs(ctx context.Context, get jsonGetter, req ListInput) (*ListPage, error) {
+	return readList(ctx, get, "/api/v1/jobs", listQuery(req))
+}
+
+func listRuns(ctx context.Context, get jsonGetter, req ListInput) (*ListPage, error) {
+	return readList(ctx, get, "/api/v1/workflow-runs", listQuery(req))
+}
+
+func listWorkflows(ctx context.Context, get jsonGetter, req ListInput) (*ListPage, error) {
+	return readList(ctx, get, "/api/v1/workflows", listQuery(req))
+}
+
+func listTopics(ctx context.Context, get jsonGetter, req ListInput) (*ListPage, error) {
+	return readList(ctx, get, "/api/v1/topics", listQuery(req))
+}
+
+func listAgents(ctx context.Context, get jsonGetter, req ListInput) (*ListPage, error) {
+	return readList(ctx, get, "/api/v1/agents", listQuery(req))
+}
+
+func listPendingApprovals(ctx context.Context, get jsonGetter, req ListInput) (*ListPage, error) {
+	q := listQuery(req)
+	if q.Get("status") == "" {
+		q.Set("status", "pending")
+	}
+	return readList(ctx, get, "/api/v1/approvals", q)
+}
+
+func verifyAudit(ctx context.Context, get jsonGetter, tenant string) (*ResourceItem, error) {
+	q := url.Values{}
+	if tenant != "" {
+		q.Set("tenant", tenant)
+	}
+	raw, err := readJSON(ctx, get, "/api/v1/audit/verify", q, "result")
+	if err != nil {
+		return nil, err
+	}
+	return &ResourceItem{Kind: "audit_verify", Data: raw}, nil
+}
+
+// ListJobs — HTTP bridge implementation.
+func (b *HTTPServiceBridge) ListJobs(ctx context.Context, req ListInput) (*ListPage, error) {
+	return listJobs(ctx, b.getJSON, req)
 }
 
 // GetJob — HTTP bridge implementation.
@@ -162,95 +243,47 @@ func (b *HTTPServiceBridge) GetJob(ctx context.Context, jobID string) (*Resource
 
 // ListRuns — HTTP bridge implementation.
 func (b *HTTPServiceBridge) ListRuns(ctx context.Context, req ListInput) (*ListPage, error) {
-	var raw map[string]any
-	if err := b.getJSON(ctx, "/api/v1/runs", listQuery(req), &raw); err != nil {
-		return nil, err
-	}
-	return itemsFromResponse(raw), nil
+	return listRuns(ctx, b.getJSON, req)
 }
 
 // GetRun — HTTP bridge implementation.
 func (b *HTTPServiceBridge) GetRun(ctx context.Context, runID string) (*ResourceItem, error) {
-	runID = strings.TrimSpace(runID)
-	if runID == "" {
-		return nil, fmt.Errorf("%w: run_id required", ErrInvalidParams)
-	}
-	var raw map[string]any
-	if err := b.getJSON(ctx, "/api/v1/runs/"+url.PathEscape(runID), nil, &raw); err != nil {
-		return nil, err
-	}
-	return &ResourceItem{ID: runID, Kind: "run", Data: raw}, nil
+	return readRun(ctx, b.getJSON, runID, "", "run")
 }
 
 // GetRunTimeline — HTTP bridge implementation.
 func (b *HTTPServiceBridge) GetRunTimeline(ctx context.Context, runID string) (*ResourceItem, error) {
-	runID = strings.TrimSpace(runID)
-	if runID == "" {
-		return nil, fmt.Errorf("%w: run_id required", ErrInvalidParams)
-	}
-	var raw map[string]any
-	if err := b.getJSON(ctx, "/api/v1/runs/"+url.PathEscape(runID)+"/timeline", nil, &raw); err != nil {
-		return nil, err
-	}
-	return &ResourceItem{ID: runID, Kind: "run_timeline", Data: raw}, nil
+	return readRun(ctx, b.getJSON, runID, "/timeline", "run_timeline")
 }
 
 // ListWorkflows — HTTP bridge implementation.
 func (b *HTTPServiceBridge) ListWorkflows(ctx context.Context, req ListInput) (*ListPage, error) {
-	var raw map[string]any
-	if err := b.getJSON(ctx, "/api/v1/workflows", listQuery(req), &raw); err != nil {
-		return nil, err
-	}
-	return itemsFromResponse(raw), nil
+	return listWorkflows(ctx, b.getJSON, req)
 }
 
 // ListPacks — HTTP bridge implementation.
 func (b *HTTPServiceBridge) ListPacks(ctx context.Context, req ListInput) (*ListPage, error) {
-	var raw map[string]any
-	if err := b.getJSON(ctx, "/api/v1/packs", listQuery(req), &raw); err != nil {
-		return nil, err
-	}
-	return itemsFromResponse(raw), nil
+	return readList(ctx, b.getJSON, "/api/v1/packs", listQuery(req))
 }
 
 // ListTopics — HTTP bridge implementation.
 func (b *HTTPServiceBridge) ListTopics(ctx context.Context, req ListInput) (*ListPage, error) {
-	var raw map[string]any
-	if err := b.getJSON(ctx, "/api/v1/topics", listQuery(req), &raw); err != nil {
-		return nil, err
-	}
-	return itemsFromResponse(raw), nil
+	return listTopics(ctx, b.getJSON, req)
 }
 
 // ListWorkers — HTTP bridge implementation.
 func (b *HTTPServiceBridge) ListWorkers(ctx context.Context, req ListInput) (*ListPage, error) {
-	var raw map[string]any
-	if err := b.getJSON(ctx, "/api/v1/workers", listQuery(req), &raw); err != nil {
-		return nil, err
-	}
-	return itemsFromResponse(raw), nil
+	return readList(ctx, b.getJSON, "/api/v1/workers", listQuery(req))
 }
 
 // ListAgents — HTTP bridge implementation.
 func (b *HTTPServiceBridge) ListAgents(ctx context.Context, req ListInput) (*ListPage, error) {
-	var raw map[string]any
-	if err := b.getJSON(ctx, "/api/v1/agents", listQuery(req), &raw); err != nil {
-		return nil, err
-	}
-	return itemsFromResponse(raw), nil
+	return listAgents(ctx, b.getJSON, req)
 }
 
 // ListPendingApprovals — HTTP bridge implementation.
 func (b *HTTPServiceBridge) ListPendingApprovals(ctx context.Context, req ListInput) (*ListPage, error) {
-	q := listQuery(req)
-	if q.Get("status") == "" {
-		q.Set("status", "pending")
-	}
-	var raw map[string]any
-	if err := b.getJSON(ctx, "/api/v1/approvals", q, &raw); err != nil {
-		return nil, err
-	}
-	return itemsFromResponse(raw), nil
+	return listPendingApprovals(ctx, b.getJSON, req)
 }
 
 // QueryAudit — HTTP bridge implementation.
@@ -265,24 +298,12 @@ func (b *HTTPServiceBridge) QueryAudit(ctx context.Context, req AuditQueryInput)
 	if req.Until != "" {
 		q.Set("until", req.Until)
 	}
-	var raw map[string]any
-	if err := b.getJSON(ctx, "/api/v1/audit/query", q, &raw); err != nil {
-		return nil, err
-	}
-	return itemsFromResponse(raw), nil
+	return readList(ctx, b.getJSON, "/api/v1/audit/query", q)
 }
 
 // VerifyAudit — HTTP bridge implementation.
 func (b *HTTPServiceBridge) VerifyAudit(ctx context.Context, tenant string) (*ResourceItem, error) {
-	q := url.Values{}
-	if tenant != "" {
-		q.Set("tenant", tenant)
-	}
-	var raw map[string]any
-	if err := b.getJSON(ctx, "/api/v1/audit/verify", q, &raw); err != nil {
-		return nil, err
-	}
-	return &ResourceItem{Kind: "audit_verify", Data: raw}, nil
+	return verifyAudit(ctx, b.getJSON, tenant)
 }
 
 // GetStatus — HTTP bridge implementation.
@@ -294,13 +315,26 @@ func (b *HTTPServiceBridge) GetStatus(ctx context.Context) (*ResourceItem, error
 	return &ResourceItem{Kind: "status", Data: raw}, nil
 }
 
-// DirectServiceBridge read methods. GetJob and GetStatus call their bound
-// hooks. The rest return ErrReadOnlyUnsupported's 501 BridgeError, and the
-// gateway's HTTP MCP runtime reaches them too: only the stdio cordum-mcp
-// binary, which uses HTTPServiceBridge, serves every read.
+// DirectServiceBridge read methods. GetJob and GetStatus call their own
+// hooks, and nine reads call GetJSONFunc with the same route and query as
+// HTTPServiceBridge. ListPacks, ListWorkers and QueryAudit always return
+// ErrReadOnlyUnsupported's 501 BridgeError, as does any read whose hook is
+// nil: only the stdio cordum-mcp binary, which uses HTTPServiceBridge,
+// serves those three.
 
-func (b *DirectServiceBridge) ListJobs(context.Context, ListInput) (*ListPage, error) {
-	return nil, NewBridgeError(http.StatusNotImplemented, "read_only_unsupported", "ListJobs", nil)
+// reader returns the GetJSONFunc hook, or a getter that answers 501
+// read_only_unsupported for method when the bridge has none.
+func (b *DirectServiceBridge) reader(method string) jsonGetter {
+	if b != nil && b.getJSON != nil {
+		return b.getJSON
+	}
+	return func(context.Context, string, url.Values, any) error {
+		return NewBridgeError(http.StatusNotImplemented, "read_only_unsupported", method, nil)
+	}
+}
+
+func (b *DirectServiceBridge) ListJobs(ctx context.Context, req ListInput) (*ListPage, error) {
+	return listJobs(ctx, b.reader("ListJobs"), req)
 }
 
 // GetJob — direct bridge implementation through the GetJobFunc hook.
@@ -314,38 +348,38 @@ func (b *DirectServiceBridge) GetJob(ctx context.Context, jobID string) (*Resour
 	}
 	return b.getJob(ctx, jobID)
 }
-func (b *DirectServiceBridge) ListRuns(context.Context, ListInput) (*ListPage, error) {
-	return nil, NewBridgeError(http.StatusNotImplemented, "read_only_unsupported", "ListRuns", nil)
+func (b *DirectServiceBridge) ListRuns(ctx context.Context, req ListInput) (*ListPage, error) {
+	return listRuns(ctx, b.reader("ListRuns"), req)
 }
-func (b *DirectServiceBridge) GetRun(context.Context, string) (*ResourceItem, error) {
-	return nil, NewBridgeError(http.StatusNotImplemented, "read_only_unsupported", "GetRun", nil)
+func (b *DirectServiceBridge) GetRun(ctx context.Context, runID string) (*ResourceItem, error) {
+	return readRun(ctx, b.reader("GetRun"), runID, "", "run")
 }
-func (b *DirectServiceBridge) GetRunTimeline(context.Context, string) (*ResourceItem, error) {
-	return nil, NewBridgeError(http.StatusNotImplemented, "read_only_unsupported", "GetRunTimeline", nil)
+func (b *DirectServiceBridge) GetRunTimeline(ctx context.Context, runID string) (*ResourceItem, error) {
+	return readRun(ctx, b.reader("GetRunTimeline"), runID, "/timeline", "run_timeline")
 }
-func (b *DirectServiceBridge) ListWorkflows(context.Context, ListInput) (*ListPage, error) {
-	return nil, NewBridgeError(http.StatusNotImplemented, "read_only_unsupported", "ListWorkflows", nil)
+func (b *DirectServiceBridge) ListWorkflows(ctx context.Context, req ListInput) (*ListPage, error) {
+	return listWorkflows(ctx, b.reader("ListWorkflows"), req)
 }
 func (b *DirectServiceBridge) ListPacks(context.Context, ListInput) (*ListPage, error) {
 	return nil, NewBridgeError(http.StatusNotImplemented, "read_only_unsupported", "ListPacks", nil)
 }
-func (b *DirectServiceBridge) ListTopics(context.Context, ListInput) (*ListPage, error) {
-	return nil, NewBridgeError(http.StatusNotImplemented, "read_only_unsupported", "ListTopics", nil)
+func (b *DirectServiceBridge) ListTopics(ctx context.Context, req ListInput) (*ListPage, error) {
+	return listTopics(ctx, b.reader("ListTopics"), req)
 }
 func (b *DirectServiceBridge) ListWorkers(context.Context, ListInput) (*ListPage, error) {
 	return nil, NewBridgeError(http.StatusNotImplemented, "read_only_unsupported", "ListWorkers", nil)
 }
-func (b *DirectServiceBridge) ListAgents(context.Context, ListInput) (*ListPage, error) {
-	return nil, NewBridgeError(http.StatusNotImplemented, "read_only_unsupported", "ListAgents", nil)
+func (b *DirectServiceBridge) ListAgents(ctx context.Context, req ListInput) (*ListPage, error) {
+	return listAgents(ctx, b.reader("ListAgents"), req)
 }
-func (b *DirectServiceBridge) ListPendingApprovals(context.Context, ListInput) (*ListPage, error) {
-	return nil, NewBridgeError(http.StatusNotImplemented, "read_only_unsupported", "ListPendingApprovals", nil)
+func (b *DirectServiceBridge) ListPendingApprovals(ctx context.Context, req ListInput) (*ListPage, error) {
+	return listPendingApprovals(ctx, b.reader("ListPendingApprovals"), req)
 }
 func (b *DirectServiceBridge) QueryAudit(context.Context, AuditQueryInput) (*ListPage, error) {
 	return nil, NewBridgeError(http.StatusNotImplemented, "read_only_unsupported", "QueryAudit", nil)
 }
-func (b *DirectServiceBridge) VerifyAudit(context.Context, string) (*ResourceItem, error) {
-	return nil, NewBridgeError(http.StatusNotImplemented, "read_only_unsupported", "VerifyAudit", nil)
+func (b *DirectServiceBridge) VerifyAudit(ctx context.Context, tenant string) (*ResourceItem, error) {
+	return verifyAudit(ctx, b.reader("VerifyAudit"), tenant)
 }
 
 // GetStatus — direct bridge implementation through the GetStatusFunc hook.

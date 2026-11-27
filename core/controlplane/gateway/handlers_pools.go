@@ -205,7 +205,10 @@ func (s *server) handleCreatePool(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.publishConfigChanged("system", "default")
-	s.appendAuditEntryNamed(r.Context(), "create", "pool", name, name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "create pool "+name)
+	if err := s.appendNamedAuditEntry(r.Context(), "create", "pool", name, name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "create pool "+name); err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "pool created but its audit entry was not stored")
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, map[string]any{
@@ -284,7 +287,10 @@ func (s *server) handleUpdatePool(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.publishConfigChanged("system", "default")
-	s.appendAuditEntryNamed(r.Context(), "update", "pool", name, name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "update pool "+name)
+	if err := s.appendNamedAuditEntry(r.Context(), "update", "pool", name, name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "update pool "+name); err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "pool updated but its audit entry was not stored")
+		return
+	}
 	writeJSON(w, map[string]any{
 		"name":        name,
 		"status":      updated.EffectiveStatus(),
@@ -340,12 +346,13 @@ func (s *server) handleDeletePool(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.publishConfigChanged("system", "default")
+	// Must complete: the delete stops work on the pool, so a lost entry is only logged (ERROR).
 	s.appendAuditEntryNamed(r.Context(), "delete", "pool", name, name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "delete pool "+name)
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *server) deletePoolFromConfig(ctx context.Context, tenantID, name string, force bool) error {
-	return s.configSvc.SetWithRetry(ctx, configsvc.ScopeSystem, "default", 3, func(doc *configsvc.Document) error {
+	return s.configSvc.ReplaceWithRetry(ctx, configsvc.ScopeSystem, "default", 3, func(doc *configsvc.Document) error {
 		topics, poolMap, err := extractPoolsFromConfig(doc)
 		if err != nil {
 			return err
@@ -468,6 +475,7 @@ func (s *server) handleDrainPool(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.publishConfigChanged("system", "default")
+	// Must complete: the drain stops work, so a lost entry is only logged (ERROR).
 	s.appendAuditEntryNamed(r.Context(), "drain", "pool", name, name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "drain pool "+name)
 	writeJSON(w, map[string]any{
 		"name":                  name,
@@ -527,8 +535,11 @@ func (s *server) handleAddTopicToPool(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.publishConfigChanged("system", "default")
-	s.appendAuditEntryNamed(r.Context(), "add_topic", "pool", name, name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r),
-		fmt.Sprintf("add topic %s to pool %s", topic, name))
+	if err := s.appendNamedAuditEntry(r.Context(), "add_topic", "pool", name, name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r),
+		fmt.Sprintf("add topic %s to pool %s", topic, name)); err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "topic added to pool but its audit entry was not stored")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -551,7 +562,7 @@ func (s *server) handleRemoveTopicFromPool(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	err := s.configSvc.SetWithRetry(r.Context(), configsvc.ScopeSystem, "default", 3, func(doc *configsvc.Document) error {
+	err := s.configSvc.ReplaceWithRetry(r.Context(), configsvc.ScopeSystem, "default", 3, func(doc *configsvc.Document) error {
 		topics, poolMap, err := extractPoolsFromConfig(doc)
 		if err != nil {
 			return err
@@ -587,6 +598,7 @@ func (s *server) handleRemoveTopicFromPool(w http.ResponseWriter, r *http.Reques
 	}
 
 	s.publishConfigChanged("system", "default")
+	// Must complete: the removal stops routing to the pool, so a lost entry is only logged (ERROR).
 	s.appendAuditEntryNamed(r.Context(), "remove_topic", "pool", name, name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r),
 		fmt.Sprintf("remove topic %s from pool %s", topic, name))
 	w.WriteHeader(http.StatusNoContent)

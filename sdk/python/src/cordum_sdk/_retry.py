@@ -36,11 +36,9 @@ class RetryPolicy:
 
     def is_retryable_method(self, request: httpx.Request) -> bool:
         method = request.method.upper()
-        if method in self.retryable_methods:
-            return True
-        return bool(
-            request.headers.get("Idempotency-Key") or request.headers.get("X-Idempotency-Key")
-        )
+        if method == "POST":
+            return _has_idempotency_key(request.headers)
+        return method in self.retryable_methods or _has_idempotency_key(request.headers)
 
     def is_retryable_response(self, request: httpx.Request, response: httpx.Response) -> bool:
         return (
@@ -99,6 +97,15 @@ class RetryExhaustedError(CordumError):
         self.last_exception = last_exception
         if last_exception is not None:
             self.__cause__ = last_exception
+
+
+def _has_idempotency_key(headers: httpx.Headers) -> bool:
+    # httpx sends every case variant of a header name, so each value must be non-blank.
+    for name in ("Idempotency-Key", "X-Idempotency-Key"):
+        values = headers.get_list(name)
+        if values and all(value.strip() for value in values):
+            return True
+    return False
 
 
 def _parse_retry_after(headers: httpx.Headers) -> Optional[int]:
