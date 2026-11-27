@@ -71,7 +71,7 @@ func TestTenantIsolationGatewayMCPApprovalIndex(t *testing.T) {
 		}
 	}
 	foreign := httptest.NewRecorder()
-	h.Get(foreign, tenantObjectRequest(http.MethodGet, "/api/v1/mcp/approvals/"+approved["tenant-b"], "tenant-a", approved["tenant-b"]))
+	h.Get(foreign, tenantObjectRequest(http.MethodGet, "/api/v1/mcp/approvals/"+approved["tenant-b"], "tenant-a", approved["tenant-b"]), approved["tenant-b"])
 	if foreign.Code != http.StatusNotFound || strings.Contains(foreign.Body.String(), approved["tenant-b"]) || strings.Contains(foreign.Body.String(), "tenant-b") {
 		t.Errorf("A read B's approval by id: %d %s", foreign.Code, foreign.Body.String())
 	}
