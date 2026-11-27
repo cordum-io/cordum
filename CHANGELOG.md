@@ -180,6 +180,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Copilot: when `COPILOT_SESSION_MAX_MESSAGES` trims a session, its title is derived
+  again from the oldest retained message with text (task-74816afd).
+
 - Eval run index keys follow `CORDUM_EVAL_RUN_TTL_SECONDS`. Each eval run create
   sets the TTL of the tenant's `eval:run:<tenant>:idx:t` key and of the run's
   `idx:ds:<dataset>` key to the run TTL, and removes from both keys the runs whose
