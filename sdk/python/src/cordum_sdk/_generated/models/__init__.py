@@ -131,6 +131,8 @@ from .edge_artifact_pointer import EdgeArtifactPointer
 from .edge_artifact_pointer_artifact_type import EdgeArtifactPointerArtifactType
 from .edge_artifact_pointer_redaction_level import EdgeArtifactPointerRedactionLevel
 from .edge_artifact_pointer_retention_class import EdgeArtifactPointerRetentionClass
+from .edge_calibration_report import EdgeCalibrationReport
+from .edge_calibration_report_request import EdgeCalibrationReportRequest
 from .edge_end_execution_request import EdgeEndExecutionRequest
 from .edge_end_execution_request_status import EdgeEndExecutionRequestStatus
 from .edge_end_session_request import EdgeEndSessionRequest
@@ -189,6 +191,7 @@ from .edge_runtime_network_summary import EdgeRuntimeNetworkSummary
 from .edge_runtime_network_summary_protocol import EdgeRuntimeNetworkSummaryProtocol
 from .edge_runtime_process_summary import EdgeRuntimeProcessSummary
 from .edge_session import EdgeSession
+from .edge_session_assurance_state import EdgeSessionAssuranceState
 from .edge_session_create_request import EdgeSessionCreateRequest
 from .edge_session_create_request_mode import EdgeSessionCreateRequestMode
 from .edge_session_create_request_policy_mode import EdgeSessionCreateRequestPolicyMode
@@ -652,6 +655,8 @@ __all__ = (
     "EdgeArtifactPointerArtifactType",
     "EdgeArtifactPointerRedactionLevel",
     "EdgeArtifactPointerRetentionClass",
+    "EdgeCalibrationReport",
+    "EdgeCalibrationReportRequest",
     "EdgeEndExecutionRequest",
     "EdgeEndExecutionRequestStatus",
     "EdgeEndSessionRequest",
@@ -708,6 +713,7 @@ __all__ = (
     "EdgeRuntimeNetworkSummaryProtocol",
     "EdgeRuntimeProcessSummary",
     "EdgeSession",
+    "EdgeSessionAssuranceState",
     "EdgeSessionCreateRequest",
     "EdgeSessionCreateRequestMode",
     "EdgeSessionCreateRequestPolicyMode",
