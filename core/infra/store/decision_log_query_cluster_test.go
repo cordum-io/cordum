@@ -44,7 +44,7 @@ func TestQueryDecisionsMultiFilterCluster(t *testing.T) {
 				"empty":          {RuleID: "missing", AgentID: "a0"},
 				"max-limit":      {RuleID: "r0", AgentID: "a0", Limit: model.MaxDecisionQueryLimit},
 				"sparse":         {Tenant: "sparse", RuleID: "r0", AgentID: "a0", Limit: 1},
-				"skipped-cursor": {Tenant: "sparse", RuleID: "r0", AgentID: "a0", Limit: 1, Cursor: model.EncodeDecisionCursor(base+20, "0")},
+				"skipped-cursor": {Tenant: "sparse", RuleID: "r0", AgentID: "a0", Limit: 1, Cursor: model.EncodeDecisionCursor(base+21, decisionRecordID(model.DecisionLogRecord{Tenant: "sparse", JobID: "21", Timestamp: base + 21}))},
 			} {
 				t.Run(name, func(t *testing.T) {
 					if q.Tenant == "" {
@@ -139,7 +139,7 @@ func decisionQueryClusterRecords(base int64) []model.DecisionLogRecord {
 	for i := range 64 {
 		records = append(records, model.DecisionLogRecord{Tenant: "dense", JobID: fmt.Sprint(i),
 			RuleID: fmt.Sprintf("r%d", i%2), AgentID: fmt.Sprintf("a%d", i/2%2), Topic: fmt.Sprintf("t%d", i/4%2),
-			Verdict: []model.SafetyDecision{model.SafetyAllow, model.SafetyDeny}[i/8%2], Timestamp: base + int64(i/4)})
+			Verdict: []model.SafetyDecision{model.SafetyAllow, model.SafetyDeny}[i/8%2], Timestamp: base + int64(i/32)*8})
 	}
 	for i := range 83 {
 		rule, agent := "r0", "a0"
