@@ -24,6 +24,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// audienceFixtureTimeout bounds each credential fixture. Issuing a managed key
+// hashes it, which the race detector slows well past 5s on a loaded CI runner.
+const audienceFixtureTimeout = 2 * time.Minute
+
 // Each presenter mints its credential with its issuer, independently of the
 // target's Redis. Issuing a credential cannot count as the target's effect.
 func audienceCredential(t *testing.T, c identity.Credential) string {
@@ -81,7 +85,7 @@ func audienceIssuerRedis(t *testing.T) (*redis.Client, string) {
 func audienceStoredCredential(t *testing.T, c identity.Credential) string {
 	t.Helper()
 	rdb, _ := audienceIssuerRedis(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), audienceFixtureTimeout)
 	defer cancel()
 	if c == identity.UserSession {
 		// Same random session format as auth.newSessionToken; StoreSession is
@@ -133,7 +137,7 @@ func audienceDelegation(t *testing.T) string {
 	require.NoError(t, err)
 	svc, err := delegation.NewTokenService(key, nil, nil, nil)
 	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), audienceFixtureTimeout)
 	defer cancel()
 	token, _, err := svc.IssueDelegationToken(ctx, delegation.IssueRequest{
 		Tenant: "default", DelegatingAgentID: "matrix-agent", TargetAgentID: "matrix-target",
@@ -160,7 +164,7 @@ func audienceSignedCredential(t *testing.T, c identity.Credential) string {
 	if c == identity.WorkerSessionWrongAudience {
 		audience = "unrelated-service"
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), audienceFixtureTimeout)
 	defer cancel()
 	token, _, err := issuer.IssueBound(ctx, scheduler.SessionBinding{
 		WorkerID: "matrix-worker", AgentID: "matrix-agent", Tenant: "default",
@@ -176,7 +180,7 @@ func audienceWorkerCredential(t *testing.T) string {
 	cfg, err := configsvc.New(redisURL)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, cfg.Close()) })
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), audienceFixtureTimeout)
 	defer cancel()
 	issued, err := workercredentials.NewService(cfg).Create(ctx, workercredentials.IssueInput{
 		WorkerID: "matrix-worker", AgentID: "matrix-agent", TenantID: "default",
