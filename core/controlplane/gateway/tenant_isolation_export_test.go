@@ -293,8 +293,12 @@ func TestTenantIsolationPolicyAuditList(t *testing.T) {
 	s.auth = testAuthProvider{}
 	ctx := context.Background()
 	jobA, jobB := seedIsoJob(t, s, isoTenantA, isoMarkerA), seedIsoJob(t, s, isoTenantB, isoMarkerB)
-	s.appendApprovalDecisionAudit(ctx, "approve", jobA, "job."+isoMarkerA, "admin-iso-a", "admin", "", "", isoMarkerA+" reason", "", "", "", "")
-	s.appendApprovalDecisionAudit(ctx, "approve", jobB, "job."+isoMarkerB, "admin-iso-b", "admin", "", "", isoMarkerB+" reason", "", "", "", "")
+	if err := s.appendApprovalDecisionAudit(ctx, "approve", jobA, "job."+isoMarkerA, "admin-iso-a", "admin", "", "", isoMarkerA+" reason", "", "", "", ""); err != nil {
+		t.Fatalf("seed A approval audit: %v", err)
+	}
+	if err := s.appendApprovalDecisionAudit(ctx, "approve", jobB, "job."+isoMarkerB, "admin-iso-b", "admin", "", "", isoMarkerB+" reason", "", "", "", ""); err != nil {
+		t.Fatalf("seed B approval audit: %v", err)
+	}
 
 	rec := httptest.NewRecorder()
 	s.handleListPolicyAudit(rec, withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/policy/audit", nil), isoAdminA))
@@ -324,10 +328,16 @@ func TestTenantIsolationPolicyAuditListScope(t *testing.T) {
 	asA, asCross := context.WithValue(ctx, auth.ContextKey{}, isoAdminA), context.WithValue(ctx, auth.ContextKey{}, crossAdmin)
 	jobA, jobB := seedIsoJob(t, s, isoTenantA, isoMarkerA), seedIsoJob(t, s, isoTenantB, isoMarkerB)
 	deniedB, bundleA := "job-"+isoMarkerB+"-denied", "bundle-"+isoMarkerA
-	s.appendApprovalDecisionAudit(ctx, "approve", jobA, "job."+isoMarkerA, "admin-iso-a", "admin", "", "", isoMarkerA+" reason", "", "", "", "")
-	s.appendApprovalDecisionAudit(asCross, "approve", jobB, "job."+isoMarkerB, "root-iso", "admin", "", "", isoMarkerB+" reason", "", "", "", "")
-	s.appendSubmitSafetyDecisionAudit(ctx, "submit_denied", deniedB, isoTenantB, "job."+isoMarkerB, "admin-iso-b", "admin", "", "",
-		isoMarkerB+" denied", submitPolicyDecision{Denied: true}, nil, "", "", "")
+	if err := s.appendApprovalDecisionAudit(ctx, "approve", jobA, "job."+isoMarkerA, "admin-iso-a", "admin", "", "", isoMarkerA+" reason", "", "", "", ""); err != nil {
+		t.Fatalf("seed A approval audit: %v", err)
+	}
+	if err := s.appendApprovalDecisionAudit(asCross, "approve", jobB, "job."+isoMarkerB, "root-iso", "admin", "", "", isoMarkerB+" reason", "", "", "", ""); err != nil {
+		t.Fatalf("seed B approval audit: %v", err)
+	}
+	if err := s.appendSubmitSafetyDecisionAudit(ctx, "submit_denied", deniedB, isoTenantB, "job."+isoMarkerB, "admin-iso-b", "admin", "", "",
+		isoMarkerB+" denied", submitPolicyDecision{Denied: true}, nil, "", "", ""); err != nil {
+		t.Fatalf("seed B submit audit: %v", err)
+	}
 	s.appendAuditEntryNamed(asA, "publish", "bundle", bundleA, "", "admin-iso-a", "admin", isoMarkerA+" publish")
 	s.appendAuditEntryNamed(asCross, "publish", "bundle", "bundle-cross-iso", "", "root-iso", "admin", "cross publish")
 	legacy := normalizePolicyAuditEntry(policybundles.PolicyAuditEntry{Action: "approve", ResourceType: "job", ResourceID: "job-legacy-iso"})
