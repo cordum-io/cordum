@@ -490,16 +490,21 @@ func (g *governanceRuntime) appendDecisionRecord(ctx context.Context, record gov
 		cutoff := time.Now().UTC().Add(-g.decisionTTL).UnixMilli()
 		min, max := "-inf", strconv.FormatInt(cutoff, 10)
 		pipe.ZRemRangeByScore(ctx, primaryIndex, min, max)
+		pipe.Expire(ctx, primaryIndex, g.decisionTTL)
 		if record.RuleID != "" {
 			pipe.ZRemRangeByScore(ctx, governanceDecisionRuleIndexKey(record.Tenant, record.RuleID), min, max)
+			pipe.Expire(ctx, governanceDecisionRuleIndexKey(record.Tenant, record.RuleID), g.decisionTTL)
 		}
 		if record.AgentID != "" {
 			pipe.ZRemRangeByScore(ctx, governanceDecisionAgentIndexKey(record.Tenant, record.AgentID), min, max)
+			pipe.Expire(ctx, governanceDecisionAgentIndexKey(record.Tenant, record.AgentID), g.decisionTTL)
 		}
 		if record.Topic != "" {
 			pipe.ZRemRangeByScore(ctx, governanceDecisionTopicIndexKey(record.Tenant, record.Topic), min, max)
+			pipe.Expire(ctx, governanceDecisionTopicIndexKey(record.Tenant, record.Topic), g.decisionTTL)
 		}
 		pipe.ZRemRangeByScore(ctx, governanceDecisionVerdictIndexKey(record.Tenant, verdictWire), min, max)
+		pipe.Expire(ctx, governanceDecisionVerdictIndexKey(record.Tenant, verdictWire), g.decisionTTL)
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("append decision record: %w", err)

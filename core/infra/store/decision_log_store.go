@@ -130,16 +130,21 @@ func (s *RedisDecisionLogStore) AppendDecision(ctx context.Context, record model
 		min := "-inf"
 		max := strconv.FormatInt(cutoff, 10)
 		pipe.ZRemRangeByScore(ctx, primaryIndex, min, max)
+		pipe.Expire(ctx, primaryIndex, s.ttl)
 		if record.RuleID != "" {
 			pipe.ZRemRangeByScore(ctx, decisionRuleIndexKey(record.Tenant, record.RuleID), min, max)
+			pipe.Expire(ctx, decisionRuleIndexKey(record.Tenant, record.RuleID), s.ttl)
 		}
 		if record.AgentID != "" {
 			pipe.ZRemRangeByScore(ctx, decisionAgentIndexKey(record.Tenant, record.AgentID), min, max)
+			pipe.Expire(ctx, decisionAgentIndexKey(record.Tenant, record.AgentID), s.ttl)
 		}
 		if record.Topic != "" {
 			pipe.ZRemRangeByScore(ctx, decisionTopicIndexKey(record.Tenant, record.Topic), min, max)
+			pipe.Expire(ctx, decisionTopicIndexKey(record.Tenant, record.Topic), s.ttl)
 		}
 		pipe.ZRemRangeByScore(ctx, decisionVerdictIndexKey(record.Tenant, verdict), min, max)
+		pipe.Expire(ctx, decisionVerdictIndexKey(record.Tenant, verdict), s.ttl)
 	}
 
 	if _, err := pipe.Exec(ctx); err != nil {
