@@ -146,13 +146,16 @@ func (s *AgentIdentityStore) Create(ctx context.Context, identity AgentIdentity)
 		return nil, fmt.Errorf("marshal agent identity: %w", err)
 	}
 
-	pipe := s.client.TxPipeline()
-	pipe.Set(ctx, key, data, 0)
-	pipe.ZAdd(ctx, agentIdentityIndexKey, redis.Z{
+	// The record and the index sit in different Redis Cluster slots, so they
+	// cannot share a MULTI. The record goes first: the index never lists an
+	// id whose record is missing.
+	if err := s.client.Set(ctx, key, data, 0).Err(); err != nil {
+		return nil, fmt.Errorf("create agent identity: %w", err)
+	}
+	if err := s.client.ZAdd(ctx, agentIdentityIndexKey, redis.Z{
 		Score:  float64(now.UnixNano()),
 		Member: identity.ID,
-	})
-	if _, err := pipe.Exec(ctx); err != nil {
+	}).Err(); err != nil {
 		return nil, fmt.Errorf("create agent identity: %w", err)
 	}
 

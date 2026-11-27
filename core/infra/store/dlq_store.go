@@ -97,9 +97,14 @@ func (s *DLQStore) Add(ctx context.Context, entry DLQEntry) error {
 	if err != nil {
 		return fmt.Errorf("marshal dlq entry: %w", err)
 	}
+	// The entry and the index sit in different Redis Cluster slots, so they
+	// cannot share a MULTI. The entry goes first: a failure after it leaves an
+	// unlisted entry that its TTL removes, never a member without its entry.
+	if err = s.client.Set(ctx, dlqEntryKey(entry.JobID), data, s.entryTTL).Err(); err != nil {
+		return err
+	}
 	pipe := s.client.TxPipeline()
 	maxEntries := dlqMaxEntries()
-	pipe.Set(ctx, dlqEntryKey(entry.JobID), data, s.entryTTL)
 	pipe.ZAdd(ctx, dlqIndexKey(), redis.Z{Score: float64(entry.CreatedAt.Unix()), Member: entry.JobID})
 	trimCmd := pipe.ZRange(ctx, dlqIndexKey(), 0, -(maxEntries + 1))
 	remCmd := pipe.ZRemRangeByRank(ctx, dlqIndexKey(), 0, -(maxEntries + 1))
@@ -120,11 +125,13 @@ func (s *DLQStore) Add(ctx context.Context, entry DLQEntry) error {
 	if len(trimIDs) == 0 {
 		return nil
 	}
-	keys := make([]string, 0, len(trimIDs))
+	// One DEL per entry: a cluster refuses a DEL whose keys span slots.
+	del := s.client.Pipeline()
 	for _, id := range trimIDs {
-		keys = append(keys, dlqEntryKey(id))
+		del.Del(ctx, dlqEntryKey(id))
 	}
-	return s.client.Del(ctx, keys...).Err()
+	_, err = del.Exec(ctx)
+	return err
 }
 
 // List returns recent DLQ entries. Stale index entries (whose data keys have
@@ -276,11 +283,12 @@ func (s *DLQStore) Delete(ctx context.Context, jobID string) error {
 	if jobID == "" {
 		return fmt.Errorf("job id required")
 	}
-	pipe := s.client.TxPipeline()
-	pipe.Del(ctx, dlqEntryKey(jobID))
-	pipe.ZRem(ctx, dlqIndexKey(), jobID)
-	_, err := pipe.Exec(ctx)
-	return err
+	// The member goes first, in its own slot: a failure after it leaves an
+	// unlisted entry that its TTL removes, never a member without its entry.
+	if err := s.client.ZRem(ctx, dlqIndexKey(), jobID).Err(); err != nil {
+		return err
+	}
+	return s.client.Del(ctx, dlqEntryKey(jobID)).Err()
 }
 
 func dlqEntryKey(jobID string) string {

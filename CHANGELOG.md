@@ -9,6 +9,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 - Copilot and telemetry: copilot transcript appends and telemetry snapshot saves now work on Redis Cluster instead of failing with `CROSSSLOT`. Each session or snapshot is written before the index or history entry that lists it.
 
+- Stores: agent identity create, decision-log append, and DLQ add and delete now work on Redis
+  Cluster instead of failing with `CROSSSLOT`. Each record is written before its index entries,
+  a DLQ delete removes the index entry before the record, and a decision-log append whose index
+  write fails removes its record.
+
 - MCP: tool approvals now queue on Redis Cluster instead of failing with `CROSSSLOT` and returning `approval_store_unavailable`.
 
 - Gateway: key, user, RBAC and legal-hold stores now use the shared cluster-aware Redis client.
