@@ -255,7 +255,7 @@ func TestArtifactBindingKubeTarget(t *testing.T) {
 	kubeconfig := "current-context: dev\ncontexts:\n- name: dev\n  context:\n    namespace: dev-ns\n" +
 		"- name: staging\n  context:\n    namespace: staging-ns\n"
 	artifactWriteFiles(t, cwd, map[string]string{
-		"kc.yaml": kubeconfig, "sub/kubectl": kubeconfig,
+		"kc.yaml": kubeconfig, "sub/kubectl": kubeconfig, "manifest.yaml": "kind: ConfigMap\n",
 		"a.yaml": "contexts:\n- name: x\n  context:\n    namespace: ns-a\n",
 		"b.yaml": "current-context: x\ncontexts:\n- name: x\n  context:\n    namespace: ns-b\n",
 	})
@@ -332,6 +332,43 @@ func TestArtifactBindingFollowsFlagSpellings(t *testing.T) {
 			}
 			if digest("v1") == digest("v2") {
 				t.Fatalf("the digest must change when %s changes", tc.file)
+			}
+		})
+	}
+}
+
+// TestArtifactBindingModelInputsMustBeHashed checks that a modeled program is
+// bound only when the digest holds each file it reads, named as the program
+// resolves the name.
+func TestArtifactBindingModelInputsMustBeHashed(t *testing.T) {
+	cwd := t.TempDir()
+	artifactWriteFiles(t, cwd, map[string]string{"manifest.yaml": "kind: ConfigMap\n", "other.yaml": "kind: ConfigMap\n",
+		"settings.txt": "a=b\n", "deploy.js": "", "deploy.sh": "", "deploy.py": "", "sub/keep": "",
+		"kc.yaml": "current-context: dev\ncontexts:\n- name: dev\n  context: {}\n"})
+	env := map[string]string{"KUBECONFIG": filepath.Join(cwd, "kc.yaml")}
+	const cm = "kubectl create configmap cm "
+	for _, tc := range []struct{ command, reason string }{
+		{"kubectl apply -f missing.yaml", "unrecognized"},
+		{"kubectl apply -f manifest.yaml,missing.yaml", "unrecognized"},
+		{"kubectl apply -f manifest.yaml -f missing.yaml", "unrecognized"},
+		{cm + "--from-file=k=missing.txt", "unrecognized"},
+		{cm + "--from-file=settings.txt,=x", "unrecognized"},
+		{cm + "--from-file=k=", "unrecognized"},
+		{cm + "--from-file=a=b=c", "unrecognized"},
+		{cm + "--from-file==x", "shell-syntax"},
+		{cm + "--from-env-file=missing.env", "unrecognized"},
+		{"node sub/../deploy.js", "unrecognized"},
+		{"bash sub/../deploy.sh", "unrecognized"},
+		{"python3 sub/../deploy.py", "unrecognized"},
+		{"kubectl apply -f manifest.yaml -f other.yaml", ""},
+		{cm + "--from-file=settings.txt --from-file=k=other.yaml", ""},
+		{cm + "--from-env-file=settings.txt", ""},
+		{"node ./deploy.js", ""},
+	} {
+		t.Run(tc.command, func(t *testing.T) {
+			labels := artifactBindingLabels(context.Background(), artifactHookInput(cwd, tc.command), env, "unknown")
+			if (labels["artifact.binding"] == "bound") != (tc.reason == "") || labels["artifact.unbound_reason"] != tc.reason {
+				t.Fatalf("labels = %v, want unbound reason %q", labels, tc.reason)
 			}
 		})
 	}

@@ -71,6 +71,30 @@ func TestArtifactBindingWindowsDriveNames(t *testing.T) {
 	}
 }
 
+// TestArtifactBindingWindowsAliasNamesAreUnreadable covers names Git Bash's
+// MSYS programs open as other files than Go does.
+func TestArtifactBindingWindowsAliasNamesAreUnreadable(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("trailing dots, NTFS streams and the SYSTEM attribute are Windows only")
+	}
+	cwd := t.TempDir()
+	artifactWriteFiles(t, cwd, map[string]string{"deploy.sh": "echo deploy\n", "manifest.yaml": "kind: ConfigMap\n",
+		"link.sh": "!<symlink>deploy.sh", "kc.yaml": "current-context: dev\n"})
+	if err := os.WriteFile(filepath.Join(cwd, "deploy.sh:x"), []byte("echo stream\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if out, err := exec.CommandContext(ctx, "attrib", "+s", filepath.Join(cwd, "link.sh")).CombinedOutput(); err != nil {
+		t.Fatalf("attrib: %v %s", err, out)
+	}
+	env := map[string]string{"KUBECONFIG": filepath.Join(cwd, "kc.yaml")}
+	artifactCheckReaderPath(t, cwd, "bash deploy.sh", env, "")
+	for _, command := range []string{"bash deploy.sh.", "kubectl apply -f manifest.yaml.", "bash deploy.sh:x", "bash link.sh"} {
+		t.Run(command, func(t *testing.T) { artifactCheckReaderPath(t, cwd, command, env, "unreadable") })
+	}
+}
+
 func TestArtifactBindingReaderRelativeNames(t *testing.T) {
 	cwd := t.TempDir()
 	artifactWriteFiles(t, cwd, map[string]string{

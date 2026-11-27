@@ -39,18 +39,19 @@ var artifactKubectlShorthands = map[byte]string{'n': "namespace", 'f': "filename
 
 // artifactKubectlArgs reads kubectl's arguments as pflag v1.0.9 does
 // (parseArgs, parseLongArg, parseSingleShortArg). It returns the last value of
-// each modeled flag, by long name, and whether every argument is recognized:
-// only modeled flags, a value for each value flag, no file value of - (stdin),
-// and the subcommand apply with no other positional, create or get. An
-// unmodeled flag is read as a switch, so the target flags after it still
-// parse. kubectl picks its subcommand before it parses flags (cobra
-// stripFlags), and that lookup reads the word after a bare -R or --recursive
-// as their value and the word after -Rf or -Rn as a command. So a switch
-// before the subcommand, and a cluster whose later letter takes the next
-// word, are unrecognized.
-func artifactKubectlArgs(args []string) (map[string]string, bool) {
+// each modeled flag, by long name, every path the file flags name (pflag
+// appends each occurrence), and whether every argument is recognized: only
+// modeled flags, a value for each value flag, file values
+// artifactKubectlFiles accepts, and the subcommand apply with no other
+// positional, create or get. An unmodeled flag is read as a switch, so the
+// target flags after it still parse. kubectl picks its subcommand before it
+// parses flags (cobra stripFlags), and that lookup reads the word after a bare
+// -R or --recursive as their value and the word after -Rf or -Rn as a
+// command. So a switch before the subcommand, and a cluster whose later letter
+// takes the next word, are unrecognized.
+func artifactKubectlArgs(args []string) (map[string]string, []string, bool) {
 	values, ok := map[string]string{}, true
-	var positionals []string
+	var positionals, files []string
 	set := func(name, value string, written bool) {
 		kind, known := artifactKubectlFlags[name]
 		switch {
@@ -63,7 +64,10 @@ func artifactKubectlArgs(args []string) (map[string]string, bool) {
 				value, args = args[0], args[1:]
 			}
 			values[name] = value
-			ok = ok && (kind != "files" || !slices.Contains(strings.Split(value, ","), "-"))
+			if kind == "files" {
+				paths, valid := artifactKubectlFiles(name, value)
+				files, ok = append(files, paths...), ok && valid
+			}
 		}
 	}
 	for len(args) > 0 {
@@ -83,7 +87,28 @@ func artifactKubectlArgs(args []string) (map[string]string, bool) {
 			ok = artifactKubectlCluster(arg, set) && ok
 		}
 	}
-	return values, ok && artifactKubectlSubcommand(positionals)
+	return values, files, ok && artifactKubectlSubcommand(positionals)
+}
+
+// artifactKubectlFiles returns the paths in a file flag's value. pflag splits
+// the value with encoding/csv, which on plain bytes is a split at ','.
+// --from-file reads each item as kubectl's ParseFileSource does: a path, or
+// key=path with one '=' that neither starts nor ends the item. It reports
+// false for an item kubectl rejects and for - (stdin).
+func artifactKubectlFiles(name, value string) ([]string, bool) {
+	paths := strings.Split(value, ",")
+	for i, item := range paths {
+		if key, path, found := strings.Cut(item, "="); found && name == "from-file" {
+			if key == "" || path == "" || strings.Contains(path, "=") {
+				return nil, false
+			}
+			paths[i] = path
+		}
+		if paths[i] == "-" {
+			return nil, false
+		}
+	}
+	return paths, true
 }
 
 // artifactKubectlCluster reads a cluster of short flags as
@@ -137,7 +162,7 @@ func artifactKubeTarget(fields []string, cwd string, env map[string]string) (str
 			kubeconfig = value
 		}
 	}
-	flags, _ := artifactKubectlArgs(fields[at+1:])
+	flags, _, _ := artifactKubectlArgs(fields[at+1:])
 	if flags["kubeconfig"] != "" {
 		kubeconfig = flags["kubeconfig"] // an empty --kubeconfig is not an explicit path
 	}
