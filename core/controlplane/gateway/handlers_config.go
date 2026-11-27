@@ -549,31 +549,20 @@ func (s *server) visibleSchemaIDs(r *http.Request, ids []string, tenant string, 
 	return visible, nil
 }
 
-// schemaDeleteAllowed lets a bound caller delete only its own id. Another
-// tenant's id answers 404, as an absent id does, and a platform id answers 403.
+// schemaDeleteAllowed refuses another tenant's id with 404, as an absent id
+// answers. Every other answer comes from DeleteOwned's owner-checked step, so
+// it reflects the owner and document at one moment.
 func (s *server) schemaDeleteAllowed(w http.ResponseWriter, r *http.Request, id, tenant string) bool {
 	owner, err := s.schemaRegistry.Owner(r.Context(), id)
 	if err != nil {
 		writeInternalError(w, r, "schema owner lookup", err)
 		return false
 	}
-	if owner != "" {
-		if owner == tenant {
-			return true
-		}
+	if owner != "" && owner != tenant {
 		writeJSONError(w, http.StatusNotFound, errorCodeConfigSchemaNotFound, "schema not found")
 		return false
 	}
-	_, err = s.schemaRegistry.Get(r.Context(), id)
-	switch {
-	case err == nil:
-		writeJSONError(w, http.StatusForbidden, errorCodeConfigSchemaViolation, "schema id not available")
-	case errors.Is(err, redis.Nil):
-		writeJSONError(w, http.StatusNotFound, errorCodeConfigSchemaNotFound, "schema not found")
-	default:
-		writeInternalError(w, r, "schema lookup", err)
-	}
-	return false
+	return true
 }
 
 // Resource lock handlers

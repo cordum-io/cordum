@@ -1226,6 +1226,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   acts on the schema document in one atomic Redis step. The owner tenant of a
   schema id is stored at `cordum:schema:owner:{schema:<id>}`, in the same Redis
   Cluster hash slot as the document (task-3963d7b0).
+- Schemas: a tenant-bound delete of an id that no tenant owns takes its answer
+  from the atomic Redis step that checks the owner and removes the document
+  (task-d2fbe1d4).
 - Edge approvals: a held MCP call whose arguments differ from a still-pending
   hold of the same tool in the same session now gets its own approval ref. It
   used to get the first hold's ref, so resuming it failed with `-32096`
