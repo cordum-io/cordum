@@ -44,6 +44,13 @@ var crossTenantGlobalRoutes = map[string]string{
 	"GET /api/v1/policy/bundles":                "reads system-scope policy bundles only; cannot change the system scope",
 	"GET /api/v1/policy/bundles/snapshots":      "reads system-scope bundle snapshots only; cannot change the system scope",
 	"GET /api/v1/policy/bundles/snapshots/{id}": "reads one system-scope bundle snapshot only; cannot change the system scope",
+	// PR1-02-MCP-AUDIT
+	"GET /api/v1/audit/export/health":   "process audit exporter status (backend type from env, active or disabled); takes no tenant record id and returns no tenant data",
+	"GET /api/v1/audit/export/config":   "process audit export settings from env plus the licence retention; non-sensitive, takes no tenant record id and returns no tenant data",
+	"GET /api/v1/mcp/gateway/health":    "constant MCP gateway liveness reply; takes no tenant record id",
+	"POST /api/v1/mcp/gateway/upstream": "upstream forwarding is disabled for every tenant (GatewayEnabled false): 503 gateway_disabled before any tenant record is read; reclassify with EDGE-101",
+	"ANY /api/v1/mcp/gateway/upstream/": "upstream forwarding is disabled for every tenant (GatewayEnabled false): 503 gateway_disabled before any tenant record is read; reclassify with EDGE-101",
+	"GET /mcp/status":                   "MCP system config and process runtime counts (running, transport, sessions, tools); takes no tenant record id and returns no tenant data",
 }
 
 var crossTenantExistingCoverage = map[string][]string{
@@ -73,6 +80,10 @@ var crossTenantExistingCoverage = map[string][]string{
 	"DELETE /api/v1/agents/{id}":                     {"TestHandleAgentByID_RejectsCrossTenant"},
 	"GET /api/v1/agents/{id}/stats":                  {"TestHandleAgentByID_RejectsCrossTenant"},
 	"GET /api/v1/agents/{id}/tools":                  {"TestHandleAgentToolVisibility_CrossTenantReturns404"},
+	// PR1-02-MCP-AUDIT
+	"GET /api/v1/mcp/approvals":               {"TestMCPApprovalRouter_ListFiltersByTenant"},
+	"POST /api/v1/mcp/approvals/{id}/approve": {"TestMCPApprovalResolve_CrossTenantDenied"},
+	"POST /api/v1/mcp/approvals/{id}/reject":  {"TestMCPApprovalResolve_CrossTenantDenied"},
 }
 
 var crossTenantOpenFindings = map[string]string{}
@@ -84,7 +95,6 @@ var crossTenantPending = map[string][]string{
 	// Slice separator: keep unchanged when removing a pending block.
 	"PR1-02-PLATFORM": {"/api/v1/packs", "/api/v1/marketplace", "/api/v1/config", "/api/v1/evals", "/api/v1/governance", "/api/v1/license", "/api/v1/telemetry", "/api/v1/status", "/api/v1/admin", "/api/v1/copilot", "/health", "/api/v1/health"},
 	// Slice separator: keep unchanged when removing a pending block.
-	"PR1-02-EDGE-MCP": {"/api/v1/mcp", "/mcp", "/api/v1/audit"},
 }
 
 var crossTenantRowKey = regexp.MustCompile(`^(?:M[0-9][A-Z]?|PR[0-9])-[A-Z0-9]+(?:-[A-Z0-9]+)*$`)
