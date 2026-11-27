@@ -466,6 +466,15 @@ func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 	return err
 }
 
+type publishedAtKey struct{}
+
+// PublishedAt returns the JetStream stored-message time for this delivery.
+// It is unchanged on redelivery and absent for core NATS or invalid metadata.
+func PublishedAt(ctx context.Context) (time.Time, bool) {
+	at, ok := ctx.Value(publishedAtKey{}).(time.Time)
+	return at, ok
+}
+
 // SubscribeWithContext is the context-aware variant of Subscribe. When the
 // underlying transport carries trace headers, they are extracted and passed to
 // the handler so downstream services can join the same distributed trace.
@@ -546,6 +555,7 @@ func (b *NatsBus) jsCallbackCtx(
 	admit RawPacketAdmission,
 ) func(*nats.Msg) {
 	return func(msg *nats.Msg) {
+		ctx := cordumotel.ExtractTraceContext(context.Background(), msg.Header)
 		var numDelivered uint64
 		var streamName string
 		var streamSeq uint64
@@ -553,8 +563,10 @@ func (b *NatsBus) jsCallbackCtx(
 			numDelivered = meta.NumDelivered
 			streamName = meta.Stream
 			streamSeq = meta.Sequence.Stream
+			if !meta.Timestamp.IsZero() {
+				ctx = context.WithValue(ctx, publishedAtKey{}, meta.Timestamp)
+			}
 		}
-		ctx := cordumotel.ExtractTraceContext(context.Background(), msg.Header)
 		packet, authority, action, delay, proceed := preAdmitRawPacket(ctx, admit, msg.Subject, msg.Data)
 		if !proceed {
 			b.settleRawAdmission(msg, subject, action, delay)

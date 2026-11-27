@@ -72,6 +72,30 @@ func (s *RedisJobStore) AcceptSignedJobEvent(
 	return model.JobEventApplyDisposition(result), nil // #nosec G115 -- see comment above
 }
 
+// GetDispatchAssignment returns the worker and tenant that jobID's current
+// dispatch names; both are empty when the job has no dispatch record. It only
+// reads: a field missing from the runtime hash comes from the legacy job meta,
+// the per-field fallback migrateRuntimeFence applies, and nothing is migrated.
+func (s *RedisJobStore) GetDispatchAssignment(ctx context.Context, jobID string) (workerID, tenant string, err error) {
+	fields := []string{metaFieldDispatchWorkerID, metaFieldDispatchTenant}
+	runtime, err := s.client.HMGet(ctx, jobRuntimeKey(jobID), fields...).Result()
+	if err != nil {
+		return "", "", fmt.Errorf("job store dispatch assignment %s: %w", jobID, err)
+	}
+	legacy, err := s.client.HMGet(ctx, jobMetaKey(jobID), fields...).Result()
+	if err != nil {
+		return "", "", fmt.Errorf("job store dispatch assignment %s: %w", jobID, err)
+	}
+	field := func(i int) string {
+		if v, _ := runtime[i].(string); v != "" {
+			return v
+		}
+		v, _ := legacy[i].(string)
+		return v
+	}
+	return field(0), field(1), nil
+}
+
 // CancelAllJobAttempts is the privileged control-plane operation. It does not
 // accept a worker fence and atomically invalidates the current dispatch.
 func (s *RedisJobStore) CancelAllJobAttempts(

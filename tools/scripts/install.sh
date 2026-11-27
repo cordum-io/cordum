@@ -524,13 +524,20 @@ cd "${DEST_DIR}"
 # `curl ... | bash` install keeps reading the rest of this script.
 quickstart=(./tools/scripts/quickstart.sh --skip-smoke)
 if [ "${USE_RELEASE_IMAGES}" = "1" ]; then
-  # docker-compose.release.yml is the production stack: export CORDUM_API_KEY,
-  # REDIS_PASSWORD, SAFETY_POLICY_PUBLIC_KEY and SAFETY_POLICY_SIGNATURE first
-  # (docs/deployment/policy-signing.md). Its certs default to ./certs here.
+  # docker-compose.release.yml is the production stack. Its certs default to
+  # ./certs here. quickstart writes CORDUM_API_KEY and REDIS_PASSWORD to .env.
+  # When none of CORDUM_POLICY_SIGNING_KEY, SAFETY_POLICY_PUBLIC_KEY and
+  # SAFETY_POLICY_SIGNATURE is set, it also generates the policy signing key,
+  # public key and config/safety.yaml signature (key id default) into .env.
+  # Compose interpolates the file's required values on every command, pull
+  # included, so pull only on a re-install, where .env exists. On a first
+  # install, `up` pulls the missing images.
   echo "starting from GHCR images (CORDUM_VERSION=${CORDUM_VERSION})"
   export CORDUM_VERSION
   export CORDUM_TLS_DIR="${CORDUM_TLS_DIR:-./certs}"
-  "${compose_cmd[@]}" -f docker-compose.release.yml pull
+  if [ -f .env ]; then
+    "${compose_cmd[@]}" -f docker-compose.release.yml pull
+  fi
   CORDUM_COMPOSE_FILES=docker-compose.release.yml "${quickstart[@]}" --skip-build </dev/null
 else
   echo "building from source"

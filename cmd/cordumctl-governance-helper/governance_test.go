@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/cordum/cordum/core/auth/servicetoken"
 	infraStore "github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -132,6 +133,8 @@ func TestRunGovernanceBackfillRespectsTimeWindow(t *testing.T) {
 }
 
 func TestRunGovernanceTailAppendsAndSkipsExisting(t *testing.T) {
+	clearGovernanceTrust(t)
+	key := governanceTrustKey(t, "CORDUM_POLICY_PUBLIC_KEY_cp")
 	h := newGovernanceTestHarness(t)
 	defer func() { _ = h.runtime.Close() }()
 	defer func() { _ = h.jobStore.Close() }()
@@ -150,6 +153,7 @@ func TestRunGovernanceTailAppendsAndSkipsExisting(t *testing.T) {
 		PolicyVersion: "snap-tail",
 		Extra:         map[string]string{"topic": "topic.tail"},
 	})
+	packet = governancePacketToken(t, packet, governanceServiceToken(t, key, servicetoken.IdentityGateway))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	subscriber := fakeGovernanceSubscriber{packets: [][]byte{packet, packet}, done: cancel}

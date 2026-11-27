@@ -303,8 +303,17 @@ func (s *server) stopWorkerExpiry() {
 
 // startBusTaps subscribes to heartbeats and system events once for the lifetime of the gateway.
 func (s *server) startBusTaps() error {
+	tapAuth, err := s.newBusTapAuth()
+	if err != nil {
+		return err
+	}
 	// Heartbeats -> worker registry snapshot
 	if err := s.bus.Subscribe(capsdk.SubjectHeartbeat, "", func(p *pb.BusPacket) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, ok := tapAuth.admit(ctx, busTapHeartbeat, p); !ok {
+			return nil
+		}
 		if hb := p.GetHeartbeat(); hb != nil {
 			s.workerMu.Lock()
 			s.workers[hb.WorkerId] = hb
@@ -326,13 +335,16 @@ func (s *server) startBusTaps() error {
 	// WS forwarding is handled separately by the sys.job.> broadcast subscription.
 	if s.dlqStore != nil {
 		if err := s.bus.Subscribe(capsdk.SubjectDLQ, "cordum-gateway", func(p *pb.BusPacket) error {
+			dlqCtx, dlqCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer dlqCancel()
+			if _, ok := tapAuth.admit(dlqCtx, busTapDLQ, p); !ok {
+				return nil
+			}
 			if jr := p.GetJobResult(); jr != nil {
 				jobID := strings.TrimSpace(jr.JobId)
 				topic := ""
 				lastState := ""
 				attempts := 0
-				dlqCtx, dlqCancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer dlqCancel()
 				if s.jobStore != nil && jobID != "" {
 					if t, err := s.jobStore.GetTopic(dlqCtx, jobID); err == nil {
 						topic = t
@@ -389,7 +401,25 @@ func (s *server) startBusTaps() error {
 	// Event taps -> broadcast channel
 	for _, subj := range []string{"sys.job.>", "sys.audit.>"} {
 		subject := subj
+		tap := busTapAuditStream
+		if subject == "sys.job.>" {
+			tap = busTapJobStream
+		}
 		if err := s.bus.Subscribe(subject, "", func(p *pb.BusPacket) error {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			claims, ok := tapAuth.admit(ctx, tap, p)
+			if !ok {
+				return nil
+			}
+			if !s.busTapResultFromDispatchedWorker(ctx, p, claims) {
+				tapAuth.refuse(tap, "dispatch")
+				return nil
+			}
+			if !s.busTapPacketInWorkerTenant(ctx, p, claims) {
+				tapAuth.refuse(tap, "tenant")
+				return nil
+			}
 			// Always broadcast to WS clients first — duplicate broadcasts are
 			// harmless (dashboard re-renders) and ensures visibility even on retry.
 			s.enqueueBusPacket(p)
@@ -479,6 +509,15 @@ func (s *server) enqueueBusPacket(p *pb.BusPacket) {
 		return
 	}
 	p = filtered
+
+	// Stream only a credential-free copy; other bus subscribers still need p.
+	if p.GetAuthToken() != "" || p.GetHeartbeat().GetAuthToken() != "" {
+		p = proto.Clone(p).(*pb.BusPacket)
+		p.AuthToken = ""
+		if hb := p.GetHeartbeat(); hb != nil {
+			hb.AuthToken = ""
+		}
+	}
 
 	data, err := marshalBusPacketForWS(p)
 	if err != nil {

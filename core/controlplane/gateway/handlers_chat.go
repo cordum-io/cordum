@@ -309,20 +309,27 @@ func (s *server) emitChatEvent(run *wf.WorkflowRun, msg chatMessage) {
 	s.enqueueWSEvent(data, run.OrgID, "")
 }
 
+// runMemoryID returns the run's memory id qualified with the run's tenant
+// (store.TenantMemoryID), the same storage id a context-engine call for the
+// run's jobs resolves to with the job's tenant, or "" when it cannot be bound.
 func runMemoryID(run *wf.WorkflowRun) string {
 	if run == nil || run.ID == "" {
 		return ""
 	}
+	memoryID := "run:" + run.ID
 	if run.Input != nil {
 		if raw, ok := run.Input["memory_id"]; ok {
 			if s, ok := raw.(string); ok {
 				if trimmed := store.NormalizeMemoryID(s); trimmed != "" {
-					return trimmed
+					memoryID = trimmed
 				}
 			}
 		}
 	}
-	return "run:" + run.ID
+	if id, ok := store.TenantMemoryID(run.OrgID, memoryID); ok {
+		return id
+	}
+	return ""
 }
 
 func chatHistoryKey(memoryID string) string {

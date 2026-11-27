@@ -133,12 +133,26 @@ func (s *server) handleInstallPack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.appendAuditEntryNamed(r.Context(), "install", "pack", record.ID, record.Manifest.Metadata.Title, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "install pack "+record.ID)
+	if !s.appendPackAudit(w, r, "install", record.ID, record.Manifest.Metadata.Title, "install pack "+record.ID) {
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, packInstallResponse{
 		PackRecord:       record,
 		WorkerCredential: workerCredential,
 	})
+}
+
+// appendPackAudit stores the entry for a pack install or uninstall that has
+// already happened. When the entry cannot be stored it answers 500, saying so,
+// and returns false.
+func (s *server) appendPackAudit(w http.ResponseWriter, r *http.Request, action, packID, title, message string) bool {
+	err := s.appendNamedAuditEntry(r.Context(), action, "pack", packID, title, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), message)
+	if err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "pack "+packID+" "+action+"ed but its audit entry was not stored")
+		return false
+	}
+	return true
 }
 
 func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts packs.PackInstallOptions) (packs.PackRecord, *packWorkerCredentialResponse, error) {
@@ -165,6 +179,7 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 	// when cordumctl verified locally. The client is untrusted.
 	verifyResult, verifyErr := verifyPackInstallBundle(ctx, s.redisClient(), bundleDir, manifest.Metadata.ID)
 	if verifyErr != nil {
+		// Must-complete: a refusal keeps its 400 even if its entry is not stored.
 		s.appendAuditEntryNamed(ctx, PackVerificationEventRejected, "pack", manifest.Metadata.ID, manifest.Metadata.Title, opts.InstalledBy, "", verifyErr.Error())
 		return packs.PackRecord{}, nil, &packs.PackInstallError{
 			Status: http.StatusBadRequest,
@@ -176,10 +191,12 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 		policySigner, err = resolvePolicyStoreSigner("pack " + manifest.Metadata.ID)
 		if err != nil {
 			refusal := fmt.Errorf("%s: pack %q %w", PackVerificationCodePolicyUnsigned, manifest.Metadata.ID, err)
+			// Must-complete: a refusal keeps its 400 even if its entry is not stored.
 			s.appendAuditEntryNamed(ctx, PackVerificationEventRejected, "pack", manifest.Metadata.ID, manifest.Metadata.Title, opts.InstalledBy, "", refusal.Error())
 			return packs.PackRecord{}, nil, &packs.PackInstallError{Status: http.StatusBadRequest, Err: refusal}
 		}
 	}
+	// Informational: it records a check that changes no state.
 	s.appendAuditEntryNamed(ctx, PackVerificationEventVerified, "pack", manifest.Metadata.ID, manifest.Metadata.Title, opts.InstalledBy, "", fmt.Sprintf("signed=%t kid=%s cordum=%t", verifyResult.Signed, verifyResult.KID, verifyResult.HasCordumCounterSig))
 	owner := strings.TrimSpace(opts.Owner)
 	if owner == "" {
@@ -230,10 +247,8 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 				rollbackErrs = append(rollbackErrs, fmt.Sprintf("config overlay %d: %v", i, err))
 			}
 		}
-		for i := len(appliedPolicyChanges) - 1; i >= 0; i-- {
-			if err := s.restorePolicyOverlay(ctx, appliedPolicyChanges[i]); err != nil {
-				rollbackErrs = append(rollbackErrs, fmt.Sprintf("policy overlay %d: %v", i, err))
-			}
+		if err := s.restorePolicyOverlays(ctx, manifest.Metadata.ID, appliedPolicyChanges, opts.InstalledBy); err != nil {
+			rollbackErrs = append(rollbackErrs, fmt.Sprintf("policy overlays: %v", err))
 		}
 		for i := len(appliedWorkflows) - 1; i >= 0; i-- {
 			if err := s.rollbackWorkflow(ctx, appliedWorkflows[i]); err != nil {
@@ -271,6 +286,16 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 		appliedWorkflows = append(appliedWorkflows, plan)
 	}
 
+	appliedPolicyChanges, err = s.applyPolicyOverlays(ctx, manifest.Overlays.Policy, manifest.Metadata.ID, manifest.Metadata.Version, bundleDir, policySigner, opts.InstalledBy)
+	if err != nil {
+		rollback()
+		return packs.PackRecord{}, nil, err
+	}
+	for _, change := range appliedPolicyChanges {
+		if change.Overlay.Name != "" {
+			appliedPolicy = append(appliedPolicy, change.Overlay)
+		}
+	}
 	for _, overlay := range manifest.Overlays.Config {
 		if packs.ShouldSkipConfigOverlay(opts.Inactive, overlay) {
 			continue
@@ -283,17 +308,6 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 		if applied.Overlay.Name != "" {
 			appliedConfig = append(appliedConfig, applied.Overlay)
 			appliedConfigChanges = append(appliedConfigChanges, applied)
-		}
-	}
-	for _, overlay := range manifest.Overlays.Policy {
-		applied, err := s.applyPolicyOverlay(ctx, overlay, manifest.Metadata.ID, manifest.Metadata.Version, bundleDir, policySigner)
-		if err != nil {
-			rollback()
-			return packs.PackRecord{}, nil, &packs.PackInstallError{Status: http.StatusBadRequest, Err: err}
-		}
-		if applied.Overlay.Name != "" {
-			appliedPolicy = append(appliedPolicy, applied.Overlay)
-			appliedPolicyChanges = append(appliedPolicyChanges, applied)
 		}
 	}
 
@@ -419,14 +433,12 @@ func (s *server) handleUninstallPack(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusNotFound, "pack not installed")
 		return
 	}
+	if err := s.removePolicyOverlays(r.Context(), packID, rec.Overlays.Policy, policybundles.PolicyActorID(r), policybundles.PolicyRole(r)); err != nil {
+		writeInternalError(w, r, "pack operation", err)
+		return
+	}
 	for i := len(rec.Overlays.Config) - 1; i >= 0; i-- {
 		if err := s.removeConfigOverlay(r.Context(), rec.Overlays.Config[i]); err != nil {
-			writeInternalError(w, r, "pack operation", err)
-			return
-		}
-	}
-	for _, overlay := range rec.Overlays.Policy {
-		if err := s.removePolicyOverlay(r.Context(), overlay); err != nil {
 			writeInternalError(w, r, "pack operation", err)
 			return
 		}
@@ -475,7 +487,9 @@ func (s *server) handleUninstallPack(w http.ResponseWriter, r *http.Request) {
 		}
 		s.publishConfigChanged("system", "workers")
 	}
-	s.appendAuditEntryNamed(r.Context(), "uninstall", "pack", packID, rec.Manifest.Metadata.Title, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "uninstall pack "+packID)
+	if !s.appendPackAudit(w, r, "uninstall", packID, rec.Manifest.Metadata.Title, "uninstall pack "+packID) {
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, rec)
 }
@@ -485,7 +499,9 @@ func (s *server) packTopicRegistrations(ctx context.Context, manifest *packs.Pac
 		return nil, errors.New("pack manifest required")
 	}
 	doc, err := s.configSvc.Get(ctx, configsvc.ScopeSystem, "default")
-	if err != nil && !errors.Is(err, redis.Nil) {
+	if errors.Is(err, redis.Nil) {
+		doc = &configsvc.Document{}
+	} else if err != nil {
 		return nil, fmt.Errorf("load pool mappings: %w", err)
 	}
 	topics, _, err := extractPoolsFromConfig(doc)
@@ -922,19 +938,21 @@ func (s *server) restoreConfigOverlay(ctx context.Context, change packs.AppliedC
 	return s.configSvc.Set(ctx, doc)
 }
 
-func (s *server) applyPolicyOverlay(ctx context.Context, overlay packs.PackPolicyOverlay, packID, packVersion, dir string, signer *policyStoreSigner) (packs.AppliedPolicyChange, error) {
+// preparePolicyFragment reads, validates and signs one policy overlay of a
+// pack, returning the bundle fragment to store.
+func preparePolicyFragment(overlay packs.PackPolicyOverlay, packVersion, dir string, signer *policyStoreSigner) (map[string]any, error) {
 	strategy := strings.TrimSpace(overlay.Strategy)
 	if strategy != "" && strategy != "bundle_fragment" {
-		return packs.AppliedPolicyChange{}, fmt.Errorf("unsupported policy overlay strategy %q", strategy)
+		return nil, fmt.Errorf("unsupported policy overlay strategy %q", strategy)
 	}
 	path, err := packs.SafeJoin(dir, overlay.Path)
 	if err != nil {
-		return packs.AppliedPolicyChange{}, err
+		return nil, err
 	}
 	// #nosec G304 -- path is validated by packs.SafeJoin.
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return packs.AppliedPolicyChange{}, err
+		return nil, err
 	}
 
 	// Pre-flight: validate the fragment against the SAME schema the safety
@@ -947,103 +965,146 @@ func (s *server) applyPolicyOverlay(ctx context.Context, overlay packs.PackPolic
 	// (e.g., keywords in rules[].match) it also returns the enriched
 	// "did you mean: input_rules[].match" hint from issue #312.
 	if _, err := config.ParseSafetyPolicy(content); err != nil {
-		return packs.AppliedPolicyChange{}, fmt.Errorf(
+		return nil, fmt.Errorf(
 			"policy overlay %q (fragment file %q): %w", overlay.Name, overlay.Path, err)
 	}
 
-	fragmentID := policyFragmentID(packID, overlay.Name)
-	doc, err := getConfigDoc(ctx, s.configSvc, packs.PolicyConfigScope, packs.PolicyConfigID)
-	if err != nil {
-		if !errors.Is(err, redis.Nil) {
-			return packs.AppliedPolicyChange{}, err
-		}
-		doc = &configsvc.Document{Scope: configsvc.Scope(packs.PolicyConfigScope), ScopeID: packs.PolicyConfigID, Data: map[string]any{}}
-	}
-	if doc.Data == nil {
-		doc.Data = map[string]any{}
-	}
-	rawBundles := packs.NormalizeJSON(doc.Data[packs.PolicyConfigKey])
-	bundles, _ := rawBundles.(map[string]any)
-	if bundles == nil {
-		bundles = map[string]any{}
-	}
-	previous, hadPrevious := bundles[fragmentID]
-	installedAt := time.Now().UTC().Format(time.RFC3339)
 	sum := sha256.Sum256(content)
 	fragment := map[string]any{
 		"content":      string(content),
 		"version":      packVersion,
 		"sha256":       hex.EncodeToString(sum[:]),
-		"installed_at": installedAt,
+		"installed_at": time.Now().UTC().Format(time.RFC3339),
 	}
 	if signer != nil && len(content) > 0 {
 		signature, err := signer.sign(content)
 		if err != nil {
-			return packs.AppliedPolicyChange{}, err
+			return nil, err
 		}
 		fragment[policyBundleSignatureKey] = signature
 	}
-	bundles[fragmentID] = fragment
-	doc.Data[packs.PolicyConfigKey] = bundles
-	if err := s.configSvc.Set(ctx, doc); err != nil {
-		return packs.AppliedPolicyChange{}, err
-	}
-	s.publishConfigChanged(packs.PolicyConfigScope, packs.PolicyConfigID)
-	return packs.AppliedPolicyChange{
-		Overlay: packs.PackAppliedPolicyOverlay{
-			Name:       overlay.Name,
-			FragmentID: fragmentID,
-		},
-		Previous:    packs.DeepCopy(previous),
-		HadPrevious: hadPrevious,
-	}, nil
+	return fragment, nil
 }
 
-func (s *server) removePolicyOverlay(ctx context.Context, overlay packs.PackAppliedPolicyOverlay) error {
-	doc, err := getConfigDoc(ctx, s.configSvc, packs.PolicyConfigScope, packs.PolicyConfigID)
-	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			return nil
-		}
-		return fmt.Errorf("remove policy overlay %s: %w", overlay.Name, err)
+// packPolicyBundles returns the bundle map of a system/policy document,
+// storing a new one in doc when it has none.
+func packPolicyBundles(doc *configsvc.Document) map[string]any {
+	if doc.Data == nil {
+		doc.Data = map[string]any{}
 	}
-	rawBundles := packs.NormalizeJSON(doc.Data[packs.PolicyConfigKey])
-	bundles, ok := rawBundles.(map[string]any)
-	if !ok || bundles == nil {
+	bundles, _ := packs.NormalizeJSON(doc.Data[packs.PolicyConfigKey]).(map[string]any)
+	if bundles == nil {
+		bundles = map[string]any{}
+	}
+	doc.Data[packs.PolicyConfigKey] = bundles
+	return bundles
+}
+
+// packPolicyAuditEntry is the audit entry for one commit of a pack's policy
+// fragments.
+func packPolicyAuditEntry(action, packID, actorID, role string, overlays []packs.PackAppliedPolicyOverlay) policybundles.PolicyAuditEntry {
+	ids := make([]string, len(overlays))
+	for i, overlay := range overlays {
+		ids[i] = overlay.FragmentID
+	}
+	return policybundles.PolicyAuditEntry{
+		Action: action, ResourceType: "policy", ResourceID: packID, BundleIDs: ids,
+		ActorID: actorID, Role: role, Message: action + " policy fragments of pack " + packID,
+	}
+}
+
+// applyPolicyOverlays stores every policy fragment of a pack together with
+// their "edit" audit entry in one commit, and returns each change with the
+// value it replaced. A fragment that cannot be read, validated or signed is a
+// 400 PackInstallError and nothing is written. A failed commit is returned as
+// is and writes nothing either.
+func (s *server) applyPolicyOverlays(ctx context.Context, overlays []packs.PackPolicyOverlay, packID, packVersion, dir string, signer *policyStoreSigner, actorID string) ([]packs.AppliedPolicyChange, error) {
+	if len(overlays) == 0 {
+		return nil, nil
+	}
+	applied := make([]packs.PackAppliedPolicyOverlay, len(overlays))
+	fragments := make([]map[string]any, len(overlays))
+	for i, overlay := range overlays {
+		fragment, err := preparePolicyFragment(overlay, packVersion, dir, signer)
+		if err != nil {
+			return nil, &packs.PackInstallError{Status: http.StatusBadRequest, Err: err}
+		}
+		applied[i] = packs.PackAppliedPolicyOverlay{Name: overlay.Name, FragmentID: policyFragmentID(packID, overlay.Name)}
+		fragments[i] = fragment
+	}
+	var changes []packs.AppliedPolicyChange
+	err := s.commitPolicyWithAudit(ctx, func(doc *configsvc.Document) error {
+		bundles := packPolicyBundles(doc)
+		changes = changes[:0]
+		for i, overlay := range applied {
+			previous, hadPrevious := bundles[overlay.FragmentID]
+			changes = append(changes, packs.AppliedPolicyChange{Overlay: overlay, Previous: packs.DeepCopy(previous), HadPrevious: hadPrevious})
+			bundles[overlay.FragmentID] = fragments[i]
+		}
+		return nil
+	}, packPolicyAuditEntry("edit", packID, actorID, "", applied))
+	if err != nil {
+		return nil, err
+	}
+	s.publishConfigChanged(packs.PolicyConfigScope, packs.PolicyConfigID)
+	return changes, nil
+}
+
+// errNoPackPolicy reports that system/policy holds none of a pack's fragments.
+var errNoPackPolicy = errors.New("no policy fragment of the pack is stored")
+
+// removePolicyOverlays deletes a pack's policy fragments together with their
+// "delete" audit entry in one commit. It writes nothing when none of the
+// fragments is stored.
+func (s *server) removePolicyOverlays(ctx context.Context, packID string, overlays []packs.PackAppliedPolicyOverlay, actorID, role string) error {
+	if len(overlays) == 0 {
 		return nil
 	}
-	delete(bundles, overlay.FragmentID)
-	doc.Data[packs.PolicyConfigKey] = bundles
-	if err := s.configSvc.Set(ctx, doc); err != nil {
+	err := s.commitPolicyWithAudit(ctx, func(doc *configsvc.Document) error {
+		bundles := packPolicyBundles(doc)
+		removed := false
+		for _, overlay := range overlays {
+			_, stored := bundles[overlay.FragmentID]
+			removed = removed || stored
+			delete(bundles, overlay.FragmentID)
+		}
+		if !removed {
+			return errNoPackPolicy
+		}
+		return nil
+	}, packPolicyAuditEntry("delete", packID, actorID, role, overlays))
+	if errors.Is(err, errNoPackPolicy) {
+		return nil
+	}
+	if err != nil {
 		return err
 	}
 	s.publishConfigChanged(packs.PolicyConfigScope, packs.PolicyConfigID)
 	return nil
 }
 
-func (s *server) restorePolicyOverlay(ctx context.Context, change packs.AppliedPolicyChange) error {
-	doc, err := getConfigDoc(ctx, s.configSvc, packs.PolicyConfigScope, packs.PolicyConfigID)
-	if err != nil {
-		if !errors.Is(err, redis.Nil) {
-			return fmt.Errorf("restore policy overlay %s: %w", change.Overlay.Name, err)
+// restorePolicyOverlays puts back the values that applyPolicyOverlays
+// replaced, together with a "rollback" audit entry, in one commit.
+func (s *server) restorePolicyOverlays(ctx context.Context, packID string, changes []packs.AppliedPolicyChange, actorID string) error {
+	if len(changes) == 0 {
+		return nil
+	}
+	overlays := make([]packs.PackAppliedPolicyOverlay, len(changes))
+	for i, change := range changes {
+		overlays[i] = change.Overlay
+	}
+	err := s.commitPolicyWithAudit(ctx, func(doc *configsvc.Document) error {
+		bundles := packPolicyBundles(doc)
+		for i := len(changes) - 1; i >= 0; i-- {
+			if changes[i].HadPrevious {
+				bundles[changes[i].Overlay.FragmentID] = packs.DeepCopy(changes[i].Previous)
+			} else {
+				delete(bundles, changes[i].Overlay.FragmentID)
+			}
 		}
-		doc = &configsvc.Document{Scope: configsvc.Scope(packs.PolicyConfigScope), ScopeID: packs.PolicyConfigID, Data: map[string]any{}}
-	}
-	if doc.Data == nil {
-		doc.Data = map[string]any{}
-	}
-	rawBundles := packs.NormalizeJSON(doc.Data[packs.PolicyConfigKey])
-	bundles, _ := rawBundles.(map[string]any)
-	if bundles == nil {
-		bundles = map[string]any{}
-	}
-	if !change.HadPrevious {
-		delete(bundles, change.Overlay.FragmentID)
-	} else {
-		bundles[change.Overlay.FragmentID] = packs.DeepCopy(change.Previous)
-	}
-	doc.Data[packs.PolicyConfigKey] = bundles
-	if err := s.configSvc.Set(ctx, doc); err != nil {
+		return nil
+	}, packPolicyAuditEntry("rollback", packID, actorID, "", overlays))
+	if err != nil {
 		return err
 	}
 	s.publishConfigChanged(packs.PolicyConfigScope, packs.PolicyConfigID)
@@ -1402,7 +1463,9 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	s.appendAuditEntryNamed(r.Context(), "install", "pack", record.ID, record.Manifest.Metadata.Title, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "install marketplace pack "+record.ID)
+	if !s.appendPackAudit(w, r, "install", record.ID, record.Manifest.Metadata.Title, "install marketplace pack "+record.ID) {
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, packInstallResponse{
 		PackRecord:       record,

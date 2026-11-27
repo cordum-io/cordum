@@ -3,6 +3,7 @@ package safetykernel
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
@@ -91,14 +92,17 @@ func sanitizeKeyValue(raw string) string {
 }
 
 // velocityKey builds the Redis key for a velocity rule+bucket combination.
-// Key format: cordum:velocity:{ruleID}:{sanitized_keyValue}
-func velocityKey(ruleID, keyValue string) string {
+// Tenant keys include a base64url tenant segment before the sanitized value.
+func velocityKey(ruleID, tenant, keyValue string) string {
+	if tenant != "" {
+		return fmt.Sprintf("cordum:velocity:%s:%s:%s", sanitizeKeyValue(ruleID), base64.RawURLEncoding.EncodeToString([]byte(tenant)), sanitizeKeyValue(keyValue))
+	}
 	return fmt.Sprintf("cordum:velocity:%s:%s", sanitizeKeyValue(ruleID), sanitizeKeyValue(keyValue))
 }
 
 // CheckAndRecord atomically records the request and checks if velocity is exceeded.
 // Returns (exceeded, currentCount, error). On error the caller should fail-open.
-func (vc *velocityChecker) CheckAndRecord(ctx context.Context, ruleID, keyValue, requestID string, cfg *config.VelocityConfig) (bool, int64, error) {
+func (vc *velocityChecker) CheckAndRecord(ctx context.Context, ruleID, tenant, keyValue, requestID string, cfg *config.VelocityConfig) (bool, int64, error) {
 	if vc == nil || vc.client == nil {
 		return false, 0, fmt.Errorf("velocity checker not initialized")
 	}
@@ -115,7 +119,7 @@ func (vc *velocityChecker) CheckAndRecord(ctx context.Context, ruleID, keyValue,
 	windowStart := now - float64(cfg.WindowSeconds)
 	ttl := cfg.WindowSeconds + 60 // buffer for clock skew
 
-	key := velocityKey(ruleID, keyValue)
+	key := velocityKey(ruleID, tenant, keyValue)
 	start := time.Now()
 	result, err := vc.script.Run(ctx, vc.client, []string{key},
 		now, windowStart, requestID, ttl,
@@ -145,7 +149,7 @@ func (vc *velocityChecker) CheckAndRecord(ctx context.Context, ruleID, keyValue,
 }
 
 // CheckOnly checks velocity without recording (for simulate/explain).
-func (vc *velocityChecker) CheckOnly(ctx context.Context, ruleID, keyValue string, cfg *config.VelocityConfig) (bool, int64, error) {
+func (vc *velocityChecker) CheckOnly(ctx context.Context, ruleID, tenant, keyValue string, cfg *config.VelocityConfig) (bool, int64, error) {
 	if vc == nil || vc.client == nil {
 		return false, 0, fmt.Errorf("velocity checker not initialized")
 	}
@@ -161,7 +165,7 @@ func (vc *velocityChecker) CheckOnly(ctx context.Context, ruleID, keyValue strin
 	now := float64(time.Now().Unix())
 	windowStart := now - float64(cfg.WindowSeconds)
 
-	key := velocityKey(ruleID, keyValue)
+	key := velocityKey(ruleID, tenant, keyValue)
 	start := time.Now()
 	result, err := vc.checkOnly.Run(ctx, vc.client, []string{key},
 		windowStart,
@@ -264,16 +268,16 @@ func (s *server) evaluateRulesWithVelocity(ctx context.Context, policy *config.S
 					"key_expr", rule.Velocity.Key, "job_id", jobID)
 				continue
 			}
-			bucketKey := velocityKey(rule.ID, keyValue)
+			bucketKey := velocityKey(rule.ID, input.Tenant, keyValue)
 
 			var exceeded bool
 			var count int64
 			var err error
 			if dryRun {
-				exceeded, count, err = s.velocityChecker.CheckOnly(ctx, rule.ID, keyValue, rule.Velocity)
+				exceeded, count, err = s.velocityChecker.CheckOnly(ctx, rule.ID, input.Tenant, keyValue, rule.Velocity)
 			} else {
 				member := resolveVelocityMember(jobID)
-				exceeded, count, err = s.velocityChecker.CheckAndRecord(ctx, rule.ID, keyValue, member, rule.Velocity)
+				exceeded, count, err = s.velocityChecker.CheckAndRecord(ctx, rule.ID, input.Tenant, keyValue, member, rule.Velocity)
 			}
 			if err != nil {
 				failMode := strings.ToLower(strings.TrimSpace(os.Getenv("VELOCITY_FAIL_MODE")))

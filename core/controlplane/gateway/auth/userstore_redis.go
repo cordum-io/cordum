@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -89,7 +90,7 @@ type RedisUserStore struct {
 	client *redis.Client
 
 	// fallbackThrottle provides bounded brute-force protection when Redis is
-	// unavailable. Entries are keyed with loginThrottleKey(username, ip) and
+	// unavailable. Entries are keyed with loginThrottleKey(tenant, username, ip) and
 	// hold an atomic counter. Cleaned up lazily — stale entries are harmless
 	// (bounded by login traffic).
 	fallbackThrottle sync.Map // map[string]*fallbackEntry
@@ -589,35 +590,35 @@ func bcryptCostFromEnv() int {
 var ErrLoginThrottled = errors.New("too many failed login attempts, try again later")
 
 // loginThrottleKey returns the Redis key for tracking failed login attempts
-// per username+IP combination.
-func loginThrottleKey(username, ip string) string {
+// per tenant+username+IP combination.
+func loginThrottleKey(tenant, username, ip string) string {
 	u := strings.ToLower(strings.TrimSpace(username))
 	if ip == "" {
 		ip = "unknown"
 	}
-	return loginFailedPrefix + u + ":" + ip
+	return loginFailedPrefix + base64.RawURLEncoding.EncodeToString([]byte(tenant)) + ":" + u + ":" + ip
 }
 
 // loginGlobalThrottleKey returns the Redis key for tracking failed login
-// attempts per username across all IPs (distributed attack defense).
-func loginGlobalThrottleKey(username string) string {
-	return loginFailedGlobalPrefix + strings.ToLower(strings.TrimSpace(username))
+// attempts per tenant+username across all IPs.
+func loginGlobalThrottleKey(tenant, username string) string {
+	return loginFailedGlobalPrefix + base64.RawURLEncoding.EncodeToString([]byte(tenant)) + ":" + strings.ToLower(strings.TrimSpace(username))
 }
 
 // CheckLoginThrottle returns ErrLoginThrottled if the username+IP pair has
 // exceeded the per-IP threshold or the username has exceeded the global
 // threshold across all IPs.
-func (s *RedisUserStore) CheckLoginThrottle(ctx context.Context, username, ip string) error {
+func (s *RedisUserStore) CheckLoginThrottle(ctx context.Context, tenant, username, ip string) error {
 	redisCtx, cancel := loginThrottleRedisContext(ctx)
 	defer cancel()
 
 	pipe := s.client.Pipeline()
-	perIPCmd := pipe.Get(redisCtx, loginThrottleKey(username, ip))
-	globalCmd := pipe.Get(redisCtx, loginGlobalThrottleKey(username))
+	perIPCmd := pipe.Get(redisCtx, loginThrottleKey(tenant, username, ip))
+	globalCmd := pipe.Get(redisCtx, loginGlobalThrottleKey(tenant, username))
 	if _, err := pipe.Exec(redisCtx); err != nil && err != redis.Nil {
 		slog.WarnContext(redisCtx, "login throttle: Redis unavailable, using in-memory fallback",
 			"username", username, "ip", ip, "error", err)
-		return s.checkFallbackThrottle(username, ip)
+		return s.checkFallbackThrottle(tenant, username, ip)
 	}
 
 	if count, err := perIPCmd.Int(); err == nil && count >= maxLoginAttempts() {
@@ -633,8 +634,8 @@ func (s *RedisUserStore) CheckLoginThrottle(ctx context.Context, username, ip st
 // counter when Redis is unavailable. The counter is incremented only after a
 // failed password validation via RecordFailedLogin, matching the Redis path and
 // avoiding lockouts caused by successful login attempts during Redis outages.
-func (s *RedisUserStore) checkFallbackThrottle(username, ip string) error {
-	entry, ok := s.loadFallbackEntry(loginThrottleKey(username, ip), time.Now().Unix())
+func (s *RedisUserStore) checkFallbackThrottle(tenant, username, ip string) error {
+	entry, ok := s.loadFallbackEntry(loginThrottleKey(tenant, username, ip), time.Now().Unix())
 	if !ok {
 		return nil
 	}
@@ -644,9 +645,9 @@ func (s *RedisUserStore) checkFallbackThrottle(username, ip string) error {
 	return nil
 }
 
-func (s *RedisUserStore) recordFallbackFailedLogin(username, ip string) {
+func (s *RedisUserStore) recordFallbackFailedLogin(tenant, username, ip string) {
 	now := time.Now().Unix()
-	key := loginThrottleKey(username, ip)
+	key := loginThrottleKey(tenant, username, ip)
 	entry, ok := s.loadFallbackEntry(key, now)
 	if !ok {
 		val, _ := s.fallbackThrottle.LoadOrStore(key, &fallbackEntry{})
@@ -658,8 +659,8 @@ func (s *RedisUserStore) recordFallbackFailedLogin(username, ip string) {
 	entry.count.Add(1)
 }
 
-func (s *RedisUserStore) clearFallbackFailedLogin(username, ip string) {
-	s.fallbackThrottle.Delete(loginThrottleKey(username, ip))
+func (s *RedisUserStore) clearFallbackFailedLogin(tenant, username, ip string) {
+	s.fallbackThrottle.Delete(loginThrottleKey(tenant, username, ip))
 }
 
 func (s *RedisUserStore) loadFallbackEntry(key string, now int64) (*fallbackEntry, bool) {
@@ -679,34 +680,34 @@ func (s *RedisUserStore) loadFallbackEntry(key string, now int64) (*fallbackEntr
 
 // RecordFailedLogin increments both the per-IP and global failed login
 // counters for a username. Sets a TTL of loginLockoutPeriod() on both keys.
-func (s *RedisUserStore) RecordFailedLogin(ctx context.Context, username, ip string) {
+func (s *RedisUserStore) RecordFailedLogin(ctx context.Context, tenant, username, ip string) {
 	redisCtx, cancel := loginThrottleRedisContext(ctx)
 	defer cancel()
 
 	ttl := loginLockoutPeriod()
 	pipe := s.client.Pipeline()
-	perIPKey := loginThrottleKey(username, ip)
+	perIPKey := loginThrottleKey(tenant, username, ip)
 	pipe.Incr(redisCtx, perIPKey)
 	pipe.Expire(redisCtx, perIPKey, ttl)
-	globalKey := loginGlobalThrottleKey(username)
+	globalKey := loginGlobalThrottleKey(tenant, username)
 	pipe.Incr(redisCtx, globalKey)
 	pipe.Expire(redisCtx, globalKey, ttl)
 	if _, err := pipe.Exec(redisCtx); err != nil {
 		slog.WarnContext(redisCtx, "failed to record login attempt", "username", username, "ip", ip, "error", err)
-		s.recordFallbackFailedLogin(username, ip)
+		s.recordFallbackFailedLogin(tenant, username, ip)
 	}
 }
 
 // ClearFailedLogins removes the per-IP failed login counter on successful auth.
 // The global counter is left to expire naturally to maintain distributed attack visibility.
-func (s *RedisUserStore) ClearFailedLogins(ctx context.Context, username, ip string) {
+func (s *RedisUserStore) ClearFailedLogins(ctx context.Context, tenant, username, ip string) {
 	redisCtx, cancel := loginThrottleRedisContext(ctx)
 	defer cancel()
 
-	if err := s.client.Del(redisCtx, loginThrottleKey(username, ip)).Err(); err != nil {
+	if err := s.client.Del(redisCtx, loginThrottleKey(tenant, username, ip)).Err(); err != nil {
 		slog.WarnContext(redisCtx, "failed to clear login attempts", "username", username, "error", err)
 	}
-	s.clearFallbackFailedLogin(username, ip)
+	s.clearFallbackFailedLogin(tenant, username, ip)
 }
 
 // Close closes the Redis client connection.

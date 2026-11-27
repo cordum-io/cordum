@@ -7,6 +7,7 @@ workflow flows end-to-end.
 
 ## Fastest path
 
+<!-- docscheck: skip reason="clones the public repository and deploys the stack; CI checks out this commit and starts the stack in platform-smoke.yml" -->
 ```bash
 git clone https://github.com/cordum-io/cordum.git
 cd cordum
@@ -57,7 +58,7 @@ restarting the gateway.
 
 **API key:** in `.env` as `CORDUM_API_KEY`. Attach to every request:
 
-<!-- docscheck: endpoints -->
+<!-- docscheck: endpoints command exit="0" expect='"connected": true' expect='"ok": true' -->
 ```bash
 source .env && export CORDUM_API_KEY
 curl -sS --cacert ./certs/ca/ca.crt \
@@ -89,6 +90,7 @@ curl -sS --cacert ./certs/ca/ca.crt \
 
 ## Useful flags
 
+<!-- docscheck: skip reason="each line redeploys or tears down the whole stack" -->
 ```bash
 # Tear the previous stack down first (clean deploy).
 ./tools/scripts/quickstart.sh --clean
@@ -134,6 +136,7 @@ Environment overrides the script honors:
 
 ## Teardown
 
+<!-- docscheck: skip reason="tears down the stack the other checks need; the workflow's last step runs docker compose down -v" -->
 ```bash
 docker compose down          # keep volumes (quick restart)
 docker compose down -v       # wipe NATS + Redis volumes

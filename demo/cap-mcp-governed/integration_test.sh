@@ -164,6 +164,16 @@ api admin POST /api/v1/agents "$tmp/body.json"
 [[ "$HTTP_STATUS" != 409 ]] || prereq 'identity already linked; use a fresh stack (docker compose ... down -v)'
 status 201
 identity=$(identifier '.id')
+# The worker key is an operator, not an admin: it can neither preapprove its
+# own identity's mutating tools nor change the config, and neither changes.
+get "/api/v1/agents/$identity"; identity_before=$(json -S .)
+get /api/v1/config; config_before=$(json -S .)
+echo '{"preapproved_mutating_tools":["cordum_create_workflow"]}' > "$tmp/body.json"
+api worker PUT "/api/v1/agents/$identity" "$tmp/body.json"; status 403
+echo '{"mcp":{"enabled":true,"transport":"http","policy_gate_enabled":true}}' > "$tmp/body.json"
+api worker PUT /api/v1/config "$tmp/body.json"; status 403
+get "/api/v1/agents/$identity"; [[ "$(json -S .)" == "$identity_before" ]] || fail 'the worker key changed its agent identity'
+get /api/v1/config; [[ "$(json -S .)" == "$config_before" ]] || fail 'the worker key changed the config'
 phase=P4
 (
   unset CAP_MCP_OPERATOR_API_KEY CORDUM_API_KEYS CORDUM_LICENSE_TOKEN CORDUM_LICENSE_PUBLIC_KEY
