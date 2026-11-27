@@ -7,6 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
+	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -2319,5 +2322,139 @@ func TestGetJobEvents_MixedFormats(t *testing.T) {
 	// Third: old format
 	if events[2].State != "RUNNING" || events[2].Timestamp != 1700000003 {
 		t.Errorf("event[2]=%+v, want RUNNING@1700000003", events[2])
+	}
+}
+
+// refreshedApprovalJob seeds jobID awaiting approval under snap-1 in its own
+// miniredis. It returns the store and the record an approve-time drift refresh
+// to snap-2 builds: the stored record with the fresh decision and a bumped
+// approval revision.
+func refreshedApprovalJob(t *testing.T, jobID string, decision model.SafetyDecision, required bool) (*RedisJobStore, model.SafetyDecisionRecord) {
+	t.Helper()
+	store, err := NewRedisJobStore("redis://" + miniredis.RunT(t).Addr())
+	if err != nil {
+		t.Fatalf("new job store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	ctx := context.Background()
+	req := &pb.JobRequest{JobId: jobID, Topic: "job.test", TenantId: "default"}
+	hash, err := hashApprovalJobRequest(req)
+	if err != nil {
+		t.Fatalf("hash request: %v", err)
+	}
+	if err := store.SetJobMeta(ctx, req); err != nil {
+		t.Fatalf("set job meta: %v", err)
+	}
+	if err := store.SetJobRequest(ctx, req); err != nil {
+		t.Fatalf("set job req: %v", err)
+	}
+	if err := store.SetState(ctx, jobID, model.JobStateApproval); err != nil {
+		t.Fatalf("set approval state: %v", err)
+	}
+	if err := store.SetSafetyDecision(ctx, jobID, model.SafetyDecisionRecord{
+		Decision: model.SafetyRequireApproval, ApprovalRequired: true, PolicySnapshot: "snap-1", JobHash: hash,
+	}); err != nil {
+		t.Fatalf("set safety decision: %v", err)
+	}
+	record, err := store.GetSafetyDecision(ctx, jobID)
+	if err != nil {
+		t.Fatalf("get safety decision: %v", err)
+	}
+	record.Decision, record.ApprovalRequired = decision, required
+	record.Reason, record.RuleID, record.PolicySnapshot = "re-evaluated", "rule-2", "snap-2"
+	record.CheckedAt = 1700000000000000
+	record.ApprovalRevision++
+	return store, record
+}
+
+// jobDecisionState returns the job's meta hash without its write timestamps,
+// its decision history and that history's TTL.
+func jobDecisionState(t *testing.T, s *RedisJobStore, jobID string) (map[string]string, []string, time.Duration) {
+	t.Helper()
+	ctx := context.Background()
+	meta, err := s.client.HGetAll(ctx, jobMetaKey(jobID)).Result()
+	if err != nil {
+		t.Fatalf("get meta: %v", err)
+	}
+	delete(meta, "updated_at")
+	delete(meta, metaFieldApprovalAt)
+	history, err := s.client.LRange(ctx, jobDecisionKey(jobID), 0, -1).Result()
+	if err != nil {
+		t.Fatalf("get decision history: %v", err)
+	}
+	return meta, history, s.client.TTL(ctx, jobDecisionKey(jobID)).Val()
+}
+
+// A refreshed record passed to ResolveApproval ends in the same stored state as
+// writing it with SetSafetyDecision and then resolving.
+func TestResolveApprovalRefreshedSafetyMatchesTwoWrites(t *testing.T) {
+	cases := []struct {
+		name     string
+		decision model.SafetyDecision
+		required bool
+	}{
+		{name: "allow", decision: model.SafetyAllow},
+		{name: "require_human", decision: model.SafetyRequireApproval, required: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			const jobID = "job-drift-refresh"
+			params := ApprovalResolutionParams{
+				JobID: jobID, Decision: model.ApprovalDecisionApprove, ResultState: model.JobStatePending,
+				ApprovedBy: "alice", PolicySnapshot: "snap-2",
+				LabelUpdates: map[string]string{"approval_granted": "true", "approval_snapshot": "snap-2"},
+			}
+			twoWrites, record := refreshedApprovalJob(t, jobID, tc.decision, tc.required)
+			if err := twoWrites.SetSafetyDecision(ctx, jobID, record); err != nil {
+				t.Fatalf("set refreshed safety decision: %v", err)
+			}
+			want, err := twoWrites.ResolveApproval(ctx, params)
+			if err != nil {
+				t.Fatalf("two-write resolve: %v", err)
+			}
+			oneTx, record := refreshedApprovalJob(t, jobID, tc.decision, tc.required)
+			params.RefreshedSafety = &record
+			got, err := oneTx.ResolveApproval(ctx, params)
+			if err != nil {
+				t.Fatalf("one-transaction resolve: %v", err)
+			}
+
+			got.ApprovalRecord.ApprovedAt = want.ApprovalRecord.ApprovedAt
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("result = %+v, want %+v", got, want)
+			}
+			wantMeta, wantHistory, wantTTL := jobDecisionState(t, twoWrites, jobID)
+			gotMeta, gotHistory, gotTTL := jobDecisionState(t, oneTx, jobID)
+			if !maps.Equal(gotMeta, wantMeta) {
+				t.Errorf("meta = %v, want %v", gotMeta, wantMeta)
+			}
+			if !slices.Equal(gotHistory, wantHistory) || gotTTL != wantTTL {
+				t.Errorf("decision history = %v (ttl %v), want %v (ttl %v)", gotHistory, gotTTL, wantHistory, wantTTL)
+			}
+		})
+	}
+}
+
+// A resolution that ends in a conflict stores none of the refreshed record.
+func TestResolveApprovalRefreshedSafetyNotStoredOnConflict(t *testing.T) {
+	ctx := context.Background()
+	const jobID = "job-drift-conflict"
+	store, record := refreshedApprovalJob(t, jobID, model.SafetyAllow, false)
+	if err := store.SetState(ctx, jobID, model.JobStatePending); err != nil {
+		t.Fatalf("set pending state: %v", err)
+	}
+	wantMeta, wantHistory, _ := jobDecisionState(t, store, jobID)
+	_, err := store.ResolveApproval(ctx, ApprovalResolutionParams{
+		JobID: jobID, Decision: model.ApprovalDecisionApprove, ResultState: model.JobStatePending,
+		ApprovedBy: "alice", PolicySnapshot: "snap-2", RefreshedSafety: &record,
+	})
+	var conflict *ApprovalConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("resolve error = %v, want an approval conflict", err)
+	}
+	gotMeta, gotHistory, _ := jobDecisionState(t, store, jobID)
+	if !maps.Equal(gotMeta, wantMeta) || !slices.Equal(gotHistory, wantHistory) {
+		t.Errorf("stored meta %v history %v, want unchanged %v %v", gotMeta, gotHistory, wantMeta, wantHistory)
 	}
 }
