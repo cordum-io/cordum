@@ -864,6 +864,9 @@ func TestReconcilerSingleTickPerTTLWindow(t *testing.T) {
 	}
 }
 
+// The tick's optional sweep must reach the production store.
+var _ jobIndexSweeper = (*infraStore.RedisJobStore)(nil)
+
 type sweepRecordingStore struct {
 	*fakeReconcileStore
 	sweeps []time.Time

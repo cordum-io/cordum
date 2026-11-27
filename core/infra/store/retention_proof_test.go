@@ -97,11 +97,12 @@ func TestRetentionProofDIC22(t *testing.T) {
 	}); err != nil || got != model.JobEventApplied {
 		t.Fatalf("ApplyJobResult = %v, %v; want applied", got, err)
 	}
-	// The terminal transition clears these two, so check them before it.
+	// The terminal transition clears these two, before any TTL.
 	requireTrace(t, client, marker, "job:deadline:", "job:tenant:active:")
 	if err := s.SetStateWithContext(ctx, jobID, model.JobStateSucceeded, &model.StateEventContext{ResultPtr: resultPtr}); err != nil {
 		t.Fatalf("SetStateWithContext(succeeded): %v", err)
 	}
+	requireNoFamily(t, client, marker, "job:deadline:", "job:tenant:active:")
 	expireJustPast(t, mr, client, ttl, marker,
 		"job:meta:", "job:state:", "job:result_ptr:", "job:req:", "job:decisions:",
 		"job:"+jobID+":output_decision", jobRuntimeKey(jobID), "worker:jobs:",
@@ -141,6 +142,7 @@ func TestRetentionProofDIC24(t *testing.T) {
 			t.Fatalf("SetStateWithContext(newer %d): %v", i, err)
 		}
 	}
+	requireNoFamily(t, client, marker, "job:recent:", "job:deadline:", "job:tenant:active:")
 	expireJustPast(t, mr, client, ttl, marker, "job:index:")
 	if _, err := s.SweepExpiredJobIndexes(ctx, time.Now().Add(ttl+time.Second)); err != nil {
 		t.Fatalf("SweepExpiredJobIndexes: %v", err)
@@ -265,6 +267,20 @@ func requireTrace(t *testing.T, client redis.UniversalClient, marker string, fam
 	for _, family := range families {
 		if !slices.ContainsFunc(hits, func(hit string) bool { return strings.HasPrefix(hit, family) }) {
 			t.Fatalf("no %s* trace of %q; hits=%v", family, marker, hits)
+		}
+	}
+}
+
+// requireNoFamily fails if a family still holds marker before its TTL fires.
+func requireNoFamily(t *testing.T, client redis.UniversalClient, marker string, families ...string) {
+	t.Helper()
+	hits, err := tracescan.Find(context.Background(), client, marker)
+	if err != nil {
+		t.Fatalf("tracescan.Find: %v", err)
+	}
+	for _, family := range families {
+		if slices.ContainsFunc(hits, func(hit string) bool { return strings.HasPrefix(hit, family) }) {
+			t.Fatalf("%s* trace of %q remains; hits=%v", family, marker, hits)
 		}
 	}
 }
