@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Job trace, worker and deadline index writes now run one key at a time on Redis Cluster. The deadline sweep skips index entries with no recorded deadline.
+
 - Copilot and telemetry: copilot transcript appends and telemetry snapshot saves now work on Redis Cluster instead of failing with `CROSSSLOT`. Each session or snapshot is written before the index or history entry that lists it.
 
 - `cordumctl governance backfill-decisions` and `tail` now work on Redis Cluster: the helper takes
