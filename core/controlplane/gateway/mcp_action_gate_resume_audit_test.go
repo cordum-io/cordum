@@ -114,9 +114,10 @@ func rpaNewServer(t *testing.T) *rpaHarness {
 	mux.HandleFunc("POST /api/v1/edge/approvals/{approval_ref}/approve", s.handleApproveEdgeApproval)
 	h.rpaRegister(t, rpaDeleteTool, &h.deletes)
 	h.rpaRegister(t, rpaInstallTool, &h.installs)
-	h.poisonTaintLookup(t)
 	h.srv = httptest.NewServer(apiKeyMiddleware(s.auth, mux))
 	t.Cleanup(h.srv.Close)
+	h.sessionID = openMCPSSE(t, h.srv.URL, "key-agr-alice", "")
+	h.poisonTaintLookup(t)
 	return h
 }
 

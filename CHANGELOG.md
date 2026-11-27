@@ -44,6 +44,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - `dashboard/package.json` overrides `minimatch@^10.0.0` to `^11.0.1`, in `pnpm.overrides` and in the npm `overrides` mirror. No minimatch 10.x release carries the fix. eslint, `@eslint/config-array` and `@typescript-eslint/typescript-estree` still declare `^10`, and they call only `Minimatch#match` and `minimatch()`, which 11.x keeps.
 - typedoc, typedoc-plugin-coverage and typedoc-plugin-markdown are removed from the install with pnpm `-` overrides. typedoc 0.28 calls `Minimatch#matchOne`, which 11.x removed. orval 8.31.0 loads typedoc only for its `docs` output, which the dashboard does not configure. Until typedoc supports minimatch 11, enabling that output fails at import. orval stays at 8.31.0.
 
+#### core/mcp, core/controlplane/gateway — MCP HTTP/SSE sessions are bound to the caller that opened them (2026-11-14, task-2ec67dc4)
+
+- **Behavior change** for HTTP MCP clients: a `/mcp/message` with an unknown
+  or foreign session id gets HTTP 404 with JSON-RPC error `-32001`
+  (`session not found`); reconnect to `/mcp/sse` for a new id. The SSE stream
+  and its POSTs must use the same tenant, credential and principal.
+- The gateway uses a client-supplied session id for Edge trace parents and
+  call metadata only after the transport confirms that the caller owns the
+  session. See the `/mcp/sse` notes in `docs/mcp-server.md`.
+
 ### Fixed
 - MCP: a failed `POST /api/v1/mcp/verify-signature` check is audited as
   `mcp.signature_invalid` in the calling tenant's audit chain, or in the
