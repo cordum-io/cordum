@@ -1718,7 +1718,9 @@ func (s *server) invokeMCPJSONHandler(
 	}
 
 	rr := httptest.NewRecorder()
-	handler(rr, req)
+	rec := &statusRecorder{ResponseWriter: rr, status: http.StatusOK}
+	handler(rec, req)
+	rec.answer(rec.status)
 
 	raw := rr.Body.Bytes()
 	decoded := map[string]any{}
@@ -1776,7 +1778,9 @@ func (s *server) invokeMCPAnyHandler(
 	}
 
 	rr := httptest.NewRecorder()
-	handler(rr, req)
+	rec := &statusRecorder{ResponseWriter: rr, status: http.StatusOK}
+	handler(rec, req)
+	rec.answer(rec.status)
 
 	raw := rr.Body.Bytes()
 	var decoded any
