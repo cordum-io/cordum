@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -699,6 +700,103 @@ func TestMCPAuthStashesCoreCallMetadataForHTTPTransport(t *testing.T) {
 
 	if rr.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestMCPSessionOwnerSeparatesCallers(t *testing.T) {
+	t.Parallel()
+	owner := func(tenant string, ac *auth.AuthContext) string {
+		req := httptest.NewRequest(http.MethodPost, "/mcp/message", nil)
+		req.Header.Set("X-Tenant-ID", tenant)
+		if ac != nil {
+			req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, ac))
+		}
+		return mcpSessionOwner(req)
+	}
+	keyAlice := &auth.AuthContext{APIKey: "key-a", PrincipalID: "alice", AuthSource: auth.AuthSourceAPIKey}
+	jwtAlice := &auth.AuthContext{PrincipalID: "alice", AuthSource: auth.AuthSourceJWT}
+	if a, b := owner("t1", keyAlice), owner("t1", &auth.AuthContext{APIKey: "key-a", PrincipalID: "alice", AuthSource: auth.AuthSourceAPIKey}); a == "" || a != b {
+		t.Fatalf("same caller must map to one non-empty owner key: %q vs %q", a, b)
+	}
+	for name, pair := range map[string][2]string{
+		"same principal, other tenant":   {owner("t1", jwtAlice), owner("t2", jwtAlice)},
+		"same principal, other api key":  {owner("t1", keyAlice), owner("t1", &auth.AuthContext{APIKey: "key-b", PrincipalID: "alice", AuthSource: auth.AuthSourceAPIKey})},
+		"same api key, other principal":  {owner("t1", keyAlice), owner("t1", &auth.AuthContext{APIKey: "key-a", PrincipalID: "bob", AuthSource: auth.AuthSourceAPIKey})},
+		"verified vs header-only (anon)": {owner("t1", jwtAlice), owner("t1", &auth.AuthContext{PrincipalID: "alice"})},
+	} {
+		if pair[0] == pair[1] {
+			t.Errorf("%s: callers share owner key %q", name, pair[0])
+		}
+	}
+	if got := owner("t1", nil); got != "" {
+		t.Fatalf("no auth context: owner key %q, want the anonymous owner \"\"", got)
+	}
+}
+
+// TestMCPHTTPSessionBoundToAuthenticatedCaller drives the real gateway wiring:
+// a second API key naming the first key's SSE session id gets the same 404 an
+// unknown session id gets, while the owner keeps using its session.
+func TestMCPHTTPSessionBoundToAuthenticatedCaller(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.auth = newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"key-alice","tenant":"default","principal_id":"alice","role":"admin"},` +
+			`{"key":"key-bob","tenant":"default","principal_id":"bob","role":"admin"}]`,
+	})
+	s.shutdownCh = make(chan struct{})
+	t.Cleanup(func() { close(s.shutdownCh) })
+	if err := s.configSvc.Set(context.Background(), &configsvc.Document{
+		Scope:   configsvc.ScopeSystem,
+		ScopeID: "default",
+		Data:    map[string]any{"mcp": map[string]any{"enabled": true, "transport": "http"}},
+	}); err != nil {
+		t.Fatalf("set config: %v", err)
+	}
+	mux := http.NewServeMux()
+	if err := s.registerMCPRoutes(mux); err != nil {
+		t.Fatalf("register mcp routes: %v", err)
+	}
+	httpSrv := httptest.NewServer(mux)
+	defer httpSrv.Close()
+
+	sseReq, _ := http.NewRequest(http.MethodGet, httpSrv.URL+"/mcp/sse", nil)
+	sseReq.Header.Set("X-API-Key", "key-alice")
+	sseReq.Header.Set("X-Tenant-ID", "default")
+	sseResp, err := http.DefaultClient.Do(sseReq)
+	if err != nil {
+		t.Fatalf("open sse: %v", err)
+	}
+	defer func() { _ = sseResp.Body.Close() }()
+	aliceSession := sseResp.Header.Get("X-MCP-Session-ID")
+	if sseResp.StatusCode != http.StatusOK || aliceSession == "" {
+		t.Fatalf("open sse: status %d session %q", sseResp.StatusCode, aliceSession)
+	}
+
+	post := func(key, sessionID string) (int, string) {
+		req, _ := http.NewRequest(http.MethodPost, httpSrv.URL+"/mcp/message", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-API-Key", key)
+		req.Header.Set("X-Tenant-ID", "default")
+		req.Header.Set("X-MCP-Session-ID", sessionID)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("post message: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		raw, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("read message response: %v", err)
+		}
+		return resp.StatusCode, string(raw)
+	}
+	foreignStatus, foreign := post("key-bob", aliceSession)
+	if foreignStatus != http.StatusNotFound {
+		t.Fatalf("bob naming alice's session: status %d body %s, want 404", foreignStatus, foreign)
+	}
+	if status, body := post("key-bob", "no-such-session"); status != foreignStatus || body != foreign {
+		t.Fatalf("foreign vs unknown session answers differ: %d %s / %d %s", foreignStatus, foreign, status, body)
+	}
+	if status, body := post("key-alice", aliceSession); status != http.StatusOK || !strings.Contains(body, `"result"`) {
+		t.Fatalf("alice using her own session: status %d body %s, want 200 with result", status, body)
 	}
 }
 
