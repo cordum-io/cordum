@@ -29,6 +29,23 @@ func installTestPack(t *testing.T, s *server) {
 
 func installTestPackResponse(t *testing.T, s *server) packInstallResponse {
 	t.Helper()
+	seedTestPackConfig(t, s)
+	rr := postTestPack(t, s)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var resp packInstallResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode install response: %v", err)
+	}
+	return resp
+}
+
+// seedTestPackConfig stores the system/default document that the test pack's
+// pools overlay patches.
+func seedTestPackConfig(t *testing.T, s *server) {
+	t.Helper()
 	if err := s.configSvc.Set(context.Background(), &configsvc.Document{
 		Scope:   configsvc.ScopeSystem,
 		ScopeID: "default",
@@ -36,7 +53,12 @@ func installTestPackResponse(t *testing.T, s *server) packInstallResponse {
 	}); err != nil {
 		t.Fatalf("seed config: %v", err)
 	}
+}
 
+// postTestPack posts the test pack to the install handler and returns the
+// response, whatever its status.
+func postTestPack(t *testing.T, s *server) *httptest.ResponseRecorder {
+	t.Helper()
 	files := map[string]string{
 		"pack.yaml": `
 apiVersion: cordum.io/v1alpha1
@@ -117,16 +139,7 @@ tenants:
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	rr := httptest.NewRecorder()
 	s.handleInstallPack(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200 got %d body=%s", rr.Code, rr.Body.String())
-	}
-
-	var resp packInstallResponse
-	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode install response: %v", err)
-	}
-	return resp
+	return rr
 }
 
 func TestHandleInstallPack(t *testing.T) {
