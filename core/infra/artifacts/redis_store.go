@@ -93,10 +93,12 @@ func (s *RedisStore) Put(ctx context.Context, content []byte, meta Metadata) (st
 		return "", fmt.Errorf("marshal metadata: %w", err)
 	}
 	ttl := s.ttlFor(meta.Retention)
-	pipe := s.client.TxPipeline()
-	pipe.Set(ctx, key, content, ttl)
-	pipe.Set(ctx, metaKey, payload, ttl)
-	if _, err := pipe.Exec(ctx); err != nil {
+	// The bytes and the meta sit in different Redis Cluster slots, so they
+	// cannot share a MULTI. Stat reads only the meta, so it goes last.
+	if err := s.client.Set(ctx, key, content, ttl).Err(); err != nil {
+		return "", err
+	}
+	if err := s.client.Set(ctx, metaKey, payload, ttl).Err(); err != nil {
 		return "", err
 	}
 	return store.PointerForKey(key), nil

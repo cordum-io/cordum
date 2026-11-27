@@ -9,6 +9,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 - Copilot and telemetry: copilot transcript appends and telemetry snapshot saves now work on Redis Cluster instead of failing with `CROSSSLOT`. Each session or snapshot is written before the index or history entry that lists it.
 
+- `cordumctl governance backfill-decisions` and `tail` now work on Redis Cluster: the helper takes
+  the cluster seeds from `REDIS_CLUSTER_ADDRESSES`, as the services do, scans every master for
+  jobs, and writes each decision record before its indexes. Artifact `Put` now works on Redis
+  Cluster too, and writes the artifact bytes before their metadata.
+
 - Stores: agent identity create, decision-log append, and DLQ add and delete now work on Redis
   Cluster instead of failing with `CROSSSLOT`. Each record is written before its index entries,
   a DLQ delete removes the index entry before the record, and a decision-log append whose index
