@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- License break-glass: `GET /api/v1/governance/health` takes the break-glass decision
+  for `governance.read`, so it answers in grace and answers 503 with code
+  `license.degraded` in degraded and invalid. `POST /api/v1/policy/bundles/{id}/resign`
+  takes the decision for `policy.write`, so it answers 503 with code
+  `license.grace_restricted` in grace and `license.degraded` in degraded and invalid,
+  and stores nothing; `cordumctl policy resign` then exits 1. The valid, warning and
+  missing license states are unchanged (task-e8b0d09e).
 - Auth: role names are matched exactly. Routes and checks that require the admin role
   admit only `admin`. A principal keeps the role it was given, whether it authenticates
   with a static API key, a session, or a JWT, OIDC or SAML role claim. A role list that
