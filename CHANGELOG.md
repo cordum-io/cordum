@@ -177,6 +177,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Eval run index keys follow `CORDUM_EVAL_RUN_TTL_SECONDS`. Each eval run create
+  sets the TTL of the tenant's `eval:run:<tenant>:idx:t` key and of the run's
+  `idx:ds:<dataset>` key to the run TTL, and removes from both keys the runs whose
+  record has expired. A run whose record is present keeps its index entries. The
+  DI-C37 store retention proof is `TestRetentionProofDIC37` (PR2-08,
+  task-397716a3).
 - Job index and event keys follow `JOB_META_TTL`. On each scan the scheduler
   reconciler removes a job's id from the `job:index:<state>` sets and
   `job:recent`, and deletes its `job:events:<id>` list, once the job's
