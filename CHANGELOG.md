@@ -7,6 +7,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Safety kernel: enabled `secops/` policy bundles, `secops/invariants` included, are enforced on every plan and in every license state. In the enforce signing mode each one must verify, or the policy load fails. The `max_policy_bundles` limit applies when `PUT /api/v1/policy/bundles/{id}` adds a bundle (task-9394e8a9).
 - Dashboard: policy edit, publish, tenant, output-rule and quarantine-release controls are shown only to the `admin` role, the role the gateway admits on those routes (task-20c071ba).
 - Gateway: the in-memory API rate limiter (`REDIS_RATE_LIMIT=false`, or no Redis) applies the same license-tier clamp as the Redis limiter. `API_RATE_LIMIT_RPS` and `API_RATE_LIMIT_BURST` can lower the tier's requests per second and burst, not raise them (task-91836669).
 - API rate limit: after a license reload or a license state change, the Redis and the in-memory API limiters apply the new state's rate and burst (tier defaults, then `API_RATE_LIMIT_RPS` and `API_RATE_LIMIT_BURST`, then the license cap) from the next request on. At that change the in-memory limiter gives each client a full bucket of the new burst, and Redis counters for the current second carry over (task-52e234cb).
