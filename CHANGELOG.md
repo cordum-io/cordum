@@ -7,6 +7,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Python SDK: `cordum_sdk._generated` is regenerated from the OpenAPI spec. It gains
+  the `create_edge_calibration_report` and `get_edge_calibration_report` endpoints and
+  `EdgeSession.assurance_state`. `make openapi-validate`, which the OpenAPI Validate
+  check runs, now fails when the spec's operationId count differs from the number of
+  generated Python endpoint modules (task-1ab9fb7e).
+
 - SDKs: the Go and Python clients retry a POST only when its idempotency key is
   non-blank after trimming, as the TypeScript client does. Listing POST in the Python
   `RetryPolicy.retryable_methods` does not make a POST without a key retryable
