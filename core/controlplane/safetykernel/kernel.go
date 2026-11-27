@@ -636,13 +636,6 @@ func newGRPCServer(srv *server, serverCreds grpc.ServerOption) *grpc.Server {
 	return grpcServer
 }
 
-func (s *server) currentEntitlements() licensing.Entitlements {
-	if s != nil && s.entitlements != nil {
-		return s.entitlements.Entitlements()
-	}
-	return licensing.DefaultEntitlements(licensing.PlanCommunity)
-}
-
 func (s *server) resolvedPlan() licensing.Plan {
 	if s != nil && s.entitlements != nil {
 		return s.entitlements.ResolvedPlan()
