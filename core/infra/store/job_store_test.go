@@ -2353,6 +2353,7 @@ func refreshedApprovalJob(t *testing.T, jobID string, decision model.SafetyDecis
 	}
 	if err := store.SetSafetyDecision(ctx, jobID, model.SafetyDecisionRecord{
 		Decision: model.SafetyRequireApproval, ApprovalRequired: true, PolicySnapshot: "snap-1", JobHash: hash,
+		CheckedAt: 1600000000000000,
 	}); err != nil {
 		t.Fatalf("set safety decision: %v", err)
 	}
