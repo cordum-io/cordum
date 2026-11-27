@@ -9,8 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
+	"github.com/cordum/cordum/core/infra/config"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
@@ -150,4 +152,36 @@ func TestAdminAudit_CreateUserStoresAndExportsEntry(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(api.Body.Bytes(), &response))
 	require.Equal(t, entries, response.Items)
+}
+
+func TestAdminAudit_CreatePoolAnswers500(t *testing.T) {
+	s, _, hooked, _ := auditPersistServer(t)
+	seedPoolConfig(t, s, map[string]any{"job.seed": "seed-pool"}, map[string]config.PoolConfig{"seed-pool": {}})
+	logs := adminAuditFail(t, hooked)
+	req := adminAuditRequest(http.MethodPut, "/api/v1/pools/audit-pool", `{"requires":["docker"]}`)
+	req.SetPathValue("name", "audit-pool")
+	rec := httptest.NewRecorder()
+	s.handleCreatePool(rec, req)
+
+	requireAuditNotStored(t, rec, logs, "create", "pool created but its audit entry was not stored")
+}
+
+func TestAdminAudit_DrainPoolStillDrains(t *testing.T) {
+	s, _, hooked, _ := auditPersistServer(t)
+	seedPoolConfig(t, s, map[string]any{"job.seed": "audit-pool"}, map[string]config.PoolConfig{
+		"audit-pool": {Status: config.PoolStatusActive},
+	})
+	logs := adminAuditFail(t, hooked)
+	req := adminAuditRequest(http.MethodPost, "/api/v1/pools/audit-pool/drain", `{"timeout_seconds":60}`)
+	req.SetPathValue("name", "audit-pool")
+	rec := httptest.NewRecorder()
+	s.handleDrainPool(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Len(t, auditPersistErrors(logs, "drain"), 1)
+	doc, err := s.configSvc.Get(context.Background(), configsvc.ScopeSystem, "default")
+	require.NoError(t, err)
+	_, poolMap, err := extractPoolsFromConfig(doc)
+	require.NoError(t, err)
+	require.Equal(t, config.PoolStatusDraining, poolMap["audit-pool"].EffectiveStatus())
 }
