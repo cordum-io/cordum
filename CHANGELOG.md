@@ -216,6 +216,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Policy decisions: a request rejected by a kernel invariant, policy deny rule,
+  tenant MCP deny, effective-config deny or input-rule deny is denied even when
+  an action gate or a rule asks for human approval. A matching non-velocity deny
+  rule outranks an earlier `require_approval` rule, and input rules also run when
+  a rule asks for approval. A `DENY` carries neither `approval_required` nor an
+  approval reference. Decision-cache entries from earlier versions are not reused.
+  Before upgrading, review policies where a `require_approval` rule precedes a
+  deny rule matching the same requests: those requests are denied instead of
+  waiting for approval (task-3eb30660).
+
 - Context engine memory is stored per tenant. `BuildWindowRequest` has a new
   `tenant_id` field. `BuildWindow` and `UpdateMemory` use stored memory only
   for a request whose `tenant_id` is set, under the id
