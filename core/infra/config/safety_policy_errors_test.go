@@ -3,9 +3,45 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
+
+func TestParseSafetyPolicy_ConfidenceMustBeFinite(t *testing.T) {
+	for _, tc := range []struct {
+		name, value string
+		wantErr     bool
+	}{
+		{"nan", ".nan", true},
+		{"positive infinity", ".inf", true},
+		{"negative infinity", "-.inf", true},
+		{"sequence", "[.nan]", true},
+		{"non-string mapping", "{1: .nan}", true},
+		{"non-finite mapping key", "{.nan: 0}", true},
+		{"finite", "0.75", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := []byte(fmt.Sprintf("version: '.nan'\nrequire_human:\n  min_confidence_for_deny: %s\ninput_policy:\n  max_scan_bytes: 9007199254740993\n", tc.value))
+			policy, err := ParseSafetyPolicy(data)
+			if tc.wantErr {
+				if err == nil || err.Error() != "validate safety policy config: numeric values must be finite" {
+					t.Fatalf("expected finite-number validation error, got %v", err)
+				}
+				if policy != nil {
+					t.Fatal("invalid policy returned")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if policy == nil || policy.RequireHuman.MinConfidenceForDeny != 0.75 || policy.Version != ".nan" || policy.InputPolicy.MaxScanBytes != 9007199254740993 {
+				t.Fatalf("finite policy values changed: %+v", policy)
+			}
+		})
+	}
+}
 
 // The end-to-end behavior #312 cares about: someone authors a policy
 // fragment putting `keywords` in rules[].match (where it doesn't belong)
