@@ -91,7 +91,7 @@ because there's no path to classify, and a malicious request claiming
 | # | Invariant | Test |
 |---|-----------|------|
 | (a) | Unknown classifier output → never silent ALLOW | `TestClassifier_UnknownToolFailsToHigherTier` (capability=edge.unknown + risk_tags=[review_required, unknown]) |
-| (b) | Empty classifier output → fail closed | `TestClassifier_EmptyClassificationFailsClosed` + `TestClassifier_PartialClassificationDenied` (Complete=false + MissingFields populated) |
+| (b) | Empty or partial classification is reported through `classifier.complete` and `classifier.missing_fields`; acting on it is left to the loaded policy, and no shipped rule reads `classifier.complete` ([CLM-071: supported](../contract/claims.yaml)). | `TestClassifier_EmptyClassificationFailsClosed` + `TestClassifier_PartialClassificationDenied` (Complete=false + MissingFields populated) |
 | (c) | Tenant from auth, never from labels | EDGE-008.7 already enforces this in `handlers_edge_evaluate.go` (verified by `handlers_edge_evaluate_test.go`) |
 | (d) | User-controlled risk_tags cannot remove classifier-emitted tags | `TestClassifier_RiskTagsAreOwnedByClassifierNotRequest` |
 | (e) | User-controlled reserved labels cannot poison classifier | `TestClassifier_ReservedLabelsCannotBePoisonedByRequest` + 3 namespace-specific subtests |

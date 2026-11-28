@@ -248,8 +248,11 @@ must remain the bare loopback endpoint without `?nonce=`.
 Security constraints:
 
 - agentd never logs the nonce value and never includes it in HTTP responses;
-- agentd never writes the nonce to `state.json`, the state directory, audit
-  events, metrics labels, or evidence exports;
+- generated Claude settings omit the nonce, and the agentd file state store
+  filters nonce-like metadata keys through `sanitizeMetadata`
+  ([CLM-072: supported](../contract/claims.yaml)); other agentd outputs are
+  outside this boundary. See `TestFileStateStoreDropsSecretLikeMetadataKeys`
+  and `TestDevSettingsOmitsAgentdNonceVariants`;
 - the value MUST NOT appear in generated Claude settings files or any other
   persistent user-editable location;
 - process-listing exposure (`ps`, `/proc/<pid>/environ`, platform process
