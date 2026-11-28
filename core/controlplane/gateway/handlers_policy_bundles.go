@@ -1378,10 +1378,11 @@ func prependPolicyAuditEntry(doc *configsvc.Document, added ...policybundles.Pol
 	return nil
 }
 
-// appendPolicyAudit stores entry in the policy audit log whatever happens to
+// storePolicyAudit stores entry in the policy audit log whatever happens to
 // the request context. It retries a concurrent change to the log, refuses to
 // replace an entries list it cannot parse, and logs and returns a failure.
-func (s *server) appendPolicyAudit(ctx context.Context, entry policybundles.PolicyAuditEntry) error {
+// The returned entry is normalized and stored; no SIEM event is sent.
+func (s *server) storePolicyAudit(ctx context.Context, entry policybundles.PolicyAuditEntry) (policybundles.PolicyAuditEntry, error) {
 	entry = normalizePolicyAuditEntry(entry)
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), policyAuditTimeout)
 	defer cancel()
@@ -1394,9 +1395,17 @@ func (s *server) appendPolicyAudit(ctx context.Context, entry policybundles.Poli
 	})
 	if err != nil {
 		slog.Error("policy audit entry not persisted", "action", entry.Action, "resource_type", entry.ResourceType, "resource_id", entry.ResourceID, "error", err)
-		return fmt.Errorf("policy bundle append audit: %w", err)
+		return policybundles.PolicyAuditEntry{}, fmt.Errorf("policy bundle append audit: %w", err)
 	}
+	return entry, nil
+}
 
+// appendPolicyAudit stores entry durably before exporting it to SIEM.
+func (s *server) appendPolicyAudit(ctx context.Context, entry policybundles.PolicyAuditEntry) error {
+	entry, err := s.storePolicyAudit(ctx, entry)
+	if err != nil {
+		return err
+	}
 	// Fan-out to SIEM exporter (non-blocking) after persistence.
 	if s.auditExporter != nil {
 		s.auditExporter.Send(policybundles.AuditEntryToSIEM(entry, s.tenant))
@@ -1492,16 +1501,4 @@ func writePolicyCommitError(w http.ResponseWriter, r *http.Request, op string, e
 		return
 	}
 	writeInternalError(w, r, op, err)
-}
-
-func (s *server) appendAuditEntryNamed(ctx context.Context, action, resourceType, resourceID, resourceName, actorID, role, message string) {
-	_ = s.appendPolicyAudit(ctx, policybundles.PolicyAuditEntry{
-		Action:       action,
-		ResourceType: resourceType,
-		ResourceID:   resourceID,
-		ResourceName: resourceName,
-		ActorID:      actorID,
-		Role:         role,
-		Message:      message,
-	})
 }
