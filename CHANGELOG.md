@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Edge sessions: an idempotent replay of `POST /api/v1/edge/sessions` reports `session.assurance_state` from the session's current facts, as get and list do, so a session that has ended or whose heartbeat has lapsed replays as `stale` (task-bb5151fe).
+
 - MCP: JSON-RPC errors no longer expose execution ids. Errors caused by
   Cordum's own stores carry a fixed message, such as `internal error`, and
   the detail is in the gateway log (#492, task-e489e0c5).

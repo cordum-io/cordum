@@ -466,6 +466,26 @@ func deriveEdgeSessionAssurance(ctx context.Context, store edgecore.Store, sessi
 	return nil
 }
 
+// rederiveEdgeSessionReplay changes only the cached response's assurance state.
+func rederiveEdgeSessionReplay(ctx context.Context, store edgecore.Store, tenantID string, body []byte) ([]byte, error) {
+	var response edgeSessionCreateResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("decode edge session replay: %w", err)
+	}
+	session, found, err := store.GetSession(ctx, tenantID, response.SessionID)
+	if err != nil {
+		return nil, fmt.Errorf("get edge session replay: %w", err)
+	}
+	response.Session.AssuranceState = edgecore.AssuranceStateStale
+	if found {
+		if err := deriveEdgeSessionAssurance(ctx, store, session); err != nil {
+			return nil, err
+		}
+		response.Session.AssuranceState = session.AssuranceState
+	}
+	return jsonMarshalForEdgeIdempotency(response)
+}
+
 func (s *server) handleGetEdgeSession(w http.ResponseWriter, r *http.Request) {
 	if !s.requireEdgePermissionOrRole(w, r, auth.PermJobsRead, "admin", "user", "viewer") {
 		return

@@ -1,9 +1,14 @@
 package gateway
 
 import (
+	"context"
+	"errors"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
+
+	edgecore "github.com/cordum/cordum/core/edge"
 )
 
 // EDGE-060 step 3 — idempotency tests for handleCreateEdgeSession.
@@ -18,6 +23,51 @@ const sessionIdempotencyBody = `{
 
 // edgeRoutePOSTWithIdempotencyKey is defined in edge_events_idempotency_test.go;
 // reused here.
+
+func TestCreateEdgeSessionIdempotencyReplayRederivesAssurance(t *testing.T) {
+	const body = `{"agent_product":"claude-code","agent_version":"1.2.3",` +
+		`"mode":"local-dev","policy_mode":"enforce","enforcement_layers":{"hook":true,"agentd":true}}`
+	for _, tc := range []struct {
+		name string
+		want edgecore.AssuranceState
+	}{
+		{"running", edgecore.AssuranceStateHookMediated},
+		{"ended", edgecore.AssuranceStateStale},
+		{"heartbeat", edgecore.AssuranceStateStale},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, handler := newEdgeRouteTestServer(t)
+			first := edgeRoutePOSTWithIdempotencyKey(t, handler, "/api/v1/edge/sessions", body, "assurance-replay")
+			if first.Code != http.StatusCreated {
+				t.Fatalf("create: HTTP %d: %s", first.Code, first.Body.String())
+			}
+			var want edgeSessionCreateResponse
+			decodeEdgeRouteJSON(t, first, &want)
+			if want.Session.AssuranceState != edgecore.AssuranceStateHookMediated {
+				t.Fatalf("create assurance_state = %q, want hook-mediated", want.Session.AssuranceState)
+			}
+			switch tc.name {
+			case "ended":
+				end := edgeRoutePOST(t, handler, "/api/v1/edge/sessions/"+want.SessionID+"/end", `{"status":"ended"}`)
+				if end.Code != http.StatusOK {
+					t.Fatalf("end: HTTP %d: %s", end.Code, end.Body.String())
+				}
+			case "heartbeat":
+				s.edgeStore = edgeAssuranceHeartbeatStore{Store: s.edgeStore}
+			}
+			replay := edgeRoutePOSTWithIdempotencyKey(t, handler, "/api/v1/edge/sessions", body, "assurance-replay")
+			if replay.Code != http.StatusCreated {
+				t.Fatalf("replay: HTTP %d: %s", replay.Code, replay.Body.String())
+			}
+			var got edgeSessionCreateResponse
+			decodeEdgeRouteJSON(t, replay, &got)
+			want.Session.AssuranceState = tc.want
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("replay must change only assurance_state to %q: got %+v, want %+v", tc.want, got, want)
+			}
+		})
+	}
+}
 
 // TestCreateEdgeSessionIdempotencyReplay proves the EDGE-060 contract:
 // two POSTs with the same Idempotency-Key + identical body produce the
@@ -56,6 +106,58 @@ func TestCreateEdgeSessionIdempotencyReplay(t *testing.T) {
 	if secondResp.TraceID != firstResp.TraceID {
 		t.Fatalf("idempotent retry produced different trace_id: first=%q second=%q",
 			firstResp.TraceID, secondResp.TraceID)
+	}
+}
+
+type edgeSessionReplayReadStore struct {
+	edgecore.Store
+	err error
+}
+
+func (s edgeSessionReplayReadStore) GetSession(context.Context, string, string) (*edgecore.EdgeSession, bool, error) {
+	return nil, false, s.err
+}
+
+func TestCreateEdgeSessionIdempotencyReplayReadBoundaries(t *testing.T) {
+	const body = `{"agent_product":"claude-code","mode":"local-dev","policy_mode":"enforce",` +
+		`"enforcement_layers":{"hook":true,"agentd":true}}`
+	for _, name := range []string{"missing", "session_error", "heartbeat_error"} {
+		t.Run(name, func(t *testing.T) {
+			s, handler := newEdgeRouteTestServer(t)
+			first := edgeRoutePOSTWithIdempotencyKey(t, handler, "/api/v1/edge/sessions", body, "read-boundaries")
+			if first.Code != http.StatusCreated {
+				t.Fatalf("create: HTTP %d: %s", first.Code, first.Body.String())
+			}
+			wantStatus := http.StatusInternalServerError
+			switch name {
+			case "missing":
+				s.edgeStore = edgeSessionReplayReadStore{Store: s.edgeStore}
+				wantStatus = http.StatusCreated
+			case "session_error":
+				s.edgeStore = edgeSessionReplayReadStore{Store: s.edgeStore, err: errors.New("private session read error")}
+			case "heartbeat_error":
+				s.edgeStore = edgeAssuranceHeartbeatStore{Store: s.edgeStore, err: errors.New("private heartbeat error")}
+			}
+			replay := edgeRoutePOSTWithIdempotencyKey(t, handler, "/api/v1/edge/sessions", body, "read-boundaries")
+			if replay.Code != wantStatus {
+				t.Fatalf("replay: HTTP %d, want %d: %s", replay.Code, wantStatus, replay.Body.String())
+			}
+			if name == "missing" {
+				var got edgeSessionCreateResponse
+				decodeEdgeRouteJSON(t, replay, &got)
+				if got.Session.AssuranceState != edgecore.AssuranceStateStale {
+					t.Fatalf("missing session assurance_state = %q, want stale", got.Session.AssuranceState)
+				}
+			} else if strings.Contains(replay.Body.String(), "hook-mediated") || strings.Contains(replay.Body.String(), "private") {
+				t.Fatalf("read error released cached assurance or private error: %s", replay.Body.String())
+			}
+		})
+	}
+}
+
+func TestEdgeSessionReplayRejectsMalformedCache(t *testing.T) {
+	if body, err := rederiveEdgeSessionReplay(context.Background(), nil, edgeRouteTenant, []byte(`{`)); err == nil || len(body) != 0 {
+		t.Fatalf("malformed cache: body=%s error=%v", body, err)
 	}
 }
 

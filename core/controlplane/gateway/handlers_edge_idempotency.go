@@ -126,7 +126,7 @@ type edgeIdempotentWriteResult struct {
 //
 // Behavior:
 //   - Calls store.ReserveIdempotency. On Replay state, echoes the cached
-//     response and returns true (the caller must NOT call writeFn).
+//     response, re-deriving assurance for session creates, without calling writeFn.
 //   - On Pending state (concurrent in-flight retry), writes 409
 //     edgeErrCodeIdempotencyConflict and returns true.
 //   - On a fresh Reserved state, invokes writeFn(). If it returns an
@@ -169,7 +169,18 @@ func (s *server) applyEdgeIdempotency(
 	}
 	switch reservation.State {
 	case edgecore.EdgeIdempotencyReplay:
-		writeEdgeIdempotencyReplay(w, r, reservation.Record)
+		record := reservation.Record
+		if req.Endpoint == edgeSessionCreateEndpoint && record != nil {
+			body, err := rederiveEdgeSessionReplay(r.Context(), store, req.TenantID, record.Response.Body)
+			if err != nil {
+				writeEdgeInternalError(w, r, "derive edge session replay assurance", err)
+				return
+			}
+			replay := *record
+			replay.Response.Body = body
+			record = &replay
+		}
+		writeEdgeIdempotencyReplay(w, r, record)
 		return
 	case edgecore.EdgeIdempotencyReserved:
 		// fallthrough — invoke writeFn below.
