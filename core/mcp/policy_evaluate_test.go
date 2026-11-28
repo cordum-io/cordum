@@ -620,57 +620,57 @@ func TestEvaluateToolCall_HighSeverityFindingTriggersArtifact(t *testing.T) {
 	}
 }
 
-// TestEvaluateToolCall_AllowWithConstraintsPreCarriesConstraints asserts
-// that a gate returning ALLOW_WITH_CONSTRAINTS with a structured
-// constraint map propagates the map through to the emitted mcp.tool.pre
-// event AND that event.Decision is `constrain` (NOT `allow`). Without
-// this propagation, downstream audit consumers can't distinguish an
-// AWC-bounded allow from an unconstrained allow and the constraint
-// metadata is silently dropped.
-func TestEvaluateToolCall_AllowWithConstraintsPreCarriesConstraints(t *testing.T) {
+// TestEvaluateToolCall_UnappliedConstraintsRefuseCall: the MCP path applies no
+// constraint kind, so any decision that would let the call run is refused when
+// it carries constraints. The event still records the constraint map.
+func TestEvaluateToolCall_UnappliedConstraintsRefuseCall(t *testing.T) {
 	t.Parallel()
 	constraints := map[string]any{
 		"max_bytes":    float64(1024),
 		"allowed_tags": []any{"safe", "preview"},
 		"redaction":    "strict",
 	}
-	pipeline := &fakePolicyDispatcher{
-		decision: PolicyDecision{
-			Decision:    pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS,
-			GateID:      "actiongate.mcp",
-			Code:        "constrained",
-			Reason:      "tier ceiling applied",
-			Constraints: constraints,
-		},
-		fired: true,
-	}
-	emitter := &fakeEventEmitter{}
-	deps := newToolCallDepsFixture(pipeline, emitter, &fakeArtifactStore{})
-	result, err := EvaluateToolCall(newAuthedToolCallCtx(), deps, ToolCallParams{
-		Name:      "fs.read_file",
-		Arguments: json.RawMessage(`{"path":"/etc/hostname"}`),
-	}, "local-fs")
-	if err != nil {
-		t.Fatalf("EvaluateToolCall returned err: %v", err)
-	}
-	if result.Decision.Decision != pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS {
-		t.Fatalf("result.Decision = %v, want ALLOW_WITH_CONSTRAINTS", result.Decision.Decision)
-	}
-	if !reflect.DeepEqual(result.Decision.Constraints, constraints) {
-		t.Fatalf("result.Decision.Constraints = %#v, want %#v (adapter must propagate AWC constraint map)", result.Decision.Constraints, constraints)
-	}
-	if len(emitter.events) != 1 {
-		t.Fatalf("expected exactly 1 pre event, got %d", len(emitter.events))
-	}
-	pre := emitter.events[0]
-	if pre.Kind != edge.EventKindMCPToolPre {
-		t.Fatalf("pre.Kind = %q, want %q", pre.Kind, edge.EventKindMCPToolPre)
-	}
-	if pre.Decision != edge.DecisionConstrain {
-		t.Fatalf("pre.Decision = %q, want %q (AWC must NOT degrade to allow)", pre.Decision, edge.DecisionConstrain)
-	}
-	if !reflect.DeepEqual(pre.Constraints, constraints) {
-		t.Fatalf("pre.Constraints = %#v, want %#v (event must carry the same constraint map the gate emitted)", pre.Constraints, constraints)
+	wantKinds := []string{"allowed_tags", "max_bytes", "redaction"}
+	wantReason := `Cordum MCP cannot apply the policy constraint kinds ["allowed_tags" "max_bytes" "redaction"] on this tool call; the tool was not called`
+	for _, decision := range []pb.DecisionType{
+		pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS,
+		pb.DecisionType_DECISION_TYPE_ALLOW,
+		pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN,
+	} {
+		t.Run(decision.String(), func(t *testing.T) {
+			t.Parallel()
+			pipeline := &fakePolicyDispatcher{
+				decision: PolicyDecision{Decision: decision, GateID: "actiongate.mcp", Code: "constrained", Reason: "tier ceiling applied", Constraints: constraints},
+				fired:    true,
+			}
+			emitter := &fakeEventEmitter{}
+			deps := newToolCallDepsFixture(pipeline, emitter, &fakeArtifactStore{})
+			_, err := EvaluateToolCall(newAuthedToolCallCtx(), deps, ToolCallParams{
+				Name:      "fs.read_file",
+				Arguments: json.RawMessage(`{"path":"/etc/hostname"}`),
+			}, "local-fs")
+			var denied *NotAuthorized
+			if !errors.As(err, &denied) {
+				t.Fatalf("EvaluateToolCall err = %v, want *NotAuthorized", err)
+			}
+			want := NotAuthorized{Tool: "fs.read_file", SubReason: DenyReasonUnenforceableConstraints, AgentID: "agent_alpha", ConstraintKinds: wantKinds}
+			if !reflect.DeepEqual(*denied, want) {
+				t.Fatalf("NotAuthorized = %+v, want %+v", *denied, want)
+			}
+			if len(emitter.events) != 1 {
+				t.Fatalf("expected exactly 1 event, got %d", len(emitter.events))
+			}
+			evt := emitter.events[0]
+			if evt.Kind != edge.EventKindMCPToolFailed || evt.Status != edge.ActionStatusBlocked || evt.Decision != edge.DecisionDeny {
+				t.Fatalf("event kind/status/decision = %q/%q/%q, want failed/blocked/deny", evt.Kind, evt.Status, evt.Decision)
+			}
+			if evt.DecisionReason != wantReason {
+				t.Fatalf("event reason = %q, want %q", evt.DecisionReason, wantReason)
+			}
+			if !reflect.DeepEqual(evt.Constraints, constraints) {
+				t.Fatalf("event constraints = %#v, want %#v", evt.Constraints, constraints)
+			}
+		})
 	}
 }
 

@@ -281,86 +281,62 @@ func TestInvokeToolWithPolicy_RequireApprovalHandsOffToApprovalStore(t *testing.
 	}
 }
 
-// TestInvokeToolWithPolicy_AllowWithConstraintsPostCarriesConstraints
-// asserts the AWC happy path: gate returns ALLOW_WITH_CONSTRAINTS with
-// a structured constraint map → upstream still invoked (AWC counts as
-// allowed) AND the matching post event records Decision=constrain
-// (NOT allow) AND carries the same constraint map the gate emitted.
-// Bundled scope from task-3d5c4f37: AWC constraint metadata must
-// survive into the post-event audit trail so dashboards and audit
-// consumers can pivot on the constraint payload.
-func TestInvokeToolWithPolicy_AllowWithConstraintsPostCarriesConstraints(t *testing.T) {
+// TestMCPServer_UnappliedConstraintsReturnNotAuthorized: a tools/call whose
+// decision carries constraints the MCP path does not apply gets JSON-RPC
+// -32098 naming the kinds, and the tool is never called.
+func TestMCPServer_UnappliedConstraintsReturnNotAuthorized(t *testing.T) {
 	t.Parallel()
-	constraints := map[string]any{
-		"max_bytes": float64(1024),
-		"redaction": "strict",
-	}
 	pipeline := &fakePolicyDispatcher{
 		decision: PolicyDecision{
 			Decision:    pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS,
 			GateID:      "actiongate.mcp",
 			Code:        "constrained",
 			Reason:      "tier ceiling",
-			Constraints: constraints,
+			Constraints: map[string]any{"max_bytes": float64(1024), "redaction": "strict"},
 		},
 		fired: true,
 	}
-	emitter := &fakeEventEmitter{}
-	upstream := &fakeUpstreamToolCaller{
-		result: &ToolCallResult{Content: []ContentItem{{Type: "text", Text: "ok"}}},
+	tools := &fakeToolService{result: &ToolCallResult{Content: []ContentItem{{Type: "text", Text: "ok"}}}}
+	srv := NewServer(nil, tools, nil, ServerConfig{}).WithPolicyGate("cordum.builtin", ToolCallDeps{
+		Pipeline:      pipeline,
+		EventEmitter:  &fakeEventEmitter{},
+		ArtifactStore: &fakeArtifactStore{},
+	})
+	_, reply := srv.handleToolsCall(newAuthedToolCallCtx(), json.RawMessage(`{"name":"fs.read_file","arguments":{"path":"/etc/hostname"}}`))
+	if tools.called != 0 {
+		t.Fatalf("ToolService.Call invoked %d times, want 0", tools.called)
 	}
-	deps := newToolCallDepsFixture(pipeline, emitter, &fakeArtifactStore{})
-	deps.Upstream = upstream
-	_, err := InvokeToolWithPolicy(newAuthedToolCallCtx(), deps, ToolCallParams{
-		Name:      "fs.read_file",
-		Arguments: json.RawMessage(`{"path":"/etc/hostname"}`),
-	}, "local-fs")
+	if reply == nil || reply.Code != jsonRPCNotAuthorizedCode {
+		t.Fatalf("reply = %+v, want code %d", reply, jsonRPCNotAuthorizedCode)
+	}
+	raw, err := json.Marshal(reply.Data)
 	if err != nil {
-		t.Fatalf("InvokeToolWithPolicy returned err: %v", err)
+		t.Fatalf("marshal error.data: %v", err)
 	}
-	if upstream.calls != 1 {
-		t.Fatalf("AWC must still forward upstream (AWC counts as allowed); got %d calls", upstream.calls)
+	var data struct {
+		SubReason       string   `json:"sub_reason"`
+		ConstraintKinds []string `json:"constraint_kinds"`
 	}
-	if len(emitter.events) != 2 {
-		t.Fatalf("expected pre+post events on AWC, got %d", len(emitter.events))
+	if err := json.Unmarshal(raw, &data); err != nil {
+		t.Fatalf("decode error.data %s: %v", raw, err)
 	}
-	pre := emitter.events[0]
-	post := emitter.events[1]
-	if pre.Kind != edge.EventKindMCPToolPre {
-		t.Fatalf("pre.Kind = %q, want %q", pre.Kind, edge.EventKindMCPToolPre)
-	}
-	if pre.Decision != edge.DecisionConstrain {
-		t.Fatalf("pre.Decision = %q, want %q", pre.Decision, edge.DecisionConstrain)
-	}
-	if post.Kind != edge.EventKindMCPToolPost {
-		t.Fatalf("post.Kind = %q, want %q", post.Kind, edge.EventKindMCPToolPost)
-	}
-	if post.Decision != edge.DecisionConstrain {
-		t.Fatalf("post.Decision = %q, want %q (AWC must NOT degrade to allow on post; bundled fix from task-3d5c4f37)", post.Decision, edge.DecisionConstrain)
-	}
-	if !reflect.DeepEqual(post.Constraints, constraints) {
-		t.Fatalf("post.Constraints = %#v, want %#v (constraint map must propagate to post event)", post.Constraints, constraints)
+	if data.SubReason != "unenforceable_constraints" || !reflect.DeepEqual(data.ConstraintKinds, []string{"max_bytes", "redaction"}) {
+		t.Fatalf("error.data = %s, want sub_reason unenforceable_constraints and constraint_kinds [max_bytes redaction]", raw)
 	}
 }
 
-// TestInvokeToolWithPolicy_AllowWithConstraintsUpstreamErrorCarriesConstraints
-// closes the symmetric gap: when a gate fires AWC but upstream then
-// fails, the emitted mcp.tool.failed event MUST still record that the
-// call was AWC-bounded (Decision=constrain) and carry the constraint
-// map. Without this, an AWC-on-upstream-error path silently loses the
-// gate's verdict. Adversarial-self-review item (g).
-func TestInvokeToolWithPolicy_AllowWithConstraintsUpstreamErrorCarriesConstraints(t *testing.T) {
+// TestInvokeToolWithPolicy_EmptyConstraintsUpstreamErrorRecordsConstrain: an
+// ALLOW_WITH_CONSTRAINTS with an empty constraint map still runs the tool, and
+// when the tool fails the events keep the constrain verdict.
+func TestInvokeToolWithPolicy_EmptyConstraintsUpstreamErrorRecordsConstrain(t *testing.T) {
 	t.Parallel()
-	constraints := map[string]any{
-		"max_bytes": float64(1024),
-	}
 	pipeline := &fakePolicyDispatcher{
 		decision: PolicyDecision{
 			Decision:    pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS,
 			GateID:      "actiongate.mcp",
 			Code:        "constrained",
 			Reason:      "tier ceiling",
-			Constraints: constraints,
+			Constraints: map[string]any{},
 		},
 		fired: true,
 	}
@@ -375,18 +351,18 @@ func TestInvokeToolWithPolicy_AllowWithConstraintsUpstreamErrorCarriesConstraint
 	if err == nil {
 		t.Fatal("expected upstream timeout to surface, got nil")
 	}
+	if upstream.calls != 1 {
+		t.Fatalf("upstream.calls = %d, want 1 (an empty constraint map carries no constraint)", upstream.calls)
+	}
 	if len(emitter.events) != 2 {
-		t.Fatalf("expected pre+failed events on AWC + upstream error, got %d", len(emitter.events))
+		t.Fatalf("expected pre+failed events, got %d", len(emitter.events))
 	}
-	failed := emitter.events[1]
-	if failed.Kind != edge.EventKindMCPToolFailed {
-		t.Fatalf("failed.Kind = %q, want %q", failed.Kind, edge.EventKindMCPToolFailed)
+	pre, failed := emitter.events[0], emitter.events[1]
+	if pre.Kind != edge.EventKindMCPToolPre || pre.Decision != edge.DecisionConstrain {
+		t.Fatalf("pre kind/decision = %q/%q, want %q/%q", pre.Kind, pre.Decision, edge.EventKindMCPToolPre, edge.DecisionConstrain)
 	}
-	if failed.Decision != edge.DecisionConstrain {
-		t.Fatalf("failed.Decision = %q, want %q (upstream failure on an AWC call must record the original AWC verdict)", failed.Decision, edge.DecisionConstrain)
-	}
-	if !reflect.DeepEqual(failed.Constraints, constraints) {
-		t.Fatalf("failed.Constraints = %#v, want %#v (failed event must still carry the AWC constraint map)", failed.Constraints, constraints)
+	if failed.Kind != edge.EventKindMCPToolFailed || failed.Decision != edge.DecisionConstrain {
+		t.Fatalf("failed kind/decision = %q/%q, want %q/%q", failed.Kind, failed.Decision, edge.EventKindMCPToolFailed, edge.DecisionConstrain)
 	}
 }
 

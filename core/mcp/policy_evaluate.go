@@ -178,8 +178,9 @@ func CallMetadataFromContext(ctx context.Context) (CallMetadata, bool) {
 // Constraints carries the `_constraints` map that gates populate when
 // returning ALLOW_WITH_CONSTRAINTS. The shape mirrors the agentd wire
 // format (core/edge/agentd/evaluate_client.go EvaluateResponse.Constraints)
-// so audit-event consumers and downstream tools see a single canonical
-// constraint payload regardless of which surface produced it.
+// so audit-event consumers see a single canonical constraint payload
+// regardless of which surface produced it. EvaluateToolCall refuses a call
+// whose map carries a kind mcpEnforcedConstraintKinds does not mark applied.
 type PolicyDecision struct {
 	Decision    pb.DecisionType
 	GateID      string
@@ -688,11 +689,19 @@ func EvaluateToolCall(ctx context.Context, deps ToolCallDeps, params ToolCallPar
 			Meta:   config.PolicyMeta{ActorID: meta.Principal, AgentID: meta.AgentID},
 		})
 	}
+	// A decision that would let the call run (an approval included) is
+	// refused when it carries a constraint kind this path does not apply.
+	var unapplied []string
+	if decision.Allowed() || decision.requiresHuman() {
+		if unapplied = unappliedConstraintKinds(decision.Constraints); len(unapplied) > 0 {
+			decision.Decision = pb.DecisionType_DECISION_TYPE_DENY
+			decision.SubReason = string(DenyReasonUnenforceableConstraints)
+			decision.Reason = fmt.Sprintf("Cordum MCP cannot apply the policy constraint kinds %q on this tool call; the tool was not called", unapplied)
+		}
+	}
 	event.Decision = mapPolicyDecisionToEdge(decision)
-	// Constraints carry through from the gate's AWC verdict so audit
-	// consumers and downstream tools see the constraint map that
-	// authorized the call. Empty/nil for ALLOW / DENY / REQUIRE_HUMAN /
-	// THROTTLE — only AWC populates this surface today.
+	// The constraint map stays on the event so audit consumers see what
+	// the gate asked for, including on a refusal.
 	if len(decision.Constraints) > 0 {
 		event.Constraints = decision.Constraints
 	}
@@ -720,6 +729,14 @@ func EvaluateToolCall(ctx context.Context, deps ToolCallDeps, params ToolCallPar
 		return EvaluateToolCallResult{}, fmt.Errorf("%w: emit pre event: %w", ErrInternal, err)
 	}
 	logToolCallDecision(ctx, event, descriptor, decision)
+	if len(unapplied) > 0 {
+		return EvaluateToolCallResult{}, &NotAuthorized{
+			Tool:            params.Name,
+			SubReason:       DenyReasonUnenforceableConstraints,
+			AgentID:         meta.AgentID,
+			ConstraintKinds: unapplied,
+		}
+	}
 
 	return EvaluateToolCallResult{
 		Decision:    decision,
@@ -858,8 +875,8 @@ func mapPolicyDecisionToEdge(dec PolicyDecision) edge.EdgeDecision {
 }
 
 // Allowed reports whether the decision passed the gate. AWC counts
-// as allowed (the constraints apply at the upstream call, not at
-// pipeline exit). Unfired/UNSPECIFIED also passes.
+// as allowed here; EvaluateToolCall refuses any allowed decision whose
+// constraints the MCP path does not apply. Unfired/UNSPECIFIED also passes.
 func (d PolicyDecision) Allowed() bool {
 	switch d.Decision {
 	case pb.DecisionType_DECISION_TYPE_UNSPECIFIED,
@@ -928,8 +945,10 @@ func defaultEventIDFactory() string {
 //     approval-pending result; NO upstream call yet. A call that
 //     presents its consumed Edge approval instead proceeds as in 4
 //     (task-cd9df90a).
-//  4. On ALLOW/ALLOW_WITH_CONSTRAINTS: forward to deps.Upstream; emit
-//     post event on success, failed event on upstream error. Both
+//  4. On ALLOW/ALLOW_WITH_CONSTRAINTS (EvaluateToolCall has already
+//     refused any carrying a constraint kind this path does not apply):
+//     forward to deps.Upstream; emit post event on success, failed
+//     event on upstream error. Both
 //     paths redact the result before emission to preserve the
 //     no-raw-secrets contract.
 //

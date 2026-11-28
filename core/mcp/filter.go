@@ -138,10 +138,16 @@ const (
 	// DenyReasonNoIdentity means the request carried no resolvable
 	// agent identity.
 	DenyReasonNoIdentity DenyReason = "no_identity"
+	// DenyReasonUnenforceableConstraints means the policy decision carried
+	// constraint kinds the MCP tool-call path does not apply, so the tool
+	// was not called.
+	DenyReasonUnenforceableConstraints DenyReason = "unenforceable_constraints"
 )
 
 // NotAuthorized is the error ToolRegistry.Call returns when the caller
-// identity fails one of the scope filter gates. It travels through the
+// identity fails one of the scope filter gates, and the error
+// EvaluateToolCall returns when the policy decision carries constraint
+// kinds the MCP path does not apply. It travels through the
 // server as a JSON-RPC error with code=-32098 and the SubReason
 // attached in error.data.sub_reason so MCP clients can programmatically
 // distinguish "your identity lacks the tool" from "your tier is too
@@ -154,6 +160,9 @@ type NotAuthorized struct {
 	// AgentID is the identity that was denied. Empty when no identity
 	// could be resolved from the request context.
 	AgentID string `json:"agent_id,omitempty"`
+	// ConstraintKinds names, sorted, the constraint kinds the MCP path
+	// could not apply. Set only with DenyReasonUnenforceableConstraints.
+	ConstraintKinds []string `json:"constraint_kinds,omitempty"`
 }
 
 // Error satisfies the error interface so NotAuthorized can flow
