@@ -116,21 +116,14 @@ func (s *RedisReplayStore) Admit(
 	messageID, digest []byte,
 	expires time.Time,
 ) (capsdk.ReplayOutcome, error) {
-	if s == nil || s.client == nil {
-		return 0, capsdk.ErrReplayStoreUnavailable
-	}
-	if tenant == "" || audience == "" || sender == "" || len(messageID) == 0 || len(digest) == 0 {
-		return 0, ErrIncompleteReplayIdentity
-	}
-	ttl := expires.Sub(s.now())
-	if ttl <= 0 {
-		return 0, fmt.Errorf("%w: packet already expired", ErrIncompleteReplayIdentity)
+	key, _, ttl, err := s.entry(tenant, audience, sender, messageID, digest, expires)
+	if err != nil {
+		return 0, err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
 	defer cancel()
 
-	key := s.entryKey(tenant, audience, sender, messageID)
 	raw, err := admitScript.Run(ctx, s.client, []string{key},
 		hex.EncodeToString(digest), ttl.Milliseconds()).Text()
 	if err != nil {
@@ -149,6 +142,27 @@ func (s *RedisReplayStore) Admit(
 	default:
 		return 0, capsdk.ErrReplayStoreUnavailable
 	}
+}
+
+// entry validates the replay tuple and returns its key, the current time and
+// the TTL left until expires.
+func (s *RedisReplayStore) entry(
+	tenant, audience, sender string,
+	messageID, digest []byte,
+	expires time.Time,
+) (string, time.Time, time.Duration, error) {
+	if s == nil || s.client == nil {
+		return "", time.Time{}, 0, capsdk.ErrReplayStoreUnavailable
+	}
+	if tenant == "" || audience == "" || sender == "" || len(messageID) == 0 || len(digest) == 0 {
+		return "", time.Time{}, 0, ErrIncompleteReplayIdentity
+	}
+	now := s.now()
+	ttl := expires.Sub(now)
+	if ttl <= 0 {
+		return "", time.Time{}, 0, fmt.Errorf("%w: packet already expired", ErrIncompleteReplayIdentity)
+	}
+	return s.entryKey(tenant, audience, sender, messageID), now, ttl, nil
 }
 
 // entryKey derives a delimiter-safe, bounded-length key from the full replay
