@@ -175,15 +175,12 @@ func storeWriterKernelLoad(t *testing.T, s *server) ([]string, error) {
 		}
 	}()
 	t.Setenv("SAFETY_KERNEL_ADMIN_ADDR", reserveLocalAddr(t))
-	// As in startRealSafetyKernel: a kernel that boots outlives the test, so it must not poll.
+	// As in startRealSafetyKernel: no reload while the test runs, and the kernel stops when it ends.
 	t.Setenv("SAFETY_POLICY_RELOAD_INTERVAL", "24h")
 	addr := reserveLocalAddr(t)
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- safetykernel.RunWithEntitlements(&runtimeconfig.Config{
-			NatsURL: "nats://127.0.0.1:1", RedisURL: "redis://" + mr.Addr(), SafetyKernelAddr: addr,
-		}, nil)
-	}()
+	errCh := runRealSafetyKernel(t, &runtimeconfig.Config{
+		NatsURL: "nats://127.0.0.1:1", RedisURL: "redis://" + mr.Addr(), SafetyKernelAddr: addr,
+	})
 	conn, err := storeWriterDial(t, addr, errCh)
 	if err != nil {
 		return nil, err

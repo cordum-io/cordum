@@ -177,26 +177,51 @@ func policyEvaluateRequest(t *testing.T, tenant string, action *runtimeconfig.Ac
 func startRealSafetyKernel(t *testing.T) *grpc.ClientConn {
 	t.Helper()
 	mr := miniredis.RunT(t)
+	addr := reserveLocalAddr(t)
+	t.Setenv("SAFETY_KERNEL_ADMIN_ADDR", reserveLocalAddr(t))
+	// A day-long poll keeps the kernel from reloading or publishing while its
+	// test runs; runRealSafetyKernel stops it when the test ends.
+	t.Setenv("SAFETY_POLICY_RELOAD_INTERVAL", "24h")
+	return dialTestSafetyKernel(t, addr, runRealSafetyKernel(t, allowAllKernelConfig(t, mr, addr)))
+}
+
+// allowAllKernelConfig points a kernel at mr, addr and an allow-all policy file.
+func allowAllKernelConfig(t *testing.T, mr *miniredis.Miniredis, addr string) *runtimeconfig.Config {
+	t.Helper()
 	policyPath := filepath.Join(t.TempDir(), "safety.yaml")
 	if err := os.WriteFile(policyPath, []byte("default_decision: allow\n"), 0o600); err != nil {
 		t.Fatalf("write safety policy: %v", err)
 	}
-	addr := reserveLocalAddr(t)
-	t.Setenv("SAFETY_KERNEL_ADMIN_ADDR", reserveLocalAddr(t))
-	// RunWithEntitlements returns only on SIGINT/SIGTERM, so this kernel
-	// outlives the test. A day-long poll keeps it from reloading, publishing
-	// or logging into a later test's captured slog.
-	t.Setenv("SAFETY_POLICY_RELOAD_INTERVAL", "24h")
+	return &runtimeconfig.Config{
+		NatsURL:          "nats://127.0.0.1:1",
+		RedisURL:         "redis://" + mr.Addr(),
+		SafetyKernelAddr: addr,
+		SafetyPolicyPath: policyPath,
+	}
+}
+
+// runRealSafetyKernel runs the real safety kernel in this process until the
+// test ends: its cleanup cancels the kernel and waits for it to return. The
+// returned channel receives the kernel's return value; the cleanup leaves it
+// for the caller.
+func runRealSafetyKernel(t *testing.T, cfg *runtimeconfig.Config) <-chan error {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
+	stopped := make(chan struct{})
 	go func() {
-		errCh <- safetykernel.RunWithEntitlements(&runtimeconfig.Config{
-			NatsURL:          "nats://127.0.0.1:1",
-			RedisURL:         "redis://" + mr.Addr(),
-			SafetyKernelAddr: addr,
-			SafetyPolicyPath: policyPath,
-		}, nil)
+		defer close(stopped)
+		errCh <- safetykernel.RunWithEntitlementsContext(ctx, cfg, nil)
 	}()
-	return dialTestSafetyKernel(t, addr, errCh)
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-stopped:
+		case <-time.After(20 * time.Second):
+			t.Errorf("safety kernel on %s did not stop within 20s", cfg.SafetyKernelAddr)
+		}
+	})
+	return errCh
 }
 
 func dialTestSafetyKernel(t *testing.T, addr string, errCh <-chan error) *grpc.ClientConn {

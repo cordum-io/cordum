@@ -51,10 +51,9 @@ const signedE2EBasePolicy = "default_decision: deny\ntenants:\n  default:\n    a
 var signedE2ESources = []string{"upload", "marketplace", "cordumctl"}
 
 // signedE2EKernelBinary is this test binary, which each test starts again as
-// its safety kernel process: a kernel in this process could not be stopped
-// and would keep reloading after its test. In the kernel process the
-// initializer runs the kernel and never returns. Package initialization
-// precedes TestMain, so the kernel keeps exactly the environment its test set.
+// its safety kernel process. In the kernel process the initializer runs the
+// kernel and never returns. Package initialization precedes TestMain, so the
+// kernel keeps exactly the environment its test set.
 var signedE2EKernelBinary = signedE2ERunKernelProcess()
 
 func signedE2ERunKernelProcess() string {
