@@ -254,7 +254,10 @@ func TestRealSafetyKernelStopsAtTestCleanup(t *testing.T) {
 		require.False(t, tcpAccepts(a), "%s still accepts connections after the kernel's test ended", a)
 	}
 	stopped := mr.CommandCount()
-	require.Never(t, func() bool { return mr.CommandCount() != stopped }, 500*time.Millisecond, 25*time.Millisecond, "kernel used Redis after its test ended")
+	// CommandCount only grows, so one later read sees any use in between. Never would
+	// leave a check running after the test returns, against a closed miniredis.
+	time.Sleep(500 * time.Millisecond)
+	require.Equal(t, stopped, mr.CommandCount(), "kernel used Redis after its test ended")
 }
 
 func tcpAccepts(addr string) bool {
