@@ -83,6 +83,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   topic; otherwise the mapping stays for the pool routes to manage
   (task-e2277e8a).
 
+- Topic registry: once the registry document (`cfg:system:topics`) has been
+  stored, reads return its records as stored, even when it holds none, and do
+  not migrate `system/default` pool topic mappings into it. Job submit, the
+  worker credential topic check and scheduler dispatch then reject every topic
+  it does not register, including after the last registration is deleted or a
+  failed first pack install is rolled back. Unregistered topics are accepted
+  only while the document has never been stored and `system/default` maps no
+  topics. A topic delete that matches no registration stores nothing
+  (task-fd286ff3).
+
 - Scheduler: in compat mode, a session-authenticated sender's `JobCancel`
   or `JobResult` applies only to jobs in its own tenant, as in production.
   Service identities and unauthenticated compat traffic are unchanged

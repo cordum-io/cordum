@@ -2,10 +2,12 @@ package topicregistry
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/redis/go-redis/v9"
 )
 
 func newTopicRegistryTestService(t *testing.T) (*Service, *configsvc.Service, func()) {
@@ -189,5 +191,155 @@ func TestServiceDeleteForTenant_ScopedDelete(t *testing.T) {
 	}
 	if !sawB {
 		t.Fatalf("tenant-b job.shared record destroyed by tenant-a delete: %+v", all.Items)
+	}
+}
+
+func seedLegacyPoolTopic(t *testing.T, cfg *configsvc.Service, topic string) {
+	t.Helper()
+	if err := cfg.Set(context.Background(), &configsvc.Document{
+		Scope:   configsvc.ScopeSystem,
+		ScopeID: scopeIDDefault,
+		Data: map[string]any{"pools": map[string]any{
+			"topics": map[string]any{topic: "pool-a"},
+			"pools":  map[string]any{"pool-a": map[string]any{}},
+		}},
+	}); err != nil {
+		t.Fatalf("seed legacy pool topic: %v", err)
+	}
+}
+
+// storedTopics returns the stored system/topics document, or nil when it was never written.
+func storedTopics(t *testing.T, cfg *configsvc.Service) *configsvc.Document {
+	t.Helper()
+	doc, err := cfg.Get(context.Background(), configsvc.ScopeSystem, scopeIDTopics)
+	if errors.Is(err, redis.Nil) {
+		return nil
+	}
+	if err != nil {
+		t.Fatalf("get system/topics: %v", err)
+	}
+	return doc
+}
+
+func TestStoredEmptyRegistryIsAuthoritative(t *testing.T) {
+	registry, cfg, cleanup := newTopicRegistryTestService(t)
+	defer cleanup()
+	ctx := context.Background()
+	seedLegacyPoolTopic(t, cfg, "job.legacy")
+	if err := registry.Set(ctx, Registration{Name: "job.legacy", TenantID: "tenant-a", Pool: "pool-a", Status: StatusActive}); err != nil {
+		t.Fatalf("set registration: %v", err)
+	}
+	if err := registry.DeleteForTenant(ctx, "tenant-a", []string{"job.legacy"}); err != nil {
+		t.Fatalf("delete last registration: %v", err)
+	}
+	stored := storedTopics(t, cfg)
+	if stored == nil || len(stored.Data) != 0 {
+		t.Fatalf("emptied registry should be stored with no records: %+v", stored)
+	}
+
+	all, err := registry.List(ctx)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	got, getEmpty, err := registry.Get(ctx, "job.legacy")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	tenantGot, tenantEmpty, err := registry.GetForTenant(ctx, "tenant-a", "job.legacy")
+	if err != nil {
+		t.Fatalf("get for tenant: %v", err)
+	}
+	tenantList, err := registry.ListForTenant(ctx, "tenant-a")
+	if err != nil {
+		t.Fatalf("list for tenant: %v", err)
+	}
+	if len(all.Items) != 0 || all.RegistryEmpty || got != nil || getEmpty ||
+		tenantGot != nil || tenantEmpty || len(tenantList.Items) != 0 || tenantList.RegistryEmpty {
+		t.Errorf("stored empty registry: list=%+v get=%+v/%v tenant get=%+v/%v tenant list=%+v",
+			all, got, getEmpty, tenantGot, tenantEmpty, tenantList)
+	}
+	if after := storedTopics(t, cfg); after == nil || after.Revision != stored.Revision || len(after.Data) != 0 {
+		t.Errorf("reads changed system/topics: before revision %d, after %+v", stored.Revision, after)
+	}
+}
+
+func TestUnwrittenRegistryStaysOpen(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		delete func(context.Context, *Service) error
+	}{
+		{"DeleteForTenant", func(ctx context.Context, s *Service) error {
+			return s.DeleteForTenant(ctx, "tenant-a", []string{"job.unknown"})
+		}},
+		{"DeleteMany", func(ctx context.Context, s *Service) error {
+			return s.DeleteMany(ctx, []string{"job.unknown"})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			registry, cfg, cleanup := newTopicRegistryTestService(t)
+			defer cleanup()
+			ctx := context.Background()
+			if err := tc.delete(ctx, registry); err != nil {
+				t.Fatalf("delete: %v", err)
+			}
+			if doc := storedTopics(t, cfg); doc != nil {
+				t.Errorf("delete of an unknown name stored system/topics: %+v", doc)
+			}
+			snap, err := registry.List(ctx)
+			if err != nil {
+				t.Fatalf("list: %v", err)
+			}
+			_, getEmpty, err := registry.Get(ctx, "job.unknown")
+			if err != nil {
+				t.Fatalf("get: %v", err)
+			}
+			if !snap.RegistryEmpty || len(snap.Items) != 0 || !getEmpty {
+				t.Errorf("unwritten registry should stay open: list=%+v get empty=%v", snap, getEmpty)
+			}
+		})
+	}
+}
+
+func TestLegacyPoolTopicsMigrateIntoUnwrittenRegistry(t *testing.T) {
+	registry, cfg, cleanup := newTopicRegistryTestService(t)
+	defer cleanup()
+	ctx := context.Background()
+	seedLegacyPoolTopic(t, cfg, "job.legacy")
+
+	snap, err := registry.List(ctx)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if snap.RegistryEmpty || len(snap.Items) != 1 || snap.Items[0].Name != "job.legacy" ||
+		snap.Items[0].TenantID != "" || snap.Items[0].Pool != "pool-a" {
+		t.Fatalf("legacy mapping should migrate as a record with no tenant: %+v", snap)
+	}
+	stored := storedTopics(t, cfg)
+	if stored == nil || len(stored.Data) != 1 {
+		t.Fatalf("migration should store the record: %+v", stored)
+	}
+	if _, err := registry.List(ctx); err != nil {
+		t.Fatalf("second list: %v", err)
+	}
+	if after := storedTopics(t, cfg); after == nil || after.Revision != stored.Revision {
+		t.Errorf("second read rewrote system/topics: before revision %d, after %+v", stored.Revision, after)
+	}
+}
+
+func TestMigrationSkipsStoredRegistry(t *testing.T) {
+	registry, cfg, cleanup := newTopicRegistryTestService(t)
+	defer cleanup()
+	ctx := context.Background()
+	seedLegacyPoolTopic(t, cfg, "job.legacy")
+	if err := cfg.Set(ctx, &configsvc.Document{Scope: configsvc.ScopeSystem, ScopeID: scopeIDTopics, Data: map[string]any{}}); err != nil {
+		t.Fatalf("store empty registry: %v", err)
+	}
+	before := storedTopics(t, cfg)
+
+	if _, err := registry.migrateFromLegacyPools(ctx); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if after := storedTopics(t, cfg); after == nil || after.Revision != before.Revision || len(after.Data) != 0 {
+		t.Errorf("migration wrote into a stored registry: before revision %d, after %+v", before.Revision, after)
 	}
 }
