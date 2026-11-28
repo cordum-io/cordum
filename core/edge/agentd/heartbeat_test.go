@@ -18,21 +18,19 @@ func TestHeartbeatServiceSkipsOverlappingTicksAndStopsOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	started := make(chan struct{})
+	callCh := make(chan int, 4)
 	release := make(chan struct{})
-	var gateway *stubHeartbeatGateway
-	gateway = &stubHeartbeatGateway{
-		heartbeat: func(context.Context, string) (HeartbeatResponse, error) {
-			gateway.mu.Lock()
-			gateway.calls++
-			call := gateway.calls
-			gateway.mu.Unlock()
-			if call == 1 {
-				close(started)
-				<-release
-			}
-			return HeartbeatResponse{SessionID: "sess-heartbeat", HeartbeatAlive: true}, nil
-		},
+	gateway := &stubHeartbeatGateway{}
+	gateway.heartbeat = func(context.Context, string) (HeartbeatResponse, error) {
+		call := gateway.recordCall()
+		select {
+		case callCh <- call:
+		default:
+		}
+		if call == 2 {
+			<-release
+		}
+		return HeartbeatResponse{SessionID: "sess-heartbeat", HeartbeatAlive: true}, nil
 	}
 	ticks := make(chan time.Time)
 	service := NewHeartbeatService(HeartbeatConfig{
@@ -48,23 +46,24 @@ func TestHeartbeatServiceSkipsOverlappingTicksAndStopsOnCancel(t *testing.T) {
 	}()
 
 	ticks <- time.Now()
-	<-started
+	requireHeartbeatCall(t, callCh, gateway, 1)
+	requireHeartbeatIdle(t, service, gateway, 1)
 	ticks <- time.Now()
-	if got := gateway.callCount(); got != 1 {
-		t.Fatalf("heartbeat calls while first is in-flight = %d, want 1", got)
+	requireHeartbeatCall(t, callCh, gateway, 2)
+	ticks <- time.Now() // overlaps call 2, which stays blocked until release
+	// A tick send only proves Run received the tick. Run returning proves it
+	// also decided that tick, so cancel before releasing call 2.
+	cancel()
+	requireHeartbeatRunStopped(t, done)
+	if got := gateway.callCount(); got != 2 {
+		t.Fatalf("heartbeat calls while second is in-flight = %d, want 2", got)
 	}
 	close(release)
-	eventually(t, time.Second, func() bool { return !service.InFlight() })
-
-	ticks <- time.Now()
-	eventually(t, time.Second, func() bool { return gateway.callCount() == 2 })
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("heartbeat Run did not stop after context cancellation")
-	}
 	service.Wait()
+	// Exact only here: Run has stopped and every started call has returned.
+	if got := gateway.callCount(); got != 2 {
+		t.Fatalf("heartbeat calls for 3 ticks = %d, want exactly 2", got)
+	}
 }
 
 func TestHeartbeatServiceMarksDegradedAfterConsecutiveFailures(t *testing.T) {
@@ -151,7 +150,7 @@ func TestHeartbeatServiceFailClosesEnterpriseStrictAfterFailures(t *testing.T) {
 	}()
 
 	ticks <- time.Now()
-	eventually(t, time.Second, func() bool {
+	eventually(t, heartbeatTestSyncTimeout, func() bool {
 		last, ok := rec.last()
 		return ok && last.Degraded
 	})
