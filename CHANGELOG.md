@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- Benchmark contract: define 23 protection, utility and operations measures, a
+  deployment-boundary requirement and a result schema with contract tests
+  (M6-01, task-ea0996bd). This specifies a format, not measured results or comparisons.
+
 ### Fixed
 
 - MCP: JSON-RPC errors no longer expose execution ids. Errors caused by
