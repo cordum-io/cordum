@@ -9,6 +9,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 - Gateway: key, user, RBAC and legal-hold stores now close the client they opened when its first ping fails, so its connections and dial retries do not stay behind when the gateway keeps running.
 
+- Edge: listing and matching shadow-agent exceptions, and deleting a session, now use single-key commands on Redis Cluster.
+
 - API keys: creating a key with a managed (`ck_`) key now works on Redis Cluster instead of failing with `CROSSSLOT`. If the calling key is revoked during the request, the request returns 403 and the new key is removed.
 
 - Decision-log queries with multiple filters now use single-key commands on Redis Cluster while preserving ordering and pagination.
