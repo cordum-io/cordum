@@ -33,7 +33,7 @@ tenant isolation.
 ## Asserted properties
 
 For every endpoint above, the test sweep asserts at least one of the
-following negative properties. Every assertion is enforced through the
+following negative properties. The assertions are exercised through the
 production handler chain via `newCrossTenantFixture` (see
 `core/controlplane/gateway/cross_tenant_fixture_test.go`), which runs
 every request through the same `apiKeyMiddleware → tenantMiddleware →
@@ -61,8 +61,8 @@ maxBodyMiddleware` stack used in production.
 
 5. **List endpoints stay scoped.** When tenant A lists sessions /
    executions / approvals, only tenant A's resources appear in the
-   response body. Tenant B's IDs never leak, even via incidental
-   substring match.
+   response body. The list tests assert that tenant B's IDs do not appear
+   in the response body, including as a substring.
 
 6. **Batch tenant uniformity.** `/edge/events/batch` rejects the entire
    request when any contained event references a session or execution
@@ -81,9 +81,10 @@ tenant tag (`enqueueWSEvent` at `core/controlplane/gateway/handlers_stream.go`)
 and `enqueueEdgeEvent` (at `core/controlplane/gateway/edge_stream.go`)
 fail-closes when an event has a blank or missing tenant.
 
-The post-filter design satisfies the no-leak invariant: tenant A's
-connection never receives an event tagged `tenant=B`. This is verified
-end-to-end by:
+The post-filter is designed so that a tenant A connection receives no
+event tagged `tenant=B`. The following tests exercise this behaviour
+([CLM-059: supported](../contract/claims.yaml); per-route coverage and
+shared-store partitioning are not qualified):
 
 - Existing `TestEdgeEventStreamTenantFilteringAndBusPacketRegression`
   in `edge_stream_test.go`, which exercises the in-memory dispatcher
