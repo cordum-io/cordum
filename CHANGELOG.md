@@ -7,6 +7,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Audit: after HMAC activation, every later event requires a valid signature;
+  missing signatures make verification `compromised`. Verification without the
+  key reports `partial`, which approval action gates treat as `compromised`.
+  Verification responses include `hmac_activated_seq`, `unauthenticated_events`
+  and `integrity` (`authenticated` or `hash_chain_only`), with `hmac_missing` and
+  `hmac_unverified` gap types. Existing chains activate at their first signed
+  append after upgrading; earlier events are reported as unauthenticated history.
+  Once `CORDUM_AUDIT_HMAC_KEY` is set, keep it configured on every audit writer:
+  subsequent unsigned events are reported as compromised. Dashboard rendering
+  of the new fields follows in M1-R11B (M1-R11, task-a9b23672).
 - MCP: JSON-RPC errors no longer expose execution ids. Errors caused by
   Cordum's own stores carry a fixed message, such as `internal error`, and
   the detail is in the gateway log (#492, task-e489e0c5).
