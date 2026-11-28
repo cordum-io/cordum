@@ -187,7 +187,7 @@ func (g *gatewayApprovalGate) WithInvariantLookup(lookup MCPInvariantLookup) *ga
 //     Consume-once is guaranteed by CAS inside the store. With the Edge
 //     mint wired (policy gate on) the Edge approval is the only resume
 //     authority instead: see useConsumedEdgeApproval.
-//  4. On miss, EnqueueMCPApproval (persisting the canonical args blob)
+//  4. On miss, EnqueueMCPApproval (persisting the redacted args blob)
 //     and return *ApprovalRequired → JSON-RPC -32099.
 //
 // Store failures in steps 3-4 wrap mcp.ErrApprovalStoreUnavailable and

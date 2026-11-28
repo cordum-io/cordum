@@ -7,6 +7,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- MCP: approval records from the registry approval gate
+  (`GET /api/v1/mcp/approvals` and the dashboard approval card) now store and
+  show tool-call arguments in redacted form, the same form the `mcp.tool.pre`
+  event shows. `args_hash` still binds the exact original arguments. Records
+  written before the upgrade are not rewritten. No configuration needs review
+  (task-2cdf90ac).
 - MCP: JSON-RPC errors no longer expose execution ids. Errors caused by
   Cordum's own stores carry a fixed message, such as `internal error`, and
   the detail is in the gateway log (#492, task-e489e0c5).

@@ -13,6 +13,7 @@ import (
 
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/infra/redisutil"
+	"github.com/cordum/cordum/core/mcp"
 	"github.com/cordum/cordum/core/model"
 	"github.com/redis/go-redis/v9"
 )
@@ -77,9 +78,9 @@ type MCPApprovalRequest struct {
 	// invocations with identical args share an approval; differing args
 	// require separate approvals.
 	ArgsHash string
-	// ArgsJSON is the canonical-form args payload. Persisted so the
-	// approver can read exactly what the agent intends to execute.
-	// Truncated to mcpArgsMaxBytes with a placeholder when oversize.
+	// ArgsJSON is the canonical-form args payload, as hashed into ArgsHash.
+	// EnqueueMCPApproval persists only its redacted form; see
+	// MCPApprovalRecord.ArgsJSON.
 	ArgsJSON json.RawMessage
 	// Requester is the persisted requester identity — the authenticated
 	// principal of the caller. This is what the self-approval guard
@@ -111,6 +112,11 @@ type MCPApprovalRequest struct {
 // free-form comment added by Resolve(). Keeping them separate preserves
 // the audit trail: "why did this call need approval?" stays answerable
 // even after a resolver types their note.
+//
+// ArgsJSON holds the call's args as mcp.DefaultRedactor() redacts them, the
+// form the mcp.tool.pre event shows, so the approver reads every value
+// outside a redacted span while ArgsHash binds the original args. It is a
+// truncation placeholder when the redacted form exceeds mcpArgsMaxBytes.
 type MCPApprovalRecord struct {
 	ID               string                 `json:"id"`
 	Tenant           string                 `json:"tenant"`
@@ -295,11 +301,12 @@ func (s *MCPApprovalStore) EnqueueMCPApproval(ctx context.Context, req *MCPAppro
 	}
 	now := time.Now().UTC()
 
-	// Size-bound the args payload so a hostile caller can't blow out
-	// Redis memory. The hash was computed on the full payload so
-	// consume-once semantics remain stable; operators inspecting a
-	// truncated record still see the original hash for correlation.
-	argsStored := req.ArgsJSON
+	// Persist only the redacted args; ArgsHash binds the originals. Then
+	// size-bound them so a hostile caller can't blow out Redis memory. The
+	// hash was computed on the full payload so consume-once semantics remain
+	// stable; operators inspecting a truncated record still see the original
+	// hash for correlation.
+	argsStored := mcp.DefaultRedactor().Redact(req.ArgsJSON)
 	if len(argsStored) > mcpArgsMaxBytes {
 		argsStored = json.RawMessage(fmt.Sprintf(
 			`{"_truncated":true,"_original_bytes":%d,"_hash":%q}`,
