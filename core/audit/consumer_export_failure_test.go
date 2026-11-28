@@ -20,6 +20,7 @@ func TestNATSAuditConsumer_JetStreamExportFailureAckedNotRetried(t *testing.T) {
 	chainer, client := newConsumerChainer(t)
 	packet := packetFor(t, testEvent())
 	// The bus naks a packet that fails CAP envelope validation before any handler runs.
+	packet.SenderId = "audit-export-failure-sender"
 	packet.TraceId = "audit-export-failure-trace"
 	packet.CreatedAt = timestamppb.Now()
 	packet.ProtocolVersion = capsdk.DefaultProtocolVersion
