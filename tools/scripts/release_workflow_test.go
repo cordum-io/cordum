@@ -413,14 +413,21 @@ func checkImageJobs(wf releaseWorkflow) []string {
 
 // isPublishCommand reports whether the command matched at offset at is the CMD
 // of the closest preceding "$RELEASE_QUAL" publish ... -- on the same line,
-// with no shell separator or substitution in between.
+// with no shell separator or substitution in between. Bash runs a command or
+// process substitution while it expands publish's arguments, before publish
+// decides. "${ " opens bash 5.3's ${ cmd; } form; ${VAR} stays allowed.
 func isPublishCommand(line string, at int) bool {
 	locs := publishPattern.FindAllStringIndex(line[:at], -1)
 	if len(locs) == 0 {
 		return false
 	}
 	between := line[locs[len(locs)-1][0]:at]
-	return strings.Contains(between+" ", " -- ") && !strings.ContainsAny(between, ";&|`") && !strings.Contains(between, "$(")
+	for _, opener := range []string{"$(", "<(", ">(", "${ "} {
+		if strings.Contains(between, opener) {
+			return false
+		}
+	}
+	return strings.Contains(between+" ", " -- ") && !strings.ContainsAny(between, ";&|`")
 }
 
 // checkPublishGate (rule d): every tagging or signing command in every job is
@@ -757,6 +764,9 @@ func TestReleaseConditionAndCommandHelpers(t *testing.T) {
 		`"$RELEASE_QUAL" publish --record r --artifact a=d -- true; cosign sign --yes r@d`:               false,
 		`"$RELEASE_QUAL" publish --record r --artifact a=d -- true && docker push r:t`:                   false,
 		`"$RELEASE_QUAL" publish --record r --artifact a=d -- $(cosign sign --yes r@d)`:                  false,
+		`"$RELEASE_QUAL" publish --record r --artifact a=d -- cat <(cosign sign --yes r@d)`:              false,
+		`"$RELEASE_QUAL" publish --record r --artifact a=d -- tee >(docker push r:t)`:                    false,
+		`"$RELEASE_QUAL" publish --record r --artifact a=d -- echo ${ cosign sign --yes r@d; }`:          false,
 		`"$RELEASE_QUAL" publish --record r --artifact a=d cosign sign --yes r@d`:                        false,
 	} {
 		lines := logicalLines(line)
@@ -804,6 +814,18 @@ func stripPublishWrapper(t *testing.T, wf *releaseWorkflow, job, key string) {
 		t.Fatalf("mutation target %s/%s has no publish wrapper", job, key)
 	}
 	step.Run = stripped
+}
+
+// substitutePublishCommand moves step key's publish CMD into the process
+// substitution that opener starts, failing the test when there is no CMD.
+func substitutePublishCommand(t *testing.T, wf *releaseWorkflow, job, key, opener string) {
+	t.Helper()
+	step := mutableStep(t, wf, job, key)
+	moved := regexp.MustCompile(`("\$RELEASE_QUAL" publish [^\n]*? -- )([^\n]+)`).ReplaceAllString(step.Run, "${1}"+opener+"${2})")
+	if moved == step.Run {
+		t.Fatalf("mutation target %s/%s has no publish command", job, key)
+	}
+	step.Run = moved
 }
 
 // dropConjunct removes one top-level conjunct from job name's if, failing the
@@ -911,6 +933,12 @@ func TestReleaseWorkflowMutationsAreCaught(t *testing.T) {
 		}},
 		{"sign wrapper stripped (control-plane)", "SIGN_BYPASSES_PUBLISH", func(t *testing.T, wf *releaseWorkflow) {
 			stripPublishWrapper(t, wf, "control-plane", "sign")
+		}},
+		{"sign inside <( (control-plane)", "SIGN_BYPASSES_PUBLISH", func(t *testing.T, wf *releaseWorkflow) {
+			substitutePublishCommand(t, wf, "control-plane", "sign", "cat <(")
+		}},
+		{"tag inside >( (dashboard)", "TAG_BYPASSES_PUBLISH", func(t *testing.T, wf *releaseWorkflow) {
+			substitutePublishCommand(t, wf, "dashboard", "publish", "tee >(")
 		}},
 		{"build applies tags (control-plane)", "BUILD_NOT_BY_DIGEST", func(t *testing.T, wf *releaseWorkflow) {
 			mutableStep(t, wf, "control-plane", "build").With["tags"] = scalar("${{ steps.meta.outputs.tags }}")
