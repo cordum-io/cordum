@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -172,26 +173,30 @@ func (s *SessionSweeper) SweepOnce(ctx context.Context) (int, error) {
 		return 0, errSessionSweepNoLegalHolds
 	}
 	var swept int
-	var cursor uint64
+	var callbackErr error
 	logged := map[string]bool{}
-	for {
-		if err := ctx.Err(); err != nil {
-			return swept, err
+	if err := ctx.Err(); err != nil {
+		return swept, err
+	}
+	err := redisutil.ScanKeys(ctx, s.store.client, "edge:session:*", sessionSweepScanCount, func(keys []string) error {
+		if callbackErr = ctx.Err(); callbackErr != nil {
+			return callbackErr
 		}
-		keys, nextCursor, err := s.store.client.Scan(ctx, cursor, "edge:session:*", sessionSweepScanCount).Result()
-		if err != nil {
-			return swept, fmt.Errorf("scan edge sessions for retention: %w", err)
-		}
-		count, err := s.sweepSessionKeys(ctx, keys, logged)
-		if err != nil {
-			return swept, err
+		var count int
+		count, callbackErr = s.sweepSessionKeys(ctx, keys, logged)
+		if callbackErr != nil {
+			return callbackErr
 		}
 		swept += count
-		cursor = nextCursor
-		if cursor == 0 {
-			return swept, nil
-		}
+		return nil
+	})
+	if callbackErr != nil {
+		return swept, callbackErr
 	}
+	if err != nil {
+		return swept, fmt.Errorf("scan edge sessions for retention: %w", err)
+	}
+	return swept, nil
 }
 
 // SweepOnce scans pending-approval status indexes, expires stale approvals per
@@ -214,19 +219,18 @@ func (s *ApprovalSweeper) SweepOnce(ctx context.Context) (int, error) {
 
 func (s *ApprovalSweeper) sweepPendingApprovalIndexes(ctx context.Context) (int, error) {
 	var expired int
-	var cursor uint64
+	var callbackErr error
 	seen := map[string]struct{}{}
-	for {
-		if err := ctx.Err(); err != nil {
-			return expired, err
-		}
-		keys, nextCursor, err := s.store.client.Scan(ctx, cursor, "edge:approvals:index:status:*:"+string(ApprovalStatusPending), approvalSweepScanCount).Result()
-		if err != nil {
-			return expired, fmt.Errorf("scan edge approval pending indexes: %w", err)
+	if err := ctx.Err(); err != nil {
+		return expired, err
+	}
+	err := redisutil.ScanKeys(ctx, s.store.client, "edge:approvals:index:status:*:"+string(ApprovalStatusPending), approvalSweepScanCount, func(keys []string) error {
+		if callbackErr = ctx.Err(); callbackErr != nil {
+			return callbackErr
 		}
 		for _, key := range keys {
 			if len(seen) >= s.maxTenantsPerSweep {
-				return expired, nil
+				return redisutil.ErrStopScan
 			}
 			tenant, ok := tenantFromPendingApprovalStatusKey(key)
 			if !ok {
@@ -236,17 +240,22 @@ func (s *ApprovalSweeper) sweepPendingApprovalIndexes(ctx context.Context) (int,
 				continue
 			}
 			seen[tenant] = struct{}{}
-			n, err := s.store.ExpireApprovals(ctx, tenant, s.now().UTC())
-			if err != nil {
-				return expired, err
+			var n int
+			n, callbackErr = s.store.ExpireApprovals(ctx, tenant, s.now().UTC())
+			if callbackErr != nil {
+				return callbackErr
 			}
 			expired += n
 		}
-		cursor = nextCursor
-		if cursor == 0 {
-			return expired, nil
-		}
+		return nil
+	})
+	if callbackErr != nil {
+		return expired, callbackErr
 	}
+	if err != nil {
+		return expired, fmt.Errorf("scan edge approval pending indexes: %w", err)
+	}
+	return expired, nil
 }
 
 func (s *SessionSweeper) sweepSessionKeys(ctx context.Context, keys []string, logged map[string]bool) (int, error) {
