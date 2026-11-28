@@ -1,6 +1,7 @@
 package safetykernel
 
 import (
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -190,6 +191,15 @@ func verifyFileSigLegacy(data, rawSig []byte, mode policysign.Mode, store *polic
 		}
 		slog.Warn("safety-kernel: file policy legacy signature unreadable", "err", err)
 		return nil
+	}
+	if mode.RejectsOnFailure() && len(decoded) != ed25519.SignatureSize {
+		slog.Error("safety-kernel: file policy rejected (legacy signature unreadable)",
+			"mode", mode.String(),
+			"audit_event", "policy_signature_rejected",
+			"reason", "malformed",
+			"err", policysign.ErrInvalidSignature,
+		)
+		return malformedSignature(policysign.ErrInvalidSignature)
 	}
 	if policysign.VerifyRawAny(store, data, decoded) {
 		slog.Info("safety-kernel: file policy legacy signature verified")

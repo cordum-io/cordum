@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Safety kernel: under enforce, a legacy raw policy signature sidecar whose value
+  is empty or not 64 bytes is refused as malformed (`ErrBundleSignatureMalformed`),
+  like the JSON format; it was refused with a generic error (task-b8b18528).
+
 - MCP: JSON-RPC errors no longer expose execution ids. Errors caused by
   Cordum's own stores carry a fixed message, such as `internal error`, and
   the detail is in the gateway log (#492, task-e489e0c5).

@@ -380,6 +380,56 @@ func TestFilePolicySignature_MalformedMetadataUsesContractSentinel(t *testing.T)
 	}
 }
 
+func TestFilePolicySignature_LegacyRawWrongLengthUsesContractSentinel(t *testing.T) {
+	data := []byte(pseContent("deny"))
+	// write makes a policy file whose .sig sidecar holds sig in the legacy raw format.
+	write := func(t *testing.T, sig string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "policy.yaml")
+		for name, body := range map[string][]byte{path: data, path + ".sig": []byte(sig)} {
+			if err := os.WriteFile(name, body, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return path
+	}
+	for _, tc := range []struct{ name, sig string }{
+		{"empty file", ""},
+		{"base64 of 63 bytes", base64.StdEncoding.EncodeToString(make([]byte, ed25519.SignatureSize-1))},
+		{"base64 of 65 bytes", base64.StdEncoding.EncodeToString(make([]byte, ed25519.SignatureSize+1))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Run("enforce", func(t *testing.T) {
+				pseEnv(t, true)
+				path := write(t, tc.sig)
+				err := verifyFilePolicySignature(data, path)
+				if !errors.Is(err, ErrBundleSignatureMalformed) || !errors.Is(err, policysign.ErrInvalidSignature) {
+					t.Errorf("file verify error = %v, want %v and %v", err, ErrBundleSignatureMalformed, policysign.ErrInvalidSignature)
+				}
+				if policy, snapshot, err := loadPolicyBundle(path); policy != nil || snapshot != "" || !errors.Is(err, ErrBundleSignatureMalformed) {
+					t.Errorf("file loader returned policy=%v snapshot=%q err=%v, want a refusal", policy, snapshot, err)
+				}
+			})
+			for _, mode := range []string{"warn", "off"} {
+				t.Run(mode, func(t *testing.T) {
+					pseEnv(t, true)
+					t.Setenv(policysign.EnvStrictMode, mode)
+					if err := verifyFilePolicySignature(data, write(t, tc.sig)); err != nil {
+						t.Errorf("file verify error = %v, want nil", err)
+					}
+				})
+			}
+		})
+	}
+	t.Run("valid signature", func(t *testing.T) {
+		key := pseEnv(t, true)
+		path := write(t, base64.StdEncoding.EncodeToString(ed25519.Sign(key, data)))
+		if policy, snapshot, err := loadPolicyBundle(path); err != nil || policy == nil || snapshot == "" {
+			t.Fatalf("file loader returned policy=%v snapshot=%q err=%v, want the policy", policy, snapshot, err)
+		}
+	})
+}
+
 func TestFilePolicySignature_DevelopmentKeepsWarnModeForMalformedMetadata(t *testing.T) {
 	for _, tc := range pseMalformed {
 		t.Run(tc.name, func(t *testing.T) {
