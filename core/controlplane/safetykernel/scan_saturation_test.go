@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -275,6 +276,18 @@ func TestScanSaturationAcrossPatterns(t *testing.T) {
 					t.Fatalf("uncapped findings=%d saturated=%v, want %d and false", len(uncapped.Findings), uncapped.Saturated, 32+extra)
 				}
 			})
+		}
+	}
+}
+
+func TestScanSaturationLegacyInterface(t *testing.T) {
+	scanner := struct{ OutputScanner }{newKeywordScanner([]string{"needle"})}
+	content := []byte(strings.Repeat("needle ", 33))
+	want := scanner.Scan(content)
+	for _, capped := range []bool{false, true} {
+		result := runScan(scanner, content, capped)
+		if result.Saturated || !slices.Equal(result.Findings, want) {
+			t.Fatalf("legacy scanner changed results with capped=%v", capped)
 		}
 	}
 }
