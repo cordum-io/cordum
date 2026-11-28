@@ -131,6 +131,12 @@ func chainOutcomeFromVerifyResult(result *audit.VerifyResult, hmacChecked bool) 
 	if result.HMACSeen && !hmacChecked {
 		status = actiongates.ChainStatusCompromised
 	}
+	for _, gap := range result.Gaps {
+		if gap.Type == audit.GapTypeHMACUnverified {
+			status = actiongates.ChainStatusCompromised
+			break
+		}
+	}
 	return actiongates.ChainVerifyOutcome{
 		Status:         status,
 		HasEvidenceGap: verifyResultHasEvidenceGap(result),
