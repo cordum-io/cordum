@@ -370,6 +370,8 @@ from .oidc_group_role_mapping_update_request_oidc_group_role_mapping_additional_
 from .output_rule import OutputRule
 from .output_rule_action import OutputRuleAction
 from .output_rule_config_type_0 import OutputRuleConfigType0
+from .output_rule_toggle_request import OutputRuleToggleRequest
+from .output_rule_toggle_result import OutputRuleToggleResult
 from .pack_record import PackRecord
 from .pack_record_status import PackRecordStatus
 from .pack_verification import PackVerification
@@ -870,6 +872,8 @@ __all__ = (
     "OutputRule",
     "OutputRuleAction",
     "OutputRuleConfigType0",
+    "OutputRuleToggleRequest",
+    "OutputRuleToggleResult",
     "PackRecord",
     "PackRecordStatus",
     "PackVerification",
