@@ -9,9 +9,13 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
+	"sync"
+
+	"github.com/cordum/cordum/core/infra/env"
 )
 
 // Environment variable conventions for policy signing. These deliberately
@@ -55,6 +59,8 @@ const (
 // neither env var nor key-path is set. Callers decide whether that is
 // fatal (strict enforce + no key) or acceptable (strict off).
 var ErrSigningKeyNotConfigured = errors.New("policysign: signing key not configured")
+
+var devSeedWarning sync.Once
 
 // TrustStore holds a verifier's view of the world: one or more trusted
 // public keys, keyed by key id. Lookups are case-insensitive to match
@@ -151,6 +157,10 @@ func LoadPrivateKeyFromEnv() (ed25519.PrivateKey, string, error) {
 		return key, keyID, nil
 	}
 	if seed := strings.TrimSpace(os.Getenv(EnvDevSigningSeed)); seed != "" {
+		if env.IsProduction() {
+			return nil, "", fmt.Errorf("%s is a development seed and is refused under the production profile: %w", EnvDevSigningSeed, ErrSigningKeyNotConfigured)
+		}
+		warnDevSeed()
 		return derivePrivateKeyFromSeed(seed), keyID, nil
 	}
 	return nil, "", ErrSigningKeyNotConfigured
@@ -208,6 +218,10 @@ func LoadTrustStoreFromEnv() (*TrustStore, error) {
 	}
 	if store.Len() == 0 {
 		if seed := strings.TrimSpace(os.Getenv(EnvDevSigningSeed)); seed != "" {
+			if env.IsProduction() {
+				return nil, fmt.Errorf("%s is a development seed and is refused under the production profile", EnvDevSigningSeed)
+			}
+			warnDevSeed()
 			keyID := strings.TrimSpace(os.Getenv(EnvSigningKeyID))
 			if keyID == "" {
 				keyID = DefaultKeyID
@@ -218,6 +232,12 @@ func LoadTrustStoreFromEnv() (*TrustStore, error) {
 		}
 	}
 	return store, nil
+}
+
+func warnDevSeed() {
+	devSeedWarning.Do(func() {
+		slog.Warn("using development signing seed", "variable", EnvDevSigningSeed)
+	})
 }
 
 func derivePrivateKeyFromSeed(raw string) ed25519.PrivateKey {

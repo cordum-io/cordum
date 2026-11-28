@@ -116,9 +116,9 @@ func (s *RedisJobStore) projectLegacyTerminalState(
 	if err != nil && err != redis.Nil {
 		return fmt.Errorf("job store project tenant %s: %w", jobID, err)
 	}
-	if tenant != "" {
+	if tenant != "" || terminalStates[state] {
 		if terminalStates[state] {
-			err = s.client.SRem(ctx, tenantActiveKey(tenant), jobID).Err()
+			err = s.client.SRem(ctx, tenantActiveKey(model.ActiveSetTenant(tenant)), jobID).Err()
 		} else if isActiveState(state) {
 			err = s.client.SAdd(ctx, tenantActiveKey(tenant), jobID).Err()
 		}

@@ -164,6 +164,15 @@ func (s *server) handleCreateWorkerCredential(w http.ResponseWriter, r *http.Req
 	if createdBy == "" {
 		createdBy = "admin"
 	}
+	action := "create"
+	if existing != nil {
+		action = "rotate"
+	}
+	// The entry comes first: an issued token or a rotation cannot be taken back.
+	if err := s.appendNamedAuditEntry(r.Context(), action, "worker_credential", req.WorkerID, req.WorkerID, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), action+" worker credential "+req.WorkerID); err != nil {
+		writeErrorJSON(w, http.StatusInternalServerError, "worker credential not issued: its audit entry was not stored")
+		return
+	}
 	issued, err := s.workerCredentialStore.CreateWithLimit(r.Context(), workercredentials.IssueInput{
 		TenantID:          tenant,
 		WorkerID:          req.WorkerID,
@@ -179,6 +188,8 @@ func (s *server) handleCreateWorkerCredential(w http.ResponseWriter, r *http.Req
 		ConnectedWorkers: s.connectedWorkerCount(),
 	})
 	if err != nil {
+		// Refusal record for the entry above; the answer is already non-2xx.
+		s.appendAuditEntryNamed(r.Context(), action+"_failed", "worker_credential", req.WorkerID, req.WorkerID, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), action+" worker credential "+req.WorkerID+" failed")
 		var limitErr *licensing.TierLimitError
 		if errors.As(err, &limitErr) {
 			writeTierLimitJSON(w, limitErr)
@@ -218,12 +229,6 @@ func (s *server) handleCreateWorkerCredential(w http.ResponseWriter, r *http.Req
 	}
 
 	s.publishConfigChanged("system", "workers")
-	action := "create"
-	verb := "create"
-	if existing != nil {
-		action = "rotate"
-		verb = "rotate"
-	}
 	slog.Info("worker credential issued",
 		"worker_id", req.WorkerID,
 		"created_by", createdBy,
@@ -233,7 +238,6 @@ func (s *server) handleCreateWorkerCredential(w http.ResponseWriter, r *http.Req
 		"allowed_pools", len(req.AllowedPools),
 		"allowed_topics", len(req.AllowedTopics),
 	)
-	s.appendAuditEntryNamed(r.Context(), action, "worker_credential", req.WorkerID, req.WorkerID, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), verb+" worker credential "+req.WorkerID)
 
 	status := http.StatusCreated
 	if existing != nil {
@@ -311,6 +315,7 @@ func (s *server) handleDeleteWorkerCredential(w http.ResponseWriter, r *http.Req
 		"actor", policybundles.PolicyActorID(r),
 		"role", policybundles.PolicyRole(r),
 	)
+	// Must complete: the revoke removes authority, so a lost entry is only logged (ERROR).
 	s.appendAuditEntryNamed(r.Context(), "revoke", "worker_credential", workerID, workerID, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "revoke worker credential "+workerID)
 	w.WriteHeader(http.StatusNoContent)
 }

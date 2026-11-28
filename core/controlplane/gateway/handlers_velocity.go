@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -238,7 +239,8 @@ func (s *server) handleVelocityRuleStats(w http.ResponseWriter, r *http.Request)
 		stats[i] = velocityRuleStatsResponse{ID: rule.ID}
 	}
 	if s.jobStore != nil && s.jobStore.Client() != nil && len(rules) > 0 {
-		stats, err = collectVelocityRuleStats(r.Context(), s.jobStore.Client(), rules)
+		tenant, scoped := s.policyAuditListScope(r)
+		stats, err = collectVelocityRuleStats(r.Context(), s.jobStore.Client(), rules, tenant, scoped)
 		if err != nil {
 			writeInternalError(w, r, "velocity rule stats", err)
 			return
@@ -738,7 +740,7 @@ func countVelocityRuleBundles(bundles map[string]any) int {
 	return count
 }
 
-func collectVelocityRuleStats(ctx context.Context, client redis.UniversalClient, rules []velocityRuleResponse) ([]velocityRuleStatsResponse, error) {
+func collectVelocityRuleStats(ctx context.Context, client redis.UniversalClient, rules []velocityRuleResponse, tenant string, scoped bool) ([]velocityRuleStatsResponse, error) {
 	statsByID := make(map[string]*velocityRuleStatsResponse, len(rules))
 	rulesByID := make(map[string]velocityRuleResponse, len(rules))
 	items := make([]velocityRuleStatsResponse, 0, len(rules))
@@ -749,7 +751,7 @@ func collectVelocityRuleStats(ctx context.Context, client redis.UniversalClient,
 		rulesByID[rule.ID] = rule
 	}
 
-	keysByRule, err := scanVelocityRuleKeys(ctx, client, rulesByID)
+	keysByRule, err := scanVelocityRuleKeys(ctx, client, rulesByID, tenant, scoped)
 	if err != nil {
 		return nil, err
 	}
@@ -864,8 +866,15 @@ func collectVelocityRuleStats(ctx context.Context, client redis.UniversalClient,
 	return items, nil
 }
 
-func scanVelocityRuleKeys(ctx context.Context, client redis.UniversalClient, rules map[string]velocityRuleResponse) (map[string][]string, error) {
+// scanVelocityRuleKeys groups the velocity bucket keys of rules by rule id. A
+// scoped caller gets only the buckets recorded under its own tenant: a key is
+// cordum:velocity:{rule}:{b64url(tenant)}:{value}, or cordum:velocity:{rule}:{value}
+// when the request had no tenant (the layout is owned by the safety kernel's
+// velocityKey). Tenant-less buckets, and any bucket for an empty tenant, go
+// only to an unscoped caller.
+func scanVelocityRuleKeys(ctx context.Context, client redis.UniversalClient, rules map[string]velocityRuleResponse, tenant string, scoped bool) (map[string][]string, error) {
 	out := make(map[string][]string)
+	segment := base64.RawURLEncoding.EncodeToString([]byte(tenant))
 	var cursor uint64
 	for {
 		keys, next, err := client.Scan(ctx, cursor, "cordum:velocity:*", 200).Result()
@@ -873,12 +882,15 @@ func scanVelocityRuleKeys(ctx context.Context, client redis.UniversalClient, rul
 			return nil, err
 		}
 		for _, key := range keys {
-			parts := strings.SplitN(key, ":", 4)
-			if len(parts) != 4 {
+			parts := strings.SplitN(key, ":", 5)
+			if len(parts) < 4 {
 				continue
 			}
 			ruleID := strings.TrimSpace(parts[2])
 			if _, ok := rules[ruleID]; !ok {
+				continue
+			}
+			if scoped && (tenant == "" || len(parts) != 5 || parts[3] != segment) {
 				continue
 			}
 			out[ruleID] = append(out[ruleID], key)

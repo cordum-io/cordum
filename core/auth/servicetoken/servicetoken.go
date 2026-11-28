@@ -51,26 +51,29 @@ const (
 	DefaultServiceTTL = 5 * time.Minute
 )
 
-// Reserved control-plane identities. These MUST equal the SenderId /
-// RequestedBy values the three producers stamp on their internal broadcasts:
+// Reserved service identities. The first three equal the SenderId /
+// RequestedBy values the producers stamp on their internal broadcasts:
 //   - scheduler: engine.defaultSenderID
 //   - api-gateway: handlers_jobs.go literal "api-gateway"
 //   - workflow-engine: engine_state.go literal "workflow-engine"
 //
-// They are the single source of truth for both minting (the token subject) and
-// verifying (the allowlist VerifyService checks). The scheduler package carries
-// a test that asserts IdentityScheduler == scheduler.defaultSenderID so a
-// rename of one without the other is caught in CI.
+// The two audit-publisher identities are reserved for sys.audit.export service
+// token subjects. Their signing keys come from CORDUM_AUDIT_ variables, not the
+// control-plane key. Reservation alone does not provide consumer verification.
 const (
-	IdentityScheduler = "cordum-scheduler"
-	IdentityGateway   = "api-gateway"
-	IdentityWorkflow  = "workflow-engine"
+	IdentityScheduler    = "cordum-scheduler"
+	IdentityGateway      = "api-gateway"
+	IdentityWorkflow     = "workflow-engine"
+	IdentityMCP          = "cordum-mcp"
+	IdentitySafetyKernel = "cordum-safety-kernel"
 )
 
 var reservedIdentities = map[string]struct{}{
-	IdentityScheduler: {},
-	IdentityGateway:   {},
-	IdentityWorkflow:  {},
+	IdentityScheduler:    {},
+	IdentityGateway:      {},
+	IdentityWorkflow:     {},
+	IdentityMCP:          {},
+	IdentitySafetyKernel: {},
 }
 
 // IsReservedIdentity reports whether subject is a reserved control-plane

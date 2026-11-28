@@ -516,7 +516,7 @@ func TestPackPolicyFragment_EmptyContentSkipsSigning(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "empty.yaml"), nil, 0600))
 	signer, err := resolvePolicyStoreSigner("test pack")
 	require.NoError(t, err)
-	_, err = s.applyPolicyOverlay(context.Background(), packs.PackPolicyOverlay{Name: "safety", Path: "empty.yaml"}, matrixPackID, "0.1.0", dir, signer)
+	_, err = s.applyPolicyOverlays(context.Background(), []packs.PackPolicyOverlay{{Name: "safety", Path: "empty.yaml"}}, matrixPackID, "0.1.0", dir, signer, "")
 	require.NoError(t, err)
 	fragment := packMatrixFragment(t, s)
 	require.Equal(t, json.RawMessage(`""`), fragment["content"])

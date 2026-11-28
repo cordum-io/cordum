@@ -116,10 +116,26 @@ func requestHasActionDescriptorLabel(req *pb.PolicyCheckRequest) bool {
 	return ok
 }
 
-// newKernelActionGateAuditSink returns an audit sink that records the
-// SIEMEvent into the kernel's audit exporter. A nil exporter degrades
-// to a slog-only sink so a misconfigured deployment still surfaces the
-// gate fires in stderr; production SHOULD wire a real exporter.
+// actionGateAuditSender picks the action-gate sink's exporter from the
+// kernel's audit publisher, as chooseShadowAuditSender built it. Without
+// a publisher (no NATS, or err) it warns once at boot and returns nil, so
+// the sink only logs; boot never fails here.
+func actionGateAuditSender(sender audit.AuditSender, err error) audit.AuditSender {
+	if err == nil && sender != nil {
+		return sender
+	}
+	slog.Warn("safety-kernel: kernel action-gate decisions are not exported, only logged: no audit publisher (no NATS connection, or no usable audit publisher key)",
+		"key_variable", audit.EnvPublisherSigningKey,
+		"key_path_variable", audit.EnvPublisherSigningKeyPath,
+		"err", err,
+	)
+	return nil
+}
+
+// newKernelActionGateAuditSink returns an audit sink that sends the
+// SIEMEvent through exporter. RunWithEntitlements passes the kernel's NATS
+// audit publisher, which publishes it on sys.audit.export for the gateway's
+// audit consumer. A nil exporter gives a sink that only logs each fire.
 func newKernelActionGateAuditSink(exporter audit.AuditSender) func(ctx context.Context, event audit.SIEMEvent) {
 	if exporter == nil {
 		return func(_ context.Context, event audit.SIEMEvent) {

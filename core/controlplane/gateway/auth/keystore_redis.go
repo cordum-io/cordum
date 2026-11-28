@@ -152,38 +152,91 @@ func (s *RedisKeyStore) List(ctx context.Context, tenant string) ([]*ManagedKey,
 // Create stores a new managed API key in Redis.
 // The rawSecret is hashed with bcrypt for storage; a prefix index enables lookup.
 func (s *RedisKeyStore) Create(ctx context.Context, key *ManagedKey, rawSecret string) error {
+	data, err := prepareKey(key, rawSecret)
+	if err != nil {
+		return err
+	}
+	pipe := s.client.TxPipeline()
+	queueKeyWrites(ctx, pipe, key, data)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("create key: %w", err)
+	}
+	return nil
+}
+
+// CreateChild stores key as Create does, but requires the key parentID to be
+// unexpired by this process's clock when its record is read inside the WATCH,
+// and still unrevoked at the EXEC that writes key. A write to the parent record
+// in between (Revoke on any gateway replica, or RecordUsage) aborts the EXEC
+// and the check runs again. Expiry is a time, not a write, so it does not abort
+// the EXEC. A missing, unreadable, revoked or expired parent at the check
+// returns ErrInvalidKey and nothing is written.
+func (s *RedisKeyStore) CreateChild(ctx context.Context, parentID string, key *ManagedKey, rawSecret string) error {
+	data, err := prepareKey(key, rawSecret)
+	if err != nil {
+		return err
+	}
+	txFunc := func(tx *redis.Tx) error {
+		raw, err := tx.Get(ctx, keyRecordKey(parentID)).Bytes()
+		if errors.Is(err, redis.Nil) {
+			return ErrInvalidKey
+		}
+		if err != nil {
+			return fmt.Errorf("get parent key: %w", err)
+		}
+		parent, err := unmarshalManagedKey(raw)
+		if err != nil || parent.Revoked || (!parent.ExpiresAt.IsZero() && time.Now().After(parent.ExpiresAt)) {
+			return ErrInvalidKey
+		}
+		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			queueKeyWrites(ctx, pipe, key, data)
+			return nil
+		})
+		return err
+	}
+	if err := redisutil.Retry(ctx, s.client, txFunc, redisutil.WithKeys(keyRecordKey(parentID))); err != nil {
+		if errors.Is(err, ErrInvalidKey) {
+			return err
+		}
+		return fmt.Errorf("create child key: %w", err)
+	}
+	return nil
+}
+
+// prepareKey sets key's ID, prefix and hash and returns its record, so the
+// bcrypt hash runs before any Redis transaction.
+func prepareKey(key *ManagedKey, rawSecret string) ([]byte, error) {
 	if key.ID == "" {
 		key.ID = uuid.NewString()
 	}
 	if key.Prefix == "" {
 		prefix, err := rawKeyPrefix(rawSecret)
 		if err != nil {
-			return fmt.Errorf("derive key prefix: %w", err)
+			return nil, fmt.Errorf("derive key prefix: %w", err)
 		}
 		key.Prefix = prefix
 	} else if len(key.Prefix) < apiKeyPrefixLen {
-		return fmt.Errorf("key prefix too short")
+		return nil, fmt.Errorf("key prefix too short")
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(rawSecret), bcryptCostFromEnv())
 	if err != nil {
-		return fmt.Errorf("hash key: %w", err)
+		return nil, fmt.Errorf("hash key: %w", err)
 	}
 	key.KeyHash = string(hash)
 
 	data, err := json.Marshal(key)
 	if err != nil {
-		return fmt.Errorf("marshal key: %w", err)
+		return nil, fmt.Errorf("marshal key: %w", err)
 	}
+	return data, nil
+}
 
-	pipe := s.client.TxPipeline()
+// queueKeyWrites queues key's record and its prefix- and tenant-index entries.
+func queueKeyWrites(ctx context.Context, pipe redis.Pipeliner, key *ManagedKey, data []byte) {
 	pipe.Set(ctx, keyRecordKey(key.ID), data, 0)
 	pipe.SAdd(ctx, keyPrefixIndexKey(key.Prefix), key.ID)
 	pipe.SAdd(ctx, keyTenantKey(key.Tenant), key.ID)
-	if _, err := pipe.Exec(ctx); err != nil {
-		return fmt.Errorf("create key: %w", err)
-	}
-	return nil
 }
 
 // Revoke marks a key as revoked and removes its lookup index so it stops working immediately.

@@ -103,7 +103,7 @@ func TestApproveJobRefreshedSnapshotStillRequiresAudit(t *testing.T) {
 	require.Contains(t, rr.Body.String(), "approval not applied: its audit entry was not stored")
 	decision, err := s.jobStore.GetSafetyDecision(ctx, jobID)
 	require.NoError(t, err)
-	require.Equal(t, "snap-refreshed", decision.PolicySnapshot)
+	require.Equal(t, "snap-test", decision.PolicySnapshot, "a failed approve keeps the stored safety record")
 	after, err := s.jobStore.GetApprovalRecord(ctx, jobID)
 	require.NoError(t, err)
 	require.Equal(t, before, after)
@@ -143,7 +143,7 @@ func TestApproveJobAuditPersistsAndExportsOriginalFields(t *testing.T) {
 	actor, source, label := policybundles.PolicyActorIdentity(r)
 	require.Equal(t, policybundles.PolicyAuditEntry{
 		ID: entry.ID, CreatedAt: entry.CreatedAt, Action: "approve", ResourceType: "job",
-		ResourceID: jobID, ResourceName: request.Topic, ActorID: actor, Role: "admin",
+		ResourceID: jobID, ResourceName: request.Topic, Tenant: "default", ActorID: actor, Role: "admin",
 		IdentitySource: source, IdentityLabel: label, Reason: "reviewed", Message: "approve job " + jobID,
 		AgentID: agent.ID, AgentName: agent.Name, AgentRiskTier: agent.RiskTier,
 		Extra: map[string]string{"note": "ready"},

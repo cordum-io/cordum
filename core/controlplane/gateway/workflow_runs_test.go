@@ -299,6 +299,55 @@ func TestHandleStartRunIdempotencyConcurrentRequestsCreateSingleRun(t *testing.T
 	}
 }
 
+func TestHandleStartRunIdempotencyKeyScopedToWorkflow(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+	wfIDs := []string{"wf-idem-scope-a", "wf-idem-scope-b"}
+	for _, id := range wfIDs {
+		def := &wf.Workflow{ID: id, OrgID: "default", Steps: map[string]*wf.Step{
+			"step": {ID: "step", Type: wf.StepTypeWorker, Topic: "job.test"},
+		}}
+		if err := s.workflowStore.SaveWorkflow(ctx, def); err != nil {
+			t.Fatalf("save workflow %s: %v", id, err)
+		}
+	}
+	start := func(wfID string) string {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/"+wfID+"/runs", strings.NewReader(`{}`))
+		req.Header.Set("X-Tenant-ID", "default")
+		req.Header.Set("Idempotency-Key", "shared-workflow-key")
+		req.SetPathValue("id", wfID)
+		rec := httptest.NewRecorder()
+		s.handleStartRun(rec, req)
+		var resp map[string]string
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &resp) != nil || resp["run_id"] == "" {
+			t.Fatalf("start %s = %d %s; want 200 with a run_id", wfID, rec.Code, rec.Body.String())
+		}
+		return resp["run_id"]
+	}
+
+	runIDs := map[string]string{}
+	for _, id := range wfIDs {
+		runIDs[id] = start(id)
+	}
+	if runIDs[wfIDs[0]] == runIDs[wfIDs[1]] {
+		t.Fatalf("both workflows got run %s", runIDs[wfIDs[0]])
+	}
+	for _, id := range wfIDs {
+		run, err := s.workflowStore.GetRun(ctx, runIDs[id])
+		if err != nil || run.WorkflowID != id {
+			t.Fatalf("run %s = %+v, %v; want workflow %s", runIDs[id], run, err, id)
+		}
+		if again := start(id); again != runIDs[id] {
+			t.Fatalf("%s repeat = %s; want %s", id, again, runIDs[id])
+		}
+		runs, err := s.workflowStore.ListRunsByWorkflow(ctx, id, 20)
+		if err != nil || len(runs) != 1 {
+			t.Fatalf("%s runs = %d, %v; want 1", id, len(runs), err)
+		}
+	}
+}
+
 func TestHandleStartRunConcurrentRequestsRespectMaxConcurrentLimit(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 
