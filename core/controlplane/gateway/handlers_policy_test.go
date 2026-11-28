@@ -20,6 +20,7 @@ import (
 	"github.com/cordum/cordum/core/infra/capprofile"
 	runtimeconfig "github.com/cordum/cordum/core/infra/config"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
@@ -222,6 +223,47 @@ func runRealSafetyKernel(t *testing.T, cfg *runtimeconfig.Config) <-chan error {
 		}
 	})
 	return errCh
+}
+
+// TestRealSafetyKernelStopsAtTestCleanup proves a kernel started through
+// runRealSafetyKernel stops when its test ends: it returns, both listeners
+// close, and it stops using its Redis.
+func TestRealSafetyKernelStopsAtTestCleanup(t *testing.T) {
+	mr := miniredis.RunT(t)
+	addr, adminAddr := reserveLocalAddr(t), reserveLocalAddr(t)
+	var errCh <-chan error
+	t.Run("kernel", func(t *testing.T) {
+		t.Setenv("SAFETY_KERNEL_ADMIN_ADDR", adminAddr)
+		t.Setenv("SAFETY_POLICY_RELOAD_INTERVAL", "50ms")
+		errCh = runRealSafetyKernel(t, allowAllKernelConfig(t, mr, addr))
+		if err := dialTestSafetyKernel(t, addr, errCh).Close(); err != nil {
+			t.Fatalf("close safety kernel client: %v", err)
+		}
+		// Prove both effects the checks below rule out were happening.
+		require.Eventually(t, func() bool { return tcpAccepts(adminAddr) }, 5*time.Second, 20*time.Millisecond, "admin server never listened")
+		before := mr.CommandCount()
+		require.Eventually(t, func() bool { return mr.CommandCount() >= before+3 }, 5*time.Second, 20*time.Millisecond, "running kernel did not use Redis")
+	})
+	select {
+	case err := <-errCh:
+		require.NoError(t, err, "kernel returned an error when its test ended")
+	default:
+		t.Fatal("kernel still running after its test ended")
+	}
+	for _, a := range []string{addr, adminAddr} {
+		require.False(t, tcpAccepts(a), "%s still accepts connections after the kernel's test ended", a)
+	}
+	stopped := mr.CommandCount()
+	require.Never(t, func() bool { return mr.CommandCount() != stopped }, 500*time.Millisecond, 25*time.Millisecond, "kernel used Redis after its test ended")
+}
+
+func tcpAccepts(addr string) bool {
+	conn, err := net.DialTimeout("tcp", addr, time.Second)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
 
 func dialTestSafetyKernel(t *testing.T, addr string, errCh <-chan error) *grpc.ClientConn {

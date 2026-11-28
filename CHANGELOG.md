@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Safety kernel: graceful shutdown now also stops the admin HTTP server, and
+  `safetykernel.RunWithEntitlementsContext` runs the kernel until its context
+  is cancelled, so gateway tests stop the in-process kernels they start
+  (task-1e40998f).
 - MCP: JSON-RPC errors no longer expose execution ids. Errors caused by
   Cordum's own stores carry a fixed message, such as `internal error`, and
   the detail is in the gateway log (#492, task-e489e0c5).
