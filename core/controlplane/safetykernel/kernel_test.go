@@ -635,15 +635,12 @@ rules:
 		configID:    "policy",
 		configKey:   "bundles",
 	}
-	policy, _, snapshot, _, err := loader.loadFragments(context.Background())
+	policy, _, _, err := loader.loadFragments(context.Background())
 	if err != nil {
 		t.Fatalf("load fragments: %v", err)
 	}
 	if policy == nil {
 		t.Fatalf("expected policy")
-	}
-	if snapshot == "" {
-		t.Fatalf("expected snapshot hash")
 	}
 	resp := policy.Evaluate(config.PolicyInput{Tenant: "default", Topic: "job.prod.test"})
 	if resp.Decision != "require_approval" {
@@ -694,7 +691,7 @@ default_decision: maybe
 		configID:    "policy",
 		configKey:   "bundles",
 	}
-	policy, _, snapshot, _, err := loader.loadFragments(context.Background())
+	policy, _, _, err := loader.loadFragments(context.Background())
 	// Malformed fragments are now skipped instead of failing all
 	if err != nil {
 		t.Fatalf("expected no error (malformed fragments should be skipped): %v", err)
@@ -702,9 +699,6 @@ default_decision: maybe
 	// The valid fragment should still be loaded
 	if policy == nil {
 		t.Fatalf("expected policy from valid fragment to be loaded")
-	}
-	if snapshot == "" {
-		t.Fatalf("expected snapshot hash from valid fragment")
 	}
 	// Verify the valid fragment's rule is present
 	resp := policy.Evaluate(config.PolicyInput{Tenant: "default", Topic: "job.ops.deploy"})
@@ -760,7 +754,7 @@ func fragmentLoaderForTest(t *testing.T, bundles map[string]any) *policyLoader {
 // topic job.shared.test (i.e. which bundle's "shared-rule" won the merge).
 func mergedSharedDecision(t *testing.T, l *policyLoader) string {
 	t.Helper()
-	policy, _, _, _, err := l.loadFragments(context.Background())
+	policy, _, _, err := l.loadFragments(context.Background())
 	if err != nil {
 		t.Fatalf("load fragments: %v", err)
 	}
@@ -835,36 +829,6 @@ func TestLoadFragments_MissingOrGarbledInstalledAtIsOldest(t *testing.T) {
 	})
 	if got := mergedSharedDecision(t, loader); got != "deny" {
 		t.Fatalf("shared-rule decision = %q, want \"deny\" (dated bundle must outrank missing/garbled-installed_at bundles)", got)
-	}
-}
-
-// TestLoadFragments_SnapshotIndependentOfInstallOrder guards the StaleSnapshot
-// risk: install recency reorders the MERGE but must NOT change the cfg:<sha>
-// snapshot, which folds {bundle-id, content} in sorted-key order only. Two
-// loaders with the same content but different installed_at (different merge
-// order, even a different winning decision) must produce the SAME snapshot, so
-// reinstalling a pack (which rewrites installed_at) never drifts the cache key.
-func TestLoadFragments_SnapshotIndependentOfInstallOrder(t *testing.T) {
-	contentBundles := func(aInstalled, bInstalled string) map[string]any {
-		return map[string]any{
-			"aaa": map[string]any{"content": sharedRuleYAML("allow"), "installed_at": aInstalled},
-			"bbb": map[string]any{"content": sharedRuleYAML("deny"), "installed_at": bInstalled},
-		}
-	}
-	// Set A: aaa older -> bbb (deny) wins. Set B: bbb older -> aaa (allow) wins.
-	_, _, snapA, _, err := fragmentLoaderForTest(t, contentBundles("2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z")).loadFragments(context.Background())
-	if err != nil {
-		t.Fatalf("load A: %v", err)
-	}
-	_, _, snapB, _, err := fragmentLoaderForTest(t, contentBundles("2026-09-09T00:00:00Z", "2026-03-03T00:00:00Z")).loadFragments(context.Background())
-	if err != nil {
-		t.Fatalf("load B: %v", err)
-	}
-	if snapA == "" || snapB == "" {
-		t.Fatalf("expected non-empty snapshots, got %q / %q", snapA, snapB)
-	}
-	if snapA != snapB {
-		t.Fatalf("snapshot drifted with install order: %q != %q (installed_at must NOT be folded into the hash)", snapA, snapB)
 	}
 }
 

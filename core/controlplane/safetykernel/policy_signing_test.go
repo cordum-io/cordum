@@ -276,7 +276,7 @@ func TestLoadFragments_EnforceRejectsUnsignedBundle(t *testing.T) {
 		},
 	})
 
-	_, _, _, _, err := loader.loadFragments(context.Background())
+	_, _, _, err := loader.loadFragments(context.Background())
 	if err == nil {
 		t.Fatal("expected enforce mode to reject unsigned bundle, got nil")
 	}
@@ -302,15 +302,12 @@ func TestLoadFragments_EnforceAcceptsSignedBundle(t *testing.T) {
 		},
 	})
 
-	policy, _, snapshot, _, err := loader.loadFragments(context.Background())
+	policy, _, _, err := loader.loadFragments(context.Background())
 	if err != nil {
 		t.Fatalf("loadFragments: %v", err)
 	}
 	if policy == nil {
 		t.Fatal("expected non-nil policy")
-	}
-	if snapshot == "" {
-		t.Fatal("expected non-empty snapshot")
 	}
 }
 
@@ -333,7 +330,7 @@ func TestLoadFragments_EnforceRejectsTamperedContent(t *testing.T) {
 		},
 	})
 
-	_, _, _, _, err := loader.loadFragments(context.Background())
+	_, _, _, err := loader.loadFragments(context.Background())
 	if err == nil {
 		t.Fatal("expected tampered content to be rejected")
 	}
@@ -353,7 +350,7 @@ func TestLoadFragments_WarnAcceptsUnsignedBundle(t *testing.T) {
 		},
 	})
 
-	policy, _, _, _, err := loader.loadFragments(context.Background())
+	policy, _, _, err := loader.loadFragments(context.Background())
 	if err != nil {
 		t.Fatalf("warn mode should accept unsigned, got %v", err)
 	}

@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -500,6 +501,10 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
 	defer lifecycleCancel()
 
+	snapshot, err = srv.policyIdentity(snapshot, policy, invariants)
+	if err != nil {
+		return fmt.Errorf("initial policy identity: %w", err)
+	}
 	if err := srv.setPolicyWithInvariants(lifecycleCtx, policy, invariants, snapshot, customBundleCount); err != nil {
 		return fmt.Errorf("initial policy load: %w", err)
 	}
@@ -1581,6 +1586,9 @@ func (s *server) reloadPolicy(ctx context.Context, loader *policyLoader, trigger
 	}
 
 	policy, invariants, snapshot, customBundleCount, err := loader.Load(ctx)
+	if err == nil {
+		snapshot, err = s.policyIdentity(snapshot, policy, invariants)
+	}
 	if err != nil {
 		if ctx.Err() != nil {
 			return err
@@ -1802,20 +1810,20 @@ func (l *policyLoader) policyBundleLimit() int64 {
 //     kernelInvariantsBundleKey bundle, or nil when no invariants are
 //     authored. Callers apply this overlay separately via
 //     applyKernelInvariants when constructing the kernel-evaluation policy.
-//   - snapshot: "cfg:<sha256>" identifier folding in ALL bundles (including
-//     invariants) so any change invalidates downstream caches.
+//   - snapshot: the unchanged file-source identity. The server combines it
+//     with the effective policy identity before activating the policy.
 //   - customBundleCount: tier-counted custom bundles for licensing telemetry.
 func (l *policyLoader) Load(ctx context.Context) (*config.SafetyPolicy, *config.SafetyPolicy, string, int, error) {
 	basePolicy, baseSnapshot, err := loadPolicyBundle(l.source)
 	if err != nil {
 		return nil, nil, "", 0, err
 	}
-	fragmentPolicy, fragmentInvariants, fragmentSnapshot, customBundleCount, err := l.loadFragments(ctx)
+	fragmentPolicy, fragmentInvariants, customBundleCount, err := l.loadFragments(ctx)
 	if err != nil {
 		return nil, nil, "", 0, err
 	}
 	merged := mergePolicies(basePolicy, fragmentPolicy)
-	return merged, fragmentInvariants, combineSnapshots(baseSnapshot, fragmentSnapshot), customBundleCount, nil
+	return merged, fragmentInvariants, baseSnapshot, customBundleCount, nil
 }
 
 // loadFragments returns:
@@ -1824,9 +1832,7 @@ func (l *policyLoader) Load(ctx context.Context) (*config.SafetyPolicy, *config.
 //     held aside and returned separately.
 //   - invariants: the parsed *config.SafetyPolicy from the
 //     kernelInvariantsBundleKey bundle, or nil when no invariants are
-//     authored. The snapshot hash still folds in invariants content so any
-//     change invalidates the cfg:<sha> cache key downstream.
-//   - snapshot: "cfg:<sha256>" identifier; "" when no bundles loaded.
+//     authored.
 //   - customBundleCount: count of secops/-prefixed bundles within the tier.
 //
 // Cross-bundle duplicate rule IDs resolve by INSTALL RECENCY: bundles merge in
@@ -1836,44 +1842,39 @@ func (l *policyLoader) Load(ctx context.Context) (*config.SafetyPolicy, *config.
 // co-installed bundle defines the same rule id. A missing or unparseable
 // installed_at is treated as oldest (lowest precedence). Kernel security
 // invariants are applied separately as a security floor, independent of this
-// ordering; the snapshot hash folds only {bundle-id, content} in sorted-key
-// order, so an identical content set stays reload-stable regardless of install
-// order.
-func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy, *config.SafetyPolicy, string, int, error) {
+// ordering. The server hashes the resulting effective policies, not the raw
+// bundle contents or installation metadata.
+func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy, *config.SafetyPolicy, int, error) {
 	if l == nil || l.configSvc == nil {
-		return nil, nil, "", 0, nil
+		return nil, nil, 0, nil
 	}
 	doc, err := l.configSvc.Get(ctx, l.configScope, l.configID)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			return nil, nil, "", 0, nil
+			return nil, nil, 0, nil
 		}
-		return nil, nil, "", 0, err
+		return nil, nil, 0, err
 	}
 	if doc.Data == nil {
-		return nil, nil, "", 0, nil
+		return nil, nil, 0, nil
 	}
 	rawBundles, ok := doc.Data[l.configKey].(map[string]any)
 	if !ok || len(rawBundles) == 0 {
-		return nil, nil, "", 0, nil
+		return nil, nil, 0, nil
 	}
 	keys := make([]string, 0, len(rawBundles))
 	for key := range rawBundles {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	hasher := sha256.New()
 	var merged *config.SafetyPolicy
 	var invariants *config.SafetyPolicy
 	var skippedCount int
 	customBundleCount := 0
 	bundleLimit := l.policyBundleLimit()
 	verifier := newBundleVerifier()
-	// PASS 1 (alphabetical sorted-key order, unchanged): verify, parse, hash,
-	// and account for tier-limit/malformed skips + invariants exactly as before,
-	// so the snapshot hash, customBundleCount, and skip counts stay a pure
-	// function of the content SET (independent of install order). Accepted
-	// non-invariant fragments are collected for the install-recency merge below.
+	// PASS 1: verify, parse and account for tier limits in sorted-key order.
+	// Collect accepted non-invariant fragments for the install-recency merge.
 	type orderedFragment struct {
 		policy      *config.SafetyPolicy
 		installedAt time.Time
@@ -1899,7 +1900,7 @@ func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy,
 			}
 		}
 		if err := verifyBundleSignature(key, []byte(content), fragmentSignature(rawBundles[key]), verifier.mode, verifier.store); err != nil {
-			return nil, nil, "", customBundleCount, err
+			return nil, nil, customBundleCount, err
 		}
 		policy, err := config.ParseSafetyPolicy([]byte(content))
 		if err != nil {
@@ -1910,15 +1911,6 @@ func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy,
 			skippedCount++
 			continue
 		}
-		// Hash the bundle content regardless of whether it is the
-		// invariants bundle or a regular fragment — any change to
-		// invariants must invalidate downstream caches keyed on the
-		// cfg:<sha> snapshot identifier. Hashing stays in sorted-key order
-		// over {key,content} only (NOT install order) so an identical
-		// content set yields a reload-stable cfg:<sha>.
-		hasher.Write([]byte(key))
-		hasher.Write([]byte{0})
-		hasher.Write([]byte(content))
 		if key == kernelInvariantsBundleKey {
 			// Hold invariants aside; setPolicyWithBundleCount applies
 			// them with security-floor precedence via
@@ -1961,11 +1953,7 @@ func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy,
 			"loaded", len(keys)-skippedCount,
 		)
 	}
-	if merged == nil && invariants == nil {
-		return nil, nil, "", customBundleCount, nil
-	}
-	hash := hex.EncodeToString(hasher.Sum(nil))
-	return merged, invariants, "cfg:" + hash, customBundleCount, nil
+	return merged, invariants, customBundleCount, nil
 }
 
 func extractPolicyFragment(value any) (string, bool) {
@@ -2031,6 +2019,35 @@ func combineSnapshots(base, extra string) string {
 		return base
 	}
 	return base + "|" + extra
+}
+
+func (s *server) policyIdentity(base string, policy, invariants *config.SafetyPolicy) (string, error) {
+	if policy == nil && invariants == nil {
+		return "", nil
+	}
+	type effectivePolicy struct {
+		Policy       *config.SafetyPolicy       `json:"policy"`
+		TierDefaults []config.PolicyTierDefault `json:"tier_defaults"`
+	}
+	withoutVersion := func(policy *config.SafetyPolicy) effectivePolicy {
+		if policy == nil {
+			return effectivePolicy{}
+		}
+		copy := *policy
+		copy.Version = ""
+		return effectivePolicy{Policy: &copy, TierDefaults: policy.TierDefaults}
+	}
+	value := struct {
+		Version    int             `json:"version"`
+		Policy     effectivePolicy `json:"policy"`
+		Invariants effectivePolicy `json:"invariants"`
+	}{Version: 1, Policy: withoutVersion(policy), Invariants: withoutVersion(invariants)}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return "", fmt.Errorf("marshal effective policy: %w", err)
+	}
+	digest := sha256.Sum256(data)
+	return combineSnapshots(base, "cfg:"+hex.EncodeToString(digest[:])), nil
 }
 
 func mergePolicies(base, extra *config.SafetyPolicy) *config.SafetyPolicy {

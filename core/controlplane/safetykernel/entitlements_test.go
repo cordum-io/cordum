@@ -99,15 +99,12 @@ rules:
 		configKey:    "bundles",
 		entitlements: newSafetyEntitlementResolver(t, licensing.PlanCommunity, nil),
 	}
-	policy, _, snapshot, customCount, err := loader.loadFragments(context.Background())
+	policy, _, customCount, err := loader.loadFragments(context.Background())
 	if err != nil {
 		t.Fatalf("load fragments: %v", err)
 	}
 	if policy == nil {
 		t.Fatal("expected base policy to load")
-	}
-	if snapshot == "" {
-		t.Fatal("expected snapshot hash")
 	}
 	if customCount != 0 {
 		t.Fatalf("custom bundle count = %d, want 0", customCount)
