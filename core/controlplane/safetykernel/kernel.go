@@ -721,6 +721,11 @@ func (s *server) ListSnapshots(ctx context.Context, _ *pb.ListSnapshotsRequest) 
 	return &pb.ListSnapshotsResponse{Snapshots: snapshots}, nil
 }
 
+// evaluate checks identity, cache, missing policy or invalid topic, gate DENY,
+// policy rules, tenant MCP deny, effective-config denies, then input rules.
+// If none denies, gate REQUIRE_HUMAN wins, followed by rule or input approval,
+// then throttle, constraints or allow. A matching non-velocity deny rule
+// outranks an earlier approval rule; allow-class first-match order is unchanged.
 func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, method string) (*pb.PolicyCheckResponse, error) {
 	normalized, err := normalizePolicyRequestIdentity(req)
 	if err != nil {
@@ -914,6 +919,15 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 		} else {
 			policyDecision = evalPolicy.Evaluate(input)
 		}
+		if policyDecision.Decision == "require_approval" {
+			for _, rule := range evalPolicy.EffectiveRules() {
+				// Velocity rules need the velocity checker's verdict, not just metadata.
+				if rule.Velocity == nil && config.NormalizeDecision(rule.Decision) == "deny" && config.MatchRule(rule, input) {
+					policyDecision = config.BuildDecision(rule)
+					break
+				}
+			}
+		}
 		if tp, hasTenant := evalPolicy.Tenants[tenant]; hasTenant {
 			if allowed, mcpReason := config.MCPAllowed(tp.MCP, input.MCP); !allowed {
 				policyDecision.Decision = "deny"
@@ -989,25 +1003,24 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	// content at all.
 	//
 	// Input rules can only escalate (→deny or →require_human), never downgrade.
-	// They therefore run on every non-terminal base decision that still lets
-	// the request proceed in some form — ALLOW, ALLOW_WITH_CONSTRAINTS, and
-	// THROTTLE. THROTTLE must be included: it is weaker than DENY, so skipping
-	// the scanners on a throttled base let injection/secret content that an
-	// input rule would escalate to DENY slip through with only rate-limiting.
-	// DENY / REQUIRE_HUMAN bases are already at-or-above any escalation target,
-	// so there is nothing for the scanners to add there.
+	// A REQUIRE_HUMAN base still needs input deny checks; approval alone
+	// cannot change its decision or replace its approval metadata.
 	ruleID := policyDecision.RuleID
 	ruleTier := policyDecision.RuleTier
 	if len(inputRules) > 0 {
 		if decision == pb.DecisionType_DECISION_TYPE_ALLOW ||
 			decision == pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS ||
-			decision == pb.DecisionType_DECISION_TYPE_THROTTLE {
+			decision == pb.DecisionType_DECISION_TYPE_THROTTLE ||
+			decision == pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN {
 			// Mirror the output-policy tracing: wrap input rule evaluation
 			// in an opt-in span so production deployments with
 			// CORDUM_OTEL_ENDPOINT set get full input-side telemetry. The
 			// helper is a no-op when the endpoint is unset.
 			_, finishInput := evaluationSpan(ctx, "input", req.GetPrincipalId(), topic, tenant)
 			inputDecision := "allow"
+			if decision == pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN {
+				inputDecision = "require_human"
+			}
 			matchedCount := 0
 
 			inputContent := req.GetInputContent()
@@ -1035,6 +1048,7 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 					continue
 				}
 				matchedCount++
+				ruleDecision := pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN
 				switch rule.decision {
 				case "deny":
 					// Per task-96f931fe architect amendment comment-79a9e609:
@@ -1042,28 +1056,27 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 					// falls below the configured severity/confidence floor OR
 					// the request has no ActionDescriptor (prompt-only). DoD #4
 					// authorizes this routing for "truly ambiguous" cases.
-					if shouldDowngradeDenyToRequireHuman(rule, findings, input.Action, requireHumanThreshold) {
-						decision = pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN
-						reason = inputRuleReason(rule, findings)
-						ruleID = rule.id
-						ruleTier = rule.tier
-						inputDecision = "require_human"
-					} else {
-						decision = pb.DecisionType_DECISION_TYPE_DENY
-						reason = inputRuleReason(rule, findings)
-						ruleID = rule.id
-						ruleTier = rule.tier
-						inputDecision = "deny"
+					if !shouldDowngradeDenyToRequireHuman(rule, findings, input.Action, requireHumanThreshold) {
+						ruleDecision = pb.DecisionType_DECISION_TYPE_DENY
 					}
 				case "require_approval", "require-approval", "require_human":
-					decision = pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN
+				default:
+					continue
+				}
+				if ruleDecision == pb.DecisionType_DECISION_TYPE_DENY || decision != pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN {
+					decision = ruleDecision
 					reason = inputRuleReason(rule, findings)
 					ruleID = rule.id
 					ruleTier = rule.tier
 					inputDecision = "require_human"
+					if decision == pb.DecisionType_DECISION_TYPE_DENY {
+						inputDecision = "deny"
+					}
 				}
 				slog.Info("input rule matched", "component", "safety", "rule", rule.id, "ruleTier", rule.tier, "decision", rule.decision, "findings", len(findings), "outputDecision", inputDecision)
-				break // first matching input rule wins
+				if decision == pb.DecisionType_DECISION_TYPE_DENY {
+					break
+				}
 			}
 			finishInput(inputDecision, matchedCount)
 		}
@@ -1167,7 +1180,7 @@ func cacheKeyForRequest(req *pb.PolicyCheckRequest, snapshot string) string {
 		return ""
 	}
 	sum := sha256.Sum256(data)
-	return snapshot + ":" + hex.EncodeToString(sum[:])
+	return "composition-v2:" + snapshot + ":" + hex.EncodeToString(sum[:])
 }
 
 // requestHasAgentID reports whether the request carries an agent_id label. Such
