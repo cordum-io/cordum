@@ -591,14 +591,20 @@ func (s *RedisStore) cleanupExecutionIDs(ctx context.Context, tenantID, sessionI
 		})
 		return deleted, int64(len(executions)), err
 	}
-	deleted, err := s.deleteRedisKeysInBatches(ctx, executionCleanupKeys(executions))
+	// Keep lookup records until their dependent keys and indexes are gone so a
+	// retry can finish cleanup. This trades away protection from AppendEvents or
+	// CreateExecution committing mid-delete and recreating keys the record DEL
+	// then orphans; callers are failed-create compensation and retention only.
+	keys := executionCleanupKeys(executions)
+	deleted, err := s.deleteRedisKeysInBatches(ctx, keys[len(executions):])
 	if err != nil {
 		return 0, 0, err
 	}
 	if err := s.removeExecutionSecondaryIndexes(ctx, executions); err != nil {
 		return deleted, int64(len(executions)), err
 	}
-	return deleted, int64(len(executions)), nil
+	recordsDeleted, err := s.deleteRedisKeysInBatches(ctx, keys[:len(executions)])
+	return deleted + recordsDeleted, int64(len(executions)), err
 }
 
 func (s *RedisStore) loadSessionExecutions(ctx context.Context, tenantID, sessionID string, executionIDs []string) ([]AgentExecution, error) {
@@ -619,8 +625,10 @@ func (s *RedisStore) loadSessionExecutions(ctx context.Context, tenantID, sessio
 func executionCleanupKeys(executions []AgentExecution) []string {
 	keys := make([]string, 0, len(executions)*4)
 	for _, execution := range executions {
+		keys = append(keys, edgeExecutionKey(execution.ExecutionID))
+	}
+	for _, execution := range executions {
 		keys = append(keys,
-			edgeExecutionKey(execution.ExecutionID),
 			edgeEventsKey(execution.ExecutionID),
 			edgeEventSeqKey(execution.ExecutionID),
 			edgeEventIDIndexKey(execution.ExecutionID),
@@ -653,17 +661,17 @@ func queueExecutionIndexRemovals(ctx context.Context, pipe redis.Pipeliner, exec
 
 func (s *RedisStore) cleanupSessionKeys(ctx context.Context, session EdgeSession, holds *audit.LegalHoldStore) (int64, error) {
 	keys := []string{
-		edgeSessionKey(session.SessionID),
 		edgeSessionHeartbeatKey(session.SessionID),
 		edgeSessionExecutionsIndexKey(session.SessionID),
 		edgeSessionEventsIndexKey(session.SessionID),
+		edgeSessionKey(session.SessionID),
 	}
 	if holds != nil {
 		return s.deletePageUnlessHeld(ctx, session.TenantID, holds, keys, func(pipe redis.Pipeliner) {
 			queueSessionIndexRemovals(ctx, pipe, session)
 		})
 	}
-	deleted, err := s.deleteRedisKeysInBatches(ctx, keys)
+	deleted, err := s.deleteRedisKeysInBatches(ctx, keys[:len(keys)-1])
 	if err != nil {
 		return deleted, err
 	}
@@ -671,7 +679,11 @@ func (s *RedisStore) cleanupSessionKeys(ctx context.Context, session EdgeSession
 		queueSessionIndexRemovals(ctx, pipe, session)
 		return nil
 	})
-	return deleted, err
+	if err != nil {
+		return deleted, err
+	}
+	recordDeleted, err := s.deleteRedisKeysInBatches(ctx, keys[len(keys)-1:])
+	return deleted + recordDeleted, err
 }
 
 func queueSessionIndexRemovals(ctx context.Context, pipe redis.Pipeliner, session EdgeSession) {
