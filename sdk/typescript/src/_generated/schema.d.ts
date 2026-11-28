@@ -2762,7 +2762,28 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Create or update an output policy rule */
+        /**
+         * Enable or disable an existing output policy rule
+         * @description Sets `enabled` on an existing output rule and writes back the stored
+         *     policy bundle that holds it, with an audit entry. Bundles are searched
+         *     in key order, and the first one whose content holds the rule id is
+         *     changed. This route does not create a rule or change any other rule
+         *     field; the policy bundle routes do that.
+         *
+         *     Before it writes, the gateway checks the bundle's stored content
+         *     against the bundle's stored `_signature` and the policy trust store.
+         *     - Under the enforce signature mode, a bundle that verifies is re-signed
+         *       with the configured policy signing key. A bundle that does not
+         *       verify is refused with `409` and nothing is written.
+         *     - In warn or off mode, the bundle is re-signed only when its stored
+         *       content verifies and a policy signing key loads. Otherwise the
+         *       toggled content is stored unsigned and any stale `_signature` is
+         *       removed.
+         *
+         *     The enforce mode applies when `CORDUM_POLICY_STRICT` is `enforce` or
+         *     holds an invalid value. When it is unset, enforce applies in the
+         *     production profile or when `SAFETY_POLICY_SIGNATURE_REQUIRED` is true.
+         */
         put: operations["upsertOutputRule"];
         post?: never;
         delete?: never;
@@ -5539,6 +5560,24 @@ export interface components {
             name?: string;
             pattern?: string | null;
             scanner_type?: string;
+        };
+        /** @description Body of `PUT /api/v1/policy/output/rules/{id}`. `enabled` is the only accepted field, and the gateway requires it: a body without it gets `400` `POLICY_VALIDATION_FAILED`, and a body with any other field gets `400`. */
+        OutputRuleToggleRequest: {
+            /** @description The rule's new enabled state. */
+            enabled?: boolean;
+        };
+        OutputRuleToggleResult: {
+            /** @description Key of the policy bundle that holds the rule and was written. */
+            bundle_id: string;
+            /** @description The rule's enabled state as written. */
+            enabled: boolean;
+            /** @description The output rule id. */
+            id: string;
+            /**
+             * Format: date-time
+             * @description The bundle's new `updated_at` time.
+             */
+            updated_at: string;
         };
         PackRecord: {
             author?: string | null;
@@ -13089,20 +13128,20 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["OutputRule"];
+                "application/json": components["schemas"]["OutputRuleToggleRequest"];
             };
         };
         responses: {
-            /** @description Rule upserted */
+            /** @description The rule's new `enabled` state and the bundle that was written */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["OutputRule"];
+                    "application/json": components["schemas"]["OutputRuleToggleResult"];
                 };
             };
-            /** @description Output rule validation failed. Stable error `code`: `POLICY_VALIDATION_FAILED`. */
+            /** @description The rule id is empty or `enabled` is missing. Stable error `code`: `POLICY_VALIDATION_FAILED`. A body that is not valid JSON, or that has a field other than `enabled`, gets `code` `invalid_json`. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -13112,7 +13151,35 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description No stored policy bundle holds an output rule with this id. Bundles whose content does not parse as a safety policy are skipped. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Stable error `code` `POLICY_SIGNING_REQUIRED`: under the enforce signature mode, the stored bundle that holds the rule does not verify against its stored `_signature` and the policy trust store. Nothing is written. Re-sign the bundle with `cordumctl policy resign --bundle <id>`, or reinstall its pack. Stable error `code` `POLICY_VERSION_CONFLICT`: the policy changed during the write, and nothing is written; retry. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             500: components["responses"]["InternalServerError"];
+            /** @description Stable error `code` `POLICY_SIGNING_REQUIRED`: under the enforce signature mode, no policy signing key is configured, the key cannot be loaded, or it is not in the policy trust store. Nothing is written. `code` `service_unavailable`: the gateway has no config store. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     getOutputPolicyStats: {
