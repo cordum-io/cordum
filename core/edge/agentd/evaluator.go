@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 
 	edgecore "github.com/cordum/cordum/core/edge"
@@ -111,7 +112,35 @@ func (e *Evaluator) EvaluateHook(ctx context.Context, req claude.AgentdRequest) 
 }
 
 func (e *Evaluator) EvaluateHookWithEventWriter(ctx context.Context, req claude.AgentdRequest, writer EventWriter) (claude.AgentdDecision, error) {
+	if writer != nil {
+		callWriter := &hookCallEventWriter{writer: writer}
+		defer callWriter.detach()
+		writer = callWriter
+	}
 	return e.evaluateHook(ctx, req, writer, true)
+}
+
+// hookCallEventWriter bounds the caller-owned writer's lifetime even when a
+// shared evaluation outlives the call that started it.
+type hookCallEventWriter struct {
+	mu     sync.Mutex
+	writer EventWriter
+}
+
+func (w *hookCallEventWriter) WriteEvent(ctx context.Context, event edgecore.AgentActionEvent) (edgecore.AgentActionEvent, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.writer == nil {
+		// Dropping a late write must not fail other callers sharing the flight.
+		return event, nil
+	}
+	return w.writer.WriteEvent(ctx, event)
+}
+
+func (w *hookCallEventWriter) detach() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.writer = nil
 }
 
 func (e *Evaluator) evaluateHook(ctx context.Context, req claude.AgentdRequest, writer EventWriter, requireEvidence bool) (claude.AgentdDecision, error) {
