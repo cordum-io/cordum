@@ -1060,3 +1060,22 @@ func (f *capturingApprovalHandoff) ConsumeActionGateDecision(_ context.Context, 
 	f.lastCtx = ctxData
 	return f.ref, f.err
 }
+
+// Every PolicyConstraints field needs a decision in mcpEnforcedConstraintKinds,
+// and every entry needs a field behind it.
+func TestMCPConstraintKindsCoverPolicyConstraints(t *testing.T) {
+	fields := (&pb.PolicyConstraints{}).ProtoReflect().Descriptor().Fields()
+	names := map[string]bool{}
+	for i := range fields.Len() {
+		name := fields.Get(i).JSONName()
+		names[name] = true
+		if _, ok := mcpEnforcedConstraintKinds[name]; !ok {
+			t.Errorf("PolicyConstraints field %q has no entry in mcpEnforcedConstraintKinds", name)
+		}
+	}
+	for kind := range mcpEnforcedConstraintKinds {
+		if !names[kind] {
+			t.Errorf("mcpEnforcedConstraintKinds entry %q matches no PolicyConstraints field", kind)
+		}
+	}
+}

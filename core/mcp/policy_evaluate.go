@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -873,6 +874,30 @@ func (d PolicyDecision) Allowed() bool {
 // the approval-store adapter.
 func (d PolicyDecision) requiresHuman() bool {
 	return d.Decision == pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN
+}
+
+// mcpEnforcedConstraintKinds has one entry per top-level PolicyConstraints
+// field, keyed by its protojson name. The value says whether the MCP tool-call
+// path applies that kind. None is applied today.
+var mcpEnforcedConstraintKinds = map[string]bool{
+	"budgets":        false,
+	"sandbox":        false,
+	"toolchain":      false,
+	"diff":           false,
+	"redactionLevel": false,
+}
+
+// unappliedConstraintKinds returns, sorted, every key in constraints that the
+// MCP path does not apply. An unknown key counts, whatever its value.
+func unappliedConstraintKinds(constraints map[string]any) []string {
+	var kinds []string
+	for kind := range constraints {
+		if !mcpEnforcedConstraintKinds[kind] {
+			kinds = append(kinds, kind)
+		}
+	}
+	slices.Sort(kinds)
+	return kinds
 }
 
 // defaultEventIDFactory returns a uuid-shaped 32-hex-char ID seeded
