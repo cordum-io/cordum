@@ -246,7 +246,8 @@ func dataParamIndex(fn ast.Node, name string) int {
 
 // dataDeclaresLocal reports whether n, a node enclosing the use id, declares
 // id's name before that use: a const, var or := in its statement list, an if,
-// for, switch or type-switch init or assignment, or a range := key or value.
+// for, switch or type-switch init or assignment, a select receive, or a range
+// := key or value.
 func dataDeclaresLocal(n ast.Node, id *ast.Ident) bool {
 	var stmts []ast.Stmt
 	switch n := n.(type) {
@@ -255,7 +256,7 @@ func dataDeclaresLocal(n ast.Node, id *ast.Ident) bool {
 	case *ast.CaseClause:
 		stmts = n.Body
 	case *ast.CommClause:
-		stmts = n.Body
+		stmts = append([]ast.Stmt{n.Comm}, n.Body...)
 	case *ast.IfStmt:
 		stmts = []ast.Stmt{n.Init}
 	case *ast.ForStmt:
@@ -506,6 +507,20 @@ func groupedLater() {
 	)
 	_ = nats.StreamConfig{Name: streamName}
 }
+
+func selected(js X, names chan string) {
+	select {
+	case streamName := <-names:
+		js.AddStream(&nats.StreamConfig{Name: streamName})
+	}
+}
+
+func selectedRHS(js X) {
+	select {
+	case streamName := <-feed(nats.StreamConfig{Name: streamName}):
+		_ = streamName
+	}
+}
 `)
 	found, err := discoverDataKeys(dir, "core")
 	if err != nil {
@@ -515,7 +530,7 @@ func groupedLater() {
 	want := []dataFound{{"jetstream", "ACTUAL", p, 6}, {"jetstream", "<unresolved>", p, 11}, {"jetstream", "<unresolved>", p, 16},
 		{"jetstream", "ACTUAL", p, 20}, {"jetstream", "<unresolved>", p, 27}, {"jetstream", "<unresolved>", p, 33},
 		{"jetstream", "ACTUAL", p, 38}, {"jetstream", "<unresolved>", p, 46}, {"jetstream", "ACTUAL", p, 53},
-		{"jetstream", "<unresolved>", p, 63}}
+		{"jetstream", "<unresolved>", p, 63}, {"jetstream", "<unresolved>", p, 69}, {"jetstream", "ACTUAL", p, 75}}
 	if !slices.Equal(found, want) {
 		t.Errorf("a local declaration must neither override the file-level const nor resolve to it:\n got %q\nwant %q", found, want)
 	}
