@@ -213,6 +213,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Protected-operation contract: `docs/contract/protected-operation.md` now points to [ADR-011](docs/adr/011-execution-grant-format.md), the proposed execution-grant format, for M2A-01's open questions and the grant issuer key row. ADR-011 is a design; it implements no schema, verifier, broker or protected operation (task-e43b5876).
 - Enforcement matrix: `docs/contract/enforcement-matrix.yaml` has a `ref_tests` section that links each code ref of an enforced cell to existing tests, or records a gap where none exists (three today: the agentd throttle mapping, the scheduler throttle requeue and the `budgets.max_concurrent_jobs` limit). `tests/contract` rejects a missing or orphan entry, an unknown test, an empty list without a gap and a gap alongside tests (task-4c0b9fe8).
 - MCP docs: `docs/mcp/approval_hold.md` and `docs/mcp-server.md` now state that a policy-gated `tools/call` with a blank agent ID answers `-32098` `no_identity` before any approval access, and that missing tenant, session or execution metadata answers `-32097` `missing_mcp_metadata` for plain and ref-bearing calls (task-850c7a0e).
+- OpenAPI: `PUT /api/v1/policy/output/rules/{id}` (`upsertOutputRule`) now describes what the gateway does. It enables or disables an existing output rule, takes a body with only `enabled`, and returns the rule id, `enabled`, `bundle_id` and `updated_at`. The spec lists its `403` and `404` responses, its `409` (`POLICY_SIGNING_REQUIRED` when, under enforce, the stored bundle holding the rule does not verify; `POLICY_VERSION_CONFLICT` when the policy changed during the write) and its `503` (`POLICY_SIGNING_REQUIRED` when, under enforce, no trusted policy signing key resolves). The regenerated dashboard, TypeScript and Python clients type the body and result as `OutputRuleToggleRequest` and `OutputRuleToggleResult` (task-8823f912).
 
 ### Breaking changes
 
@@ -869,7 +870,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   the enforce signature mode an unverified bundle is refused with 409
   `POLICY_SIGNING_REQUIRED` and nothing is written; re-sign it with
   `cordumctl policy resign --bundle <id>` or reinstall its pack. In warn or
-  off mode the toggled content is stored unsigned. The audit entry names the
+  off mode the bundle is re-signed only when its stored content verifies and
+  a policy signing key loads; otherwise the toggled content is stored
+  unsigned and any stale signature is removed. The audit entry names the
   bundle and the new signature's key id and hash (task-90788e98).
 
 - MCP: `tools/call` refuses arguments that repeat an object key, at any
