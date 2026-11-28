@@ -90,10 +90,9 @@ func ParseChainFailMode(raw string) ChainFailMode {
 // owns chain ordering — racing producers across replicas do not shift
 // seq numbers under each other.
 //
-// When JetStream is enabled the bus provides at-least-once delivery:
-// the handler only returns nil (triggering ack) after a successful Export.
-// On Export failure the handler returns an error (triggering nak and
-// redelivery).
+// When JetStream is enabled, the bus redelivers on a handler error only
+// when it is a bus.RetryAfter error, and handle() returns none. An Export
+// failure is logged, counted and acked, so it is not retried.
 //
 // The lifecycle ctx/cancel pair bounds every chain-append and exporter call:
 // handle() derives per-message timeouts from lifecycleCtx so Close() can
@@ -364,7 +363,16 @@ func (c *NATSAuditConsumer) handle(ctx context.Context, packet *pb.BusPacket) er
 	}
 
 	if err := c.exporter.Export(ctx, []SIEMEvent{event}); err != nil {
-		// Export failed — return error to nak for redelivery.
+		// The bus acks this error, so record the loss here. Coarse
+		// identifiers only, never the payload. Do not wrap it in
+		// bus.RetryAfter: a redelivery would chain the event again.
+		slog.Error("audit consumer: export failed, event not retried",
+			"event_type", event.EventType,
+			"tenant_id", event.TenantID,
+			"job_id", event.JobID,
+			"error", err,
+		)
+		auditEventDrops.WithLabelValues("export_failed").Inc()
 		return fmt.Errorf("audit consumer export: %w", err)
 	}
 	return nil

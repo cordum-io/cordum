@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Audit: the NATS audit consumer logs a SIEM export failure and counts it in
+  `cordum_audit_events_dropped_total{reason="export_failed"}`. The bus acks the
+  message, so a failed export is not retried (task-02211eed).
+
 - MCP: JSON-RPC errors no longer expose execution ids. Errors caused by
   Cordum's own stores carry a fixed message, such as `internal error`, and
   the detail is in the gateway log (#492, task-e489e0c5).
