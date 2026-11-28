@@ -7,6 +7,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Scheduler (CAP-PRODUCTION profile): a bus message whose earlier delivery did
+  not finish, because its handler asked for a retry or the scheduler stopped
+  during the run, is processed again on redelivery instead of being
+  acknowledged as a duplicate. Only a message whose processing ended is
+  acknowledged as a duplicate. A delivery that arrives while another delivery
+  of the same message is still running is retried later instead of running
+  alongside it. A handler error that is not retried now ends the message with
+  a recorded failed outcome and a warning log. Operators should review
+  `NATS_JS_ACK_WAIT` (default 10 minutes): a run that stopped is picked up
+  again only if JetStream redelivers it before the signed packet expires (at
+  most 5 minutes), so set it below that but above the longest handler run,
+  because a delivery still running when it ends can be taken over by the
+  redelivery (task-0a94d0cb).
+
 - MCP: JSON-RPC errors no longer expose execution ids. Errors caused by
   Cordum's own stores carry a fixed message, such as `internal error`, and
   the detail is in the gateway log (#492, task-e489e0c5).
