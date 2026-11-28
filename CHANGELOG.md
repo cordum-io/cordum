@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Edge: a session delete that stopped partway now leaves nothing behind once it is retried.
+
 - Gateway: key, user, RBAC and legal-hold stores now close the client they opened when its first ping fails, so its connections and dial retries do not stay behind when the gateway keeps running.
 
 - Edge: listing and matching shadow-agent exceptions, and deleting a session, now use single-key commands on Redis Cluster.
