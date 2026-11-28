@@ -233,13 +233,11 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 	// audit hook to reconstruct the full lifecycle.
 	var invocationAuditor mcp.ToolInvocationAuditor
 	if s.auditExporter != nil {
-		// Redactor merges DefaultRedactionRules (baseline secrets) with
-		// any rules advertised by the active policy bundle at
-		// `policy.mcp.argument_redaction.rules`. mergeMCPRedactor is
-		// called again from a reload goroutine so bundle rotations
-		// take effect without a gateway restart. Without the merge
-		// the auditor ran with built-in heuristics only — QA reopen
-		// fix for the DoD "Arguments redacted per policy rules".
+		// Redactor merges the operator rules from the configsvc document
+		// described at mcpArgumentRedactionConfigKey over
+		// DefaultRedactionRules (baseline secrets).
+		// runMCPRedactionReload rebuilds it when that document changes,
+		// without a gateway restart.
 		redactor := s.buildMCPArgumentRedactor(context.Background())
 		// Tap the invocation audit stream into Copilot session transcripts when
 		// the Redis store is wired. The decorator only acts on inbound
@@ -1053,11 +1051,12 @@ func (s *server) setMCPInvocationAuditor(a mcp.ToolInvocationAuditor) {
 	gatewayMCPAuditor.Store(s, a)
 }
 
-// mcpArgumentRedactionConfigKey is the configsvc key the gateway reads
-// to pull policy-bundle-sourced MCP argument-redaction rules. Stored
-// as a JSON blob matching the LoadRulesFromPolicyBundle envelope.
-// Admins rotate rules by writing this key; the reload goroutine picks
-// them up within mcpRedactionReloadInterval.
+// mcpArgumentRedactionConfigKey is the id of the configsvc document, in
+// scope "gateway", that the gateway reads for operator MCP
+// argument-redaction rules. The document uses the
+// LoadRulesFromPolicyBundle JSON envelope. Its rules are merged over
+// DefaultRedactionRules and re-read every mcpRedactionReloadInterval.
+// The config API (handleSetConfig) does not write scope "gateway".
 const (
 	mcpArgumentRedactionConfigScope = "gateway"
 	mcpArgumentRedactionConfigKey   = "mcp.argument_redaction"
@@ -1065,10 +1064,10 @@ const (
 )
 
 // buildMCPArgumentRedactor returns a redactor whose rules are the
-// baseline defaults merged with any policy-bundle overrides present
-// in configsvc. When configsvc is unavailable or the key is empty,
-// falls back to DefaultRedactor() — the auditor is never left with
-// an empty rule set.
+// baseline defaults merged with any operator rules in the configsvc
+// document (see mcpArgumentRedactionConfigKey). When configsvc is
+// unavailable, or the document is absent, empty or malformed, it uses
+// the defaults alone — the auditor is never left with an empty rule set.
 func (s *server) buildMCPArgumentRedactor(ctx context.Context) mcp.ArgumentRedactor {
 	defaults := mcp.DefaultRedactionRules()
 	overrides := s.loadMCPPolicyRedactionRules(ctx)
@@ -1100,8 +1099,8 @@ func (s *server) loadMCPPolicyRedactionRules(ctx context.Context) []mcp.Redactio
 	return rules
 }
 
-// loadMCPPolicyRedactionRaw returns the policy-bundle JSON bytes for
-// the MCP argument-redaction document, or (nil, nil) when absent.
+// loadMCPPolicyRedactionRaw returns the JSON bytes of the configsvc
+// MCP argument-redaction document, or (nil, nil) when absent.
 // Factored for the change-detection path.
 func (s *server) loadMCPPolicyRedactionRaw(ctx context.Context) ([]byte, error) {
 	if s == nil || s.configSvc == nil {
@@ -1124,9 +1123,9 @@ func (s *server) loadMCPPolicyRedactionRaw(ctx context.Context) ([]byte, error) 
 // runMCPRedactionReload polls configsvc every
 // mcpRedactionReloadInterval and calls auditor.SetRedactor when the
 // loaded rules change. Runs until the gateway shuts down. Without
-// this loop a new policy bundle would not take effect until the
-// gateway restarted — violating the "Agent identity changes must
-// immediately affect tool availability" class of rail.
+// this loop a change to the redaction document would not take effect
+// until the gateway restarted — violating the "Agent identity changes
+// must immediately affect tool availability" class of rail.
 func (s *server) runMCPRedactionReload(a mcp.ToolInvocationAuditor) {
 	type setRedactor interface {
 		SetRedactor(mcp.ArgumentRedactor)
