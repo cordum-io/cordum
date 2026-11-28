@@ -169,7 +169,7 @@ authorized.
 Missing Redis/audit-chainer/verifier dependencies return an explicit
 `service_unavailable` denial; dependency-outage behaviour is not measured
 ([failure contract](../contract/failure-behavior.md#behavior-table),
-audit-sink/protected [b] and approval-store/protected [c]). Compromised hash/HMAC/linkage,
+audit-sink/protected [b] and approval-store/protected [c]). Invalid integrity checks,
 malformed event JSON, wrong tenant/ref/hash, non-approved terminal outcomes, or
 missing resolved approval-window evidence remain hard fail-closed provenance
 denials. If retention trims older history, a partial verifier result is allowed
