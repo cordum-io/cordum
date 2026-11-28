@@ -26,6 +26,9 @@ const (
 	StatusDisabled   = "disabled"
 )
 
+// errNoChange makes a SetWithRetry callback store nothing; callers map it to nil.
+var errNoChange = errors.New("topic registry unchanged")
+
 var validStatuses = map[string]bool{
 	StatusActive:     true,
 	StatusDeprecated: true,
@@ -48,7 +51,9 @@ type Registration struct {
 	RiskTagDeriver string `json:"risk_tag_deriver,omitempty"`
 }
 
-// Snapshot is the current topic registry view.
+// Snapshot is the current topic registry view. RegistryEmpty is true only while
+// system/topics has never been stored and no legacy topic mappings exist to
+// migrate; a stored document, even one with no records, sets it false.
 type Snapshot struct {
 	Items         []Registration
 	RegistryEmpty bool
@@ -66,8 +71,8 @@ func NewService(cfg *configsvc.Service) *Service {
 	return &Service{config: cfg}
 }
 
-// Get resolves a topic registration by name. RegistryEmpty is true only when no
-// canonical registrations exist and migration found no legacy topic mappings.
+// Get resolves a topic registration by name. RegistryEmpty is true only while
+// system/topics has never been stored and migration found no legacy topic mappings.
 func (s *Service) Get(ctx context.Context, name string) (*Registration, bool, error) {
 	return s.GetForTenant(ctx, "", name)
 }
@@ -102,7 +107,7 @@ func (s *Service) GetForTenant(ctx context.Context, tenantID, name string) (*Reg
 }
 
 // List returns all registrations sorted by tenant then topic name. RegistryEmpty is true
-// only when no canonical registrations exist and no legacy topic mappings were migrated.
+// only while system/topics has never been stored and no legacy topic mappings were migrated.
 func (s *Service) List(ctx context.Context) (Snapshot, error) {
 	if s == nil || s.config == nil {
 		return Snapshot{RegistryEmpty: true}, nil
@@ -244,15 +249,20 @@ func (s *Service) DeleteMany(ctx context.Context, names []string) error {
 	if len(targets) == 0 {
 		return nil
 	}
-	return s.config.SetWithRetry(ctx, configsvc.ScopeSystem, scopeIDTopics, 3, func(doc *configsvc.Document) error {
+	return s.storeTopics(ctx, func(doc *configsvc.Document) error {
 		existing, err := decodeDocument(doc)
 		if err != nil {
 			return err
 		}
+		removed := false
 		for key, reg := range existing {
 			if _, ok := targets[reg.Name]; ok {
 				delete(existing, key)
+				removed = true
 			}
+		}
+		if !removed {
+			return errNoChange
 		}
 		doc.Scope = configsvc.ScopeSystem
 		doc.ScopeID = scopeIDTopics
@@ -283,11 +293,12 @@ func (s *Service) DeleteForTenant(ctx context.Context, tenantID string, names []
 	if len(targets) == 0 {
 		return nil
 	}
-	return s.config.SetWithRetry(ctx, configsvc.ScopeSystem, scopeIDTopics, 3, func(doc *configsvc.Document) error {
+	return s.storeTopics(ctx, func(doc *configsvc.Document) error {
 		existing, err := decodeDocument(doc)
 		if err != nil {
 			return err
 		}
+		removed := false
 		for key, reg := range existing {
 			if _, ok := targets[reg.Name]; !ok {
 				continue
@@ -296,6 +307,10 @@ func (s *Service) DeleteForTenant(ctx context.Context, tenantID string, names []
 				continue
 			}
 			delete(existing, key)
+			removed = true
+		}
+		if !removed {
+			return errNoChange
 		}
 		doc.Scope = configsvc.ScopeSystem
 		doc.ScopeID = scopeIDTopics
@@ -304,45 +319,53 @@ func (s *Service) DeleteForTenant(ctx context.Context, tenantID string, names []
 	})
 }
 
+// storeTopics updates system/topics through SetWithRetry. A callback that
+// returns errNoChange stores nothing, and storeTopics then returns nil.
+func (s *Service) storeTopics(ctx context.Context, apply func(doc *configsvc.Document) error) error {
+	err := s.config.SetWithRetry(ctx, configsvc.ScopeSystem, scopeIDTopics, 3, apply)
+	if errors.Is(err, errNoChange) {
+		return nil
+	}
+	return err
+}
+
+// loadRecords returns the stored system/topics records with RegistryEmpty
+// false, whether or not the document holds any. Only when system/topics was
+// never stored does it migrate legacy pool mappings; RegistryEmpty is true
+// only when there were none to migrate.
 func (s *Service) loadRecords(ctx context.Context) (map[string]Registration, *configsvc.Document, bool, error) {
 	doc, err := s.config.Get(ctx, configsvc.ScopeSystem, scopeIDTopics)
-	if err != nil && !errors.Is(err, redis.Nil) {
-		return nil, nil, false, fmt.Errorf("get topic registry: %w", err)
-	}
 	if errors.Is(err, redis.Nil) {
-		doc = &configsvc.Document{
-			Scope:   configsvc.ScopeSystem,
-			ScopeID: scopeIDTopics,
-			Data:    map[string]any{},
+		var migrated bool
+		if migrated, err = s.migrateFromLegacyPools(ctx); err != nil {
+			return nil, nil, false, err
+		}
+		if !migrated {
+			return map[string]Registration{}, &configsvc.Document{
+				Scope:   configsvc.ScopeSystem,
+				ScopeID: scopeIDTopics,
+				Data:    map[string]any{},
+			}, true, nil
+		}
+		if doc, err = s.config.Get(ctx, configsvc.ScopeSystem, scopeIDTopics); err != nil {
+			return nil, nil, false, fmt.Errorf("reload topic registry: %w", err)
 		}
 	}
-
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("get topic registry: %w", err)
+	}
 	records, err := decodeDocument(doc)
 	if err != nil {
 		return nil, nil, false, err
 	}
-	if len(records) > 0 {
-		return records, doc, false, nil
-	}
-
-	migrated, err := s.migrateFromLegacyPools(ctx)
-	if err != nil {
-		return nil, nil, false, err
-	}
-	if migrated {
-		doc, err = s.config.Get(ctx, configsvc.ScopeSystem, scopeIDTopics)
-		if err != nil {
-			return nil, nil, false, fmt.Errorf("reload topic registry: %w", err)
-		}
-		records, err = decodeDocument(doc)
-		if err != nil {
-			return nil, nil, false, err
-		}
-		return records, doc, len(records) == 0, nil
-	}
-	return map[string]Registration{}, doc, true, nil
+	return records, doc, false, nil
 }
 
+// migrateFromLegacyPools stores the legacy system/default topic mappings as
+// records with no tenant, but only while system/topics is absent: Revision 0
+// and no data. It reports whether legacy mappings exist; when they do,
+// system/topics is stored afterwards, by this call or by a writer that stored
+// it first.
 func (s *Service) migrateFromLegacyPools(ctx context.Context) (bool, error) {
 	legacy, err := s.legacyTopicRegistrations(ctx)
 	if err != nil {
@@ -351,13 +374,9 @@ func (s *Service) migrateFromLegacyPools(ctx context.Context) (bool, error) {
 	if len(legacy) == 0 {
 		return false, nil
 	}
-	err = s.config.SetWithRetry(ctx, configsvc.ScopeSystem, scopeIDTopics, 3, func(doc *configsvc.Document) error {
-		existing, err := decodeDocument(doc)
-		if err != nil {
-			return err
-		}
-		if len(existing) > 0 {
-			return nil
+	err = s.storeTopics(ctx, func(doc *configsvc.Document) error {
+		if doc.Revision != 0 || len(doc.Data) != 0 {
+			return errNoChange
 		}
 		doc.Scope = configsvc.ScopeSystem
 		doc.ScopeID = scopeIDTopics
