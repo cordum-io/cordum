@@ -216,6 +216,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Safety Kernel output and content scanning: a scan whose finding limit (10
+  per pattern, 32 per scanner, 32 per rule) drops matches now reports itself
+  as saturated and adds a high-severity `scan_saturated` finding. An output
+  rule with decision `redact` whose findings are saturated now returns
+  `quarantine`, so no partly redacted output is released. This includes
+  outputs where several scanners together pass 32 findings. Allow, deny and
+  quarantine rules keep their decision. LLM ingest redaction
+  (`RedactContent`) now masks every match, with no finding limit. An input
+  rule whose keyword scan saturates carries the `scan_saturated` finding.
+  The PII card scanner now checks every card-shaped candidate before
+  applying its limit. New metric: `cordum_safety_scan_saturated_total{scanner}`.
+  Operators should review `redact` output rules that see high-volume output,
+  since those outputs may now be quarantined, and watch the new metric
+  (task-17a1b222).
+
 - Context engine memory is stored per tenant. `BuildWindowRequest` has a new
   `tenant_id` field. `BuildWindow` and `UpdateMemory` use stored memory only
   for a request whose `tenant_id` is set, under the id

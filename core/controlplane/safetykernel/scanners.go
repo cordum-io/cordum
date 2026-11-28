@@ -4,12 +4,88 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 const (
 	maxFindingsPerPattern = 10
 	maxFindingsPerScanner = 32
 )
+
+// scanSaturatedTotal counts scans whose finding caps dropped matches. The
+// label is the scanner name, or "combined" for the per-rule cap across
+// scanners.
+var scanSaturatedTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+	Name: "cordum_safety_scan_saturated_total",
+	Help: "Total scans whose finding caps dropped matches, by scanner",
+}, []string{"scanner"})
+
+func init() {
+	prometheus.MustRegister(scanSaturatedTotal)
+}
+
+// scanResult is one scan's findings and whether a finding cap dropped matches.
+type scanResult struct {
+	Findings  []outputFinding
+	Saturated bool
+}
+
+// cappedScanner is implemented by the built-in scanners. Capped, a scan keeps
+// at most maxFindingsPerPattern per pattern and maxFindingsPerScanner in total
+// and reports Saturated when more matches existed. Uncapped, it keeps every
+// match.
+type cappedScanner interface {
+	scan(content []byte, capped bool) scanResult
+}
+
+// runScan runs sc and counts saturated scans. A scanner that is not built in
+// runs through Scan and reports Saturated=false.
+func runScan(sc OutputScanner, content []byte, capped bool) scanResult {
+	cs, ok := sc.(cappedScanner)
+	if !ok {
+		return scanResult{Findings: sc.Scan(content)}
+	}
+	res := cs.scan(content, capped)
+	if res.Saturated {
+		scanSaturatedTotal.WithLabelValues(sc.Name()).Inc()
+	}
+	return res
+}
+
+// findingSink collects one scan's findings under the caps when capped is set.
+type findingSink struct {
+	capped bool
+	scanResult
+}
+
+// limit is the match count to ask a regex for: one past the per-pattern cap,
+// so an extra match shows the pattern saturated.
+func (s *findingSink) limit() int {
+	if s.capped {
+		return maxFindingsPerPattern + 1
+	}
+	return -1
+}
+
+// keep trims one pattern's matches to the per-pattern cap.
+func (s *findingSink) keep(hits [][]int) [][]int {
+	if s.capped && len(hits) > maxFindingsPerPattern {
+		s.Saturated = true
+		return hits[:maxFindingsPerPattern]
+	}
+	return hits
+}
+
+// add records f, or reports false when the per-scanner cap is already full.
+func (s *findingSink) add(f outputFinding) bool {
+	if s.capped && len(s.Findings) >= maxFindingsPerScanner {
+		s.Saturated = true
+		return false
+	}
+	s.Findings = append(s.Findings, f)
+	return true
+}
 
 // OutputScanner inspects output content and returns findings.
 type OutputScanner interface {
@@ -51,36 +127,32 @@ func (s *regexScanner) Name() string {
 }
 
 func (s *regexScanner) Scan(content []byte) []outputFinding {
+	return s.scan(content, true).Findings
+}
+
+func (s *regexScanner) scan(content []byte, capped bool) scanResult {
 	if len(content) == 0 || s == nil {
-		return nil
+		return scanResult{}
 	}
 	text := string(content)
-	findings := make([]outputFinding, 0, 8)
+	sink := findingSink{capped: capped}
 	for _, pattern := range s.patterns {
-		hits := pattern.Expression.FindAllStringIndex(text, maxFindingsPerPattern)
-		for _, hit := range hits {
-			if len(hit) != 2 {
-				continue
-			}
-			offset := hit[0]
-			length := hit[1] - hit[0]
-			snippet := text[hit[0]:hit[1]]
-			findings = append(findings, outputFinding{
+		for _, hit := range sink.keep(pattern.Expression.FindAllStringIndex(text, sink.limit())) {
+			if !sink.add(outputFinding{
 				Type:           s.findingType,
 				Severity:       pattern.Severity,
 				Detail:         pattern.Label,
-				Offset:         int64(offset),
-				Length:         int64(length),
+				Offset:         int64(hit[0]),
+				Length:         int64(hit[1] - hit[0]),
 				Scanner:        s.name,
 				Confidence:     pattern.Confidence,
-				MatchedPattern: truncateFinding(snippet, 160),
-			})
-			if len(findings) >= maxFindingsPerScanner {
-				return findings
+				MatchedPattern: truncateFinding(text[hit[0]:hit[1]], 160),
+			}) {
+				return sink.scanResult
 			}
 		}
 	}
-	return findings
+	return sink.scanResult
 }
 
 type piiScanner struct {
@@ -102,76 +174,57 @@ func newPIIScanner() *piiScanner {
 func (s *piiScanner) Name() string { return "pii" }
 
 func (s *piiScanner) Scan(content []byte) []outputFinding {
+	return s.scan(content, true).Findings
+}
+
+func (s *piiScanner) scan(content []byte, capped bool) scanResult {
 	if len(content) == 0 || s == nil {
-		return nil
+		return scanResult{}
 	}
 	text := string(content)
-	findings := make([]outputFinding, 0, 8)
-	addRegexFindings := func(re *regexp.Regexp, detail string) {
-		hits := re.FindAllStringIndex(text, maxFindingsPerPattern)
-		for _, hit := range hits {
-			if len(hit) != 2 {
-				continue
-			}
-			fragment := text[hit[0]:hit[1]]
-			findings = append(findings, outputFinding{
-				Type:           "pii",
-				Severity:       "high",
-				Detail:         detail,
-				Offset:         int64(hit[0]),
-				Length:         int64(hit[1] - hit[0]),
-				Scanner:        s.Name(),
-				Confidence:     0.9,
-				MatchedPattern: truncateFinding(fragment, 160),
-			})
-			if len(findings) >= maxFindingsPerScanner {
-				return
-			}
-		}
-	}
-
-	addRegexFindings(s.email, "email address detected")
-	if len(findings) >= maxFindingsPerScanner {
-		return findings
-	}
-	addRegexFindings(s.ssn, "ssn detected")
-	if len(findings) >= maxFindingsPerScanner {
-		return findings
-	}
-	addRegexFindings(s.phone, "phone number detected")
-	if len(findings) >= maxFindingsPerScanner {
-		return findings
-	}
-
-	cardMatches := s.card.FindAllStringIndex(text, maxFindingsPerPattern)
-	for _, hit := range cardMatches {
-		if len(hit) != 2 {
-			continue
-		}
-		raw := text[hit[0]:hit[1]]
-		digits := digitsOnly(raw)
-		if len(digits) < 13 || len(digits) > 19 {
-			continue
-		}
-		if !luhnValid(digits) {
-			continue
-		}
-		findings = append(findings, outputFinding{
+	sink := findingSink{capped: capped}
+	piiFinding := func(hit []int, detail string, confidence float32) outputFinding {
+		return outputFinding{
 			Type:           "pii",
 			Severity:       "high",
-			Detail:         "payment card number detected",
+			Detail:         detail,
 			Offset:         int64(hit[0]),
 			Length:         int64(hit[1] - hit[0]),
 			Scanner:        s.Name(),
-			Confidence:     0.95,
-			MatchedPattern: truncateFinding(raw, 160),
-		})
-		if len(findings) >= maxFindingsPerScanner {
-			return findings
+			Confidence:     confidence,
+			MatchedPattern: truncateFinding(text[hit[0]:hit[1]], 160),
+		}
+	}
+	for _, p := range []struct {
+		re     *regexp.Regexp
+		detail string
+	}{
+		{s.email, "email address detected"},
+		{s.ssn, "ssn detected"},
+		{s.phone, "phone number detected"},
+	} {
+		for _, hit := range sink.keep(p.re.FindAllStringIndex(text, sink.limit())) {
+			if !sink.add(piiFinding(hit, p.detail, 0.9)) {
+				return sink.scanResult
+			}
 		}
 	}
 
-	return findings
+	// Every card candidate is checked, so the per-pattern cap counts valid
+	// card numbers only and a valid one past invalid candidates is still seen.
+	var cards [][]int
+	for _, hit := range s.card.FindAllStringIndex(text, -1) {
+		digits := digitsOnly(text[hit[0]:hit[1]])
+		if len(digits) >= 13 && len(digits) <= 19 && luhnValid(digits) {
+			cards = append(cards, hit)
+		}
+	}
+	for _, hit := range sink.keep(cards) {
+		if !sink.add(piiFinding(hit, "payment card number detected", 0.95)) {
+			break
+		}
+	}
+	return sink.scanResult
 }
 
 func defaultOutputScanners() map[string]OutputScanner {
@@ -368,40 +421,38 @@ func newKeywordScanner(keywords []string) *keywordScanner {
 func (s *keywordScanner) Name() string { return "keyword" }
 
 func (s *keywordScanner) Scan(content []byte) []outputFinding {
+	return s.scan(content, true).Findings
+}
+
+func (s *keywordScanner) scan(content []byte, capped bool) scanResult {
 	if len(content) == 0 || s == nil || len(s.keywords) == 0 {
-		return nil
+		return scanResult{}
 	}
-	scannerName := s.Name()
 	text := strings.ToLower(string(content))
-	findings := make([]outputFinding, 0, 4)
+	sink := findingSink{capped: capped}
 	for _, kw := range s.keywords {
-		idx := 0
-		for {
+		for idx := 0; idx < len(text); {
 			pos := strings.Index(text[idx:], kw.lower)
 			if pos < 0 {
 				break
 			}
 			absPos := idx + pos
-			findings = append(findings, outputFinding{
+			if !sink.add(outputFinding{
 				Type:           "keyword_match",
 				Severity:       kw.severity,
 				Detail:         "keyword matched: " + kw.original,
 				Offset:         int64(absPos),
 				Length:         int64(len(kw.lower)),
-				Scanner:        scannerName,
+				Scanner:        s.Name(),
 				Confidence:     1.0,
 				MatchedPattern: truncateFinding(kw.original, 160),
-			})
-			if len(findings) >= maxFindingsPerScanner {
-				return findings
+			}) {
+				return sink.scanResult
 			}
 			idx = absPos + len(kw.lower)
-			if idx >= len(text) {
-				break
-			}
 		}
 	}
-	return findings
+	return sink.scanResult
 }
 
 func truncateFinding(raw string, limit int) string {

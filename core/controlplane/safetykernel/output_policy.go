@@ -176,6 +176,10 @@ func (s *server) EvaluateOutput(ctx context.Context, req *OutputEvaluateRequest)
 		}
 		resp.Decision = outputDecisionString(rule.decision)
 		resp.Reason = outputRuleReason(rule, findings)
+		if saturatedRedact(rule, findings) {
+			resp.Decision = "quarantine"
+			resp.Reason = outputScanSaturatedReason
+		}
 		resp.RuleID = rule.id
 		resp.Findings = findings
 		return resp, nil
@@ -285,6 +289,10 @@ func (s *server) CheckOutput(ctx context.Context, req *pb.OutputCheckRequest) (*
 		}
 		resp.Decision = rule.decision
 		resp.Reason = outputRuleReason(rule, findings)
+		if saturatedRedact(rule, findings) {
+			resp.Decision = pb.OutputDecision_OUTPUT_DECISION_QUARANTINE
+			resp.Reason = outputScanSaturatedReason
+		}
 		resp.RuleId = rule.id
 		resp.Findings = toProtoOutputFindings(findings)
 		return resp, nil
@@ -329,6 +337,50 @@ func outputTruncatedFailClosedFinding() outputFinding {
 		Detail:   "content exceeded max scan size (2 MiB); unscanned tail may contain secrets — failing closed",
 		Scanner:  "size_check",
 	}
+}
+
+const (
+	scanSaturatedType         = "scan_saturated"
+	outputScanSaturatedReason = "finding limit reached; escalating redact to quarantine"
+)
+
+// scanSaturatedFinding marks a scan whose finding caps dropped matches, so the
+// findings do not cover every match in the content.
+func scanSaturatedFinding() outputFinding {
+	return outputFinding{
+		Type:     scanSaturatedType,
+		Severity: "high",
+		Detail:   "finding limit reached; matches past the limit were not recorded - failing closed",
+		Scanner:  "finding_limit",
+	}
+}
+
+// withSaturation returns res's findings, plus one scan_saturated finding when
+// res is saturated.
+func withSaturation(res scanResult) []outputFinding {
+	if !res.Saturated {
+		return res.Findings
+	}
+	return append(res.Findings, scanSaturatedFinding())
+}
+
+// saturatedRedact reports whether a REDACT rule matched on incomplete
+// findings: masking only the recorded spans would release the rest.
+func saturatedRedact(rule compiledOutputRule, findings []outputFinding) bool {
+	if rule.decision != pb.OutputDecision_OUTPUT_DECISION_REDACT {
+		return false
+	}
+	for _, f := range findings {
+		if f.Type == scanSaturatedType {
+			return true
+		}
+	}
+	return false
+}
+
+// scanKeywords runs a capped keyword scan and marks saturation.
+func scanKeywords(keywords []string, content []byte) []outputFinding {
+	return withSaturation(runScan(newKeywordScanner(keywords), content, true))
 }
 
 func outputRulesUseSensitiveScanners(rules []compiledOutputRule) bool {
@@ -431,8 +483,7 @@ func evaluateOutputRule(rule compiledOutputRule, req *OutputEvaluateRequest, sca
 		if len(req.OutputContent) == 0 {
 			return false, nil
 		}
-		kwScanner := newKeywordScanner(rule.keywords)
-		kwFindings := kwScanner.Scan(req.OutputContent)
+		kwFindings := scanKeywords(rule.keywords, req.OutputContent)
 		if len(kwFindings) == 0 {
 			return false, nil
 		}
@@ -517,14 +568,15 @@ func scanWithContentPatterns(content []byte, rule compiledOutputRule) []outputFi
 		return nil
 	}
 	text := string(content)
-	out := make([]outputFinding, 0, 4)
+	sink := findingSink{capped: true}
+patterns:
 	for _, pattern := range rule.patterns {
-		hits := runRegexWithTimeout(pattern.re, text, maxFindingsPerPattern)
+		hits := runRegexWithTimeout(pattern.re, text, sink.limit())
 		if hits == nil {
 			// FAIL-CLOSED: regex timeout is a potential ReDoS attack.
 			// Generate a finding so the output is quarantined, not allowed.
 			slog.Error("safety-kernel: regex timeout (fail-closed)", "rule", rule.id, "pattern", pattern.raw)
-			out = append(out, outputFinding{
+			sink.Findings = append(sink.Findings, outputFinding{
 				Type:     "regex_timeout",
 				Severity: "high",
 				Detail:   "regex pattern timed out - possible ReDoS, output quarantined for safety",
@@ -532,12 +584,8 @@ func scanWithContentPatterns(content []byte, rule compiledOutputRule) []outputFi
 			})
 			continue
 		}
-		for _, hit := range hits {
-			if len(hit) != 2 {
-				continue
-			}
-			fragment := text[hit[0]:hit[1]]
-			out = append(out, outputFinding{
+		for _, hit := range sink.keep(hits) {
+			if !sink.add(outputFinding{
 				Type:           "pattern_match",
 				Severity:       normalizeSeverity(rule.severity),
 				Detail:         "content pattern matched",
@@ -545,32 +593,39 @@ func scanWithContentPatterns(content []byte, rule compiledOutputRule) []outputFi
 				Length:         int64(hit[1] - hit[0]),
 				Scanner:        "content_pattern",
 				Confidence:     0.9,
-				MatchedPattern: truncateFinding(fragment, 160),
-			})
-			if len(out) >= maxFindingsPerScanner {
-				return out
+				MatchedPattern: truncateFinding(text[hit[0]:hit[1]], 160),
+			}) {
+				break patterns
 			}
 		}
 	}
-	return out
+	if sink.Saturated {
+		scanSaturatedTotal.WithLabelValues("content_pattern").Inc()
+	}
+	return withSaturation(sink.scanResult)
 }
 
 func scanWithScanners(content []byte, names []string, scanners map[string]OutputScanner) []outputFinding {
 	if len(content) == 0 || len(names) == 0 || len(scanners) == 0 {
 		return nil
 	}
-	out := make([]outputFinding, 0, 8)
+	var res scanResult
 	for _, name := range names {
 		scanner, ok := scanners[normalizeScannerName(name)]
 		if !ok || scanner == nil {
 			continue
 		}
-		out = append(out, scanner.Scan(content)...)
-		if len(out) >= maxFindingsPerScanner {
-			return out[:maxFindingsPerScanner]
+		one := runScan(scanner, content, true)
+		res.Findings = append(res.Findings, one.Findings...)
+		res.Saturated = res.Saturated || one.Saturated
+		if len(res.Findings) > maxFindingsPerScanner {
+			res.Findings = res.Findings[:maxFindingsPerScanner]
+			res.Saturated = true
+			scanSaturatedTotal.WithLabelValues("combined").Inc()
+			break
 		}
 	}
-	return out
+	return withSaturation(res)
 }
 
 func toProtoOutputFindings(findings []outputFinding) []*pb.OutputFinding {

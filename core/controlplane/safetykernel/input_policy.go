@@ -340,7 +340,7 @@ func scanInputKeywords(
 	if len(rule.keywords) == 0 {
 		return findings, true
 	}
-	matches := newKeywordScanner(rule.keywords).Scan(content)
+	matches := scanKeywords(rule.keywords, content)
 	if len(matches) == 0 && len(findings) == 0 {
 		return nil, false
 	}

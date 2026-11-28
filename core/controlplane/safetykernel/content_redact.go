@@ -70,9 +70,11 @@ type ContentScanOptions struct {
 }
 
 // ScanContent runs the selected SHIPPED scanners over content and returns every
-// finding, sorted by offset. It is read-only and side-effect-free; it reuses
-// newPIIScanner / newSecretScanner / newKeywordScanner so there is exactly one
-// detection source of truth across the control plane and the edge.
+// finding, sorted by offset. The scanners run without finding caps, so a
+// redaction built from the result covers every match. It is read-only and
+// side-effect-free; it reuses newPIIScanner / newSecretScanner /
+// newKeywordScanner so there is exactly one detection source of truth across
+// the control plane and the edge.
 func ScanContent(content []byte, opts ContentScanOptions) []ContentFinding {
 	if len(content) == 0 {
 		return nil
@@ -107,7 +109,7 @@ func ScanContent(content []byte, opts ContentScanOptions) []ContentFinding {
 	}
 	var findings []ContentFinding
 	for _, sc := range scanners {
-		for _, f := range sc.Scan(content) {
+		for _, f := range runScan(sc, content, false).Findings {
 			findings = append(findings, ContentFinding{
 				Type:       f.Type,
 				Detail:     f.Detail,
