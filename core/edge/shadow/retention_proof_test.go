@@ -77,6 +77,7 @@ func dIC03Trace(t *testing.T, store *RedisStore, marker string) []string {
 // The finding id is DI-C31 content. Every index family the writer touched must
 // hold it before cleanup; after the record's terminal TTL and the read-time
 // cleanupStaleIDTx pass (ListFindings sees the stale id), no trace may remain.
+// The finding-index record holds neither id nor marker, so it is checked by key.
 func TestRetentionProofDIC31(t *testing.T) {
 	t.Setenv("CORDUM_EDGE_SHADOW_RETENTION_SHORT", "1h")
 	ctx := context.Background()
@@ -114,6 +115,9 @@ func TestRetentionProofDIC31(t *testing.T) {
 	if before := dIC03Trace(t, store, marker); !slices.Equal(before, locations) {
 		t.Fatalf("trace of %q before cleanup = %v, want %v", marker, before, locations)
 	}
+	if !mr.Exists(findingIndexRefKey(tenant, id)) {
+		t.Fatalf("finding-index record %s missing before cleanup", findingIndexRefKey(tenant, id))
+	}
 
 	mr.FastForward(time.Hour + time.Second)
 	if _, err := store.ListFindings(ctx, ListFindingsQuery{TenantID: tenant}); err != nil {
@@ -124,4 +128,5 @@ func TestRetentionProofDIC31(t *testing.T) {
 	if hits := dIC03Trace(t, store, marker); len(hits) != 0 {
 		t.Fatalf("trace of %q remains after terminal TTL and stale-index cleanup: %v", marker, hits)
 	}
+	requireNoKey(t, mr, findingIndexRefKey(tenant, id))
 }

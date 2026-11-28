@@ -13,7 +13,8 @@ import (
 // TestRetentionProofDIC34 is the docs/contract/deletion-proofs.md proof for
 // the mcp:dedupe:<key> (fixed MCPDedupeTTL, 10m) and mcp:taint:<tenant>:<session>
 // (CORDUM_MCP_TAINT_TTL, default 1h) families of DI-C34. Exports: none; both
-// stores write only these Redis keys.
+// stores write only these Redis keys. The dedupe marker is only in the completed
+// record, so its trace shows that record reached Redis, not the fallback map.
 func TestRetentionProofDIC34(t *testing.T) {
 	t.Setenv(TaintTTLEnvVar, "")
 	ctx := context.Background()
@@ -21,12 +22,13 @@ func TestRetentionProofDIC34(t *testing.T) {
 	const dedupeMarker, taintMarker = "pr2-08-dic34-dedupe", "pr2-08-dic34-taint"
 
 	dedupe := NewRedisDedupeStore(client)
-	pending := &redisDedupeRecord{State: redisDedupeStatePending, Owner: dedupeMarker + "-owner"}
-	if _, loaded := dedupe.LoadOrStore(dedupeMarker, pending); loaded {
+	const dedupeSlot = "dic34-dedupe"
+	pending := &redisDedupeRecord{State: redisDedupeStatePending, Owner: "dic34-owner"}
+	if _, loaded := dedupe.LoadOrStore(dedupeSlot, pending); loaded {
 		t.Fatal("LoadOrStore loaded an existing record; want the reservation")
 	}
 	completed := &redisDedupeRecord{State: redisDedupeStateCompleted, Result: &redisDedupeResultMetadata{ResultSHA256: dedupeMarker}}
-	if !dedupe.CompareAndSwap(dedupeMarker, pending, completed) {
+	if !dedupe.CompareAndSwap(dedupeSlot, pending, completed) {
 		t.Fatal("CompareAndSwap did not publish the completed record")
 	}
 	taints := SelectTaintStore("redis", client)
@@ -35,7 +37,7 @@ func TestRetentionProofDIC34(t *testing.T) {
 	if err := taints.Taint(ctx, "tenant-dic34", taintMarker+"-session", taint); err != nil {
 		t.Fatalf("Taint: %v", err)
 	}
-	dedupeKey := MCPDedupeKeyPrefix + dedupeMarker
+	dedupeKey := MCPDedupeKeyPrefix + dedupeSlot
 	taintRedisKey := MCPTaintKeyPrefix + taintKey("tenant-dic34", taintMarker+"-session")
 	requireDIC34Trace(t, client, dedupeMarker, dedupeKey)
 	requireDIC34Trace(t, client, taintMarker, taintRedisKey)

@@ -50,8 +50,10 @@ func kernelRetentionRequire(t *testing.T, hits []string, family string) {
 
 // TestRetentionProofDIC48Velocity is cited by docs/contract/deletion-proofs.md,
 // with gateway's TestRetentionProofDIC48. A velocity window
-// cordum:velocity:<rule>:<key> expires after the rule window plus 60s. The
-// writer reaches no export.
+// cordum:velocity:<rule>:<key> expires after the rule window plus 60s. The rule
+// id, which is policy config, also labels the velocity metrics, so the marker
+// is only in the key value and request id. The key value also reaches a debug
+// log line; the writer reaches no other export.
 func TestRetentionProofDIC48Velocity(t *testing.T) {
 	mr, client, marker := kernelRetentionFixture(t)
 	cfg := &config.VelocityConfig{MaxRequests: 10, WindowSeconds: 60, Key: "tenant"}
@@ -68,7 +70,8 @@ func TestRetentionProofDIC48Velocity(t *testing.T) {
 // TestRetentionProofDIC08 is cited by docs/contract/deletion-proofs.md. The
 // snapshot history cordum:safety:snapshots keeps the newest snapshotHistoryMax
 // (10) entries, so 10 newer snapshots push the marker out while the list stays.
-// The writer reaches no export.
+// The in-memory copy, server.snapshots (the ListSnapshots fallback), keeps the
+// same 10. The writer reaches no export.
 func TestRetentionProofDIC08(t *testing.T) {
 	_, client, marker := kernelRetentionFixture(t)
 	ctx := context.Background()
@@ -84,6 +87,9 @@ func TestRetentionProofDIC08(t *testing.T) {
 	}
 	if hits := kernelRetentionTrace(t, client, marker); len(hits) != 0 {
 		t.Fatalf("trace remains after cleanup: %v", hits)
+	}
+	if slices.Contains(srv.snapshots, marker) || srv.snapshot == marker {
+		t.Fatalf("in-memory snapshot history still holds the marker: %v", srv.snapshots)
 	}
 	if n, err := client.LLen(ctx, "cordum:safety:snapshots").Result(); err != nil || n != 10 {
 		t.Fatalf("cordum:safety:snapshots should keep 10 entries: n=%d err=%v", n, err)

@@ -32,31 +32,31 @@ func TestRetentionProofMapContract(t *testing.T) {
 	root, inventory, doc := retentionFixture(t)
 	tests := retentionTestNames(t, root)
 	require.NoError(t, checkRetentionMap(doc, inventory, tests))
-	for _, proof := range []string{"`TestRetentionTraceScanFindsEveryType`", "`TestRetentionBackupWindow`", "open finding PR2-08-F1", "`TestRetentionBackupWindow`, pending PR2-08-DATA"} {
+	for _, proof := range []string{"`TestRetentionTraceScanFindsEveryType`", "`TestRetentionBackupWindow`", "open finding PR2-08-F1", "`TestRetentionBackupWindow`, open finding PR2-08-F1"} {
 		require.NoError(t, retentionReferences(proof, tests))
 	}
 }
 
 func TestRetentionProofMapRejects(t *testing.T) {
-	// Independent fixture: filling pending cells in the real map must not change
-	// these negative controls or cause them to fail for an unrelated reference.
+	// Independent fixture: edits to the real map must not change these negative
+	// controls or cause them to fail for an unrelated reference.
 	held := true
 	inventory := &DataInventory{EndpointOnly: []DataEntry{{ID: "DI-E01", Deletion: &DataDeletion{None: "local"}}},
 		ControlPlane: []DataEntry{{ID: "DI-C01", Deletion: &DataDeletion{}, LegalHold: &DataLegalHold{Applies: &held}}}}
 	doc := retentionHeader + "\n| --- | --- | --- | --- |\n| DI-E01 | no cleanup path | none | none: local |\n" +
-		"| DI-C01 | retention cleanup | sweep | pending PR2-08-EDGE |\n\n" +
-		holdHeader + "\n| --- | --- |\n| DI-C01 | pending PR2-08-EDGE |\n"
+		"| DI-C01 | retention cleanup | sweep | open finding PR2-08-F1 |\n\n" +
+		holdHeader + "\n| --- | --- |\n| DI-C01 | open finding PR2-08-F1 |\n"
 	require.NoError(t, checkRetentionMap(doc, inventory, nil))
 	line := strings.Split(strings.Split(doc, "| DI-E01 |")[1], "\n")[0]
 	for _, tc := range []struct{ name, old, replacement, errorText string }{
 		{"missing", "| DI-E01 |" + line + "\n", "", "missing entry DI-E01"},
 		{"category", "| DI-E01 | no cleanup path |", "| DI-E01 | retention cleanup |", "category"},
-		{"unknown_test", "pending PR2-08-EDGE", "`TestRetentionDoesNotExist`", "reference"},
+		{"unknown_test", "open finding PR2-08-F1", "`TestRetentionDoesNotExist`", "reference"},
 		{"duplicate", "| DI-E01 |" + line, "| DI-E01 |" + line + "\n| DI-E01 |" + line, "duplicate"},
 		{"unknown_id", "| DI-E01 |" + line, "| DI-E01 |" + line + "\n| DI-E99 |" + line, "unknown entry"},
-		{"missing_hold", "| DI-C01 | pending PR2-08-EDGE |\n", "", "legal hold"},
-		{"extra_hold", "| DI-C01 | pending PR2-08-EDGE |", "| DI-C02 | pending PR2-08-EDGE |", "legal hold"},
-		{"owner", "pending PR2-08-EDGE", "pending PR2-08-OTHER", "reference"},
+		{"missing_hold", "| DI-C01 | open finding PR2-08-F1 |\n", "", "legal hold"},
+		{"extra_hold", "| DI-C01 | open finding PR2-08-F1 |", "| DI-C02 | open finding PR2-08-F1 |", "legal hold"},
+		{"pending", "open finding PR2-08-F1", "pending PR2-08-EDGE", `invalid proof reference "pending PR2-08-EDGE"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			changed := strings.Replace(doc, tc.old, tc.replacement, 1)
@@ -164,7 +164,6 @@ func retentionRows(doc, header string) (map[string][]string, error) {
 
 func retentionReferences(cell string, tests map[string]bool) error {
 	name := regexp.MustCompile("^`(Test[A-Za-z0-9_]+)(/[^`,[:space:]]+)?`$")
-	pending := regexp.MustCompile(`^pending PR2-08-(EDGE|JOBS|DATA|SERVICES)$`)
 	finding := regexp.MustCompile(`^open finding PR2-08-F[0-9]+$`)
 	for _, raw := range strings.Split(cell, ",") {
 		ref := strings.TrimSpace(raw)
@@ -172,7 +171,7 @@ func retentionReferences(cell string, tests map[string]bool) error {
 			if tests[match[1]] {
 				continue
 			}
-		} else if pending.MatchString(ref) || finding.MatchString(ref) {
+		} else if finding.MatchString(ref) {
 			continue
 		}
 		return fmt.Errorf("invalid proof reference %q", ref)

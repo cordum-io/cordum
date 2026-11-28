@@ -2,19 +2,14 @@ package scheduler
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	miniredis "github.com/alicebob/miniredis/v2"
 	agentregistry "github.com/cordum/cordum/core/infra/registry"
 	"github.com/cordum/cordum/core/infra/store"
-	"github.com/cordum/cordum/core/infra/tracescan"
-	"github.com/cordum/cordum/core/internal/testredis"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -27,13 +22,7 @@ func TestRetentionProofDIC53(t *testing.T) {
 	const dataTTL = 5 * time.Minute
 	t.Setenv("REDIS_DATA_TTL", dataTTL.String())
 	ctx := context.Background()
-	mr := miniredis.RunT(t)
-	client := testredis.NewClient(t, mr.Addr())
-	b := make([]byte, 6)
-	if _, err := rand.Read(b); err != nil {
-		t.Fatalf("marker: %v", err)
-	}
-	marker := t.Name() + "-" + hex.EncodeToString(b)
+	mr, client, marker := sessionRetentionFixture(t)
 	reg := NewMemoryRegistry()
 	reg.UpdateHeartbeat(&pb.Heartbeat{
 		WorkerId: marker + "-worker", Pool: marker + "-pool", Region: marker,
@@ -51,10 +40,7 @@ func TestRetentionProofDIC53(t *testing.T) {
 	// families lists which of both hold the marker; a hit elsewhere fails.
 	families := func() []string {
 		t.Helper()
-		hits, err := tracescan.Find(ctx, client, marker)
-		if err != nil {
-			t.Fatalf("tracescan.Find: %v", err)
-		}
+		hits := sessionRetentionTrace(t, client, marker)
 		var out []string
 		for _, family := range both {
 			if slices.ContainsFunc(hits, func(hit string) bool { return strings.HasPrefix(hit, family) }) {

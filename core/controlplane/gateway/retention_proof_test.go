@@ -114,8 +114,9 @@ func TestRetentionProofDIC05(t *testing.T) {
 // TestRetentionProofDIC46 is cited by docs/contract/deletion-proofs.md. An MCP
 // approval record mcp:approvals:<id> and its tuple index
 // mcp:approvals:idx:<tenant>:<agent>:<tool>:<hash> both expire after the
-// request TTL plus 1m; Resolve keeps the record's remaining TTL. No audit hook
-// is installed, so the writer reaches no export.
+// request TTL plus 1m; Resolve keeps the record's remaining TTL. The proof
+// installs no audit hook; in production the hook sends the request's fields to
+// auditExporter, and exported copies are outside this proof.
 func TestRetentionProofDIC46(t *testing.T) {
 	mr, client, marker := servicesRetentionFixture(t)
 	ctx := context.Background()

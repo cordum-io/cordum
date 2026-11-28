@@ -1,6 +1,6 @@
 # Deletion and legal-hold proof map
 
-Status: requirements map; cleanup and legal-hold proofs pending the named slices.
+Status: closed; no proof is pending, and the contract test rejects pending cells.
 Reviewed source: `9de7911274f1574d94cf9c850bd73a88dc2cc123` (58 inventory entries).
 Tags: retention, deletion, legal-hold, contract.
 
@@ -25,7 +25,7 @@ A failing proof stays an open finding under the review process, not a weaker tes
 | --- | --- | --- | --- |
 | DI-E01 | no cleanup path | none | none: No session-state cleanup API; Save replaces a file and removes its temporary file only |
 | DI-E02 | no cleanup path | none | none: Process termination and garbage collection; no explicit secure erasure routine |
-| DI-E03 | retention cleanup | `core/edge/agentd/cache.go` (`SafeAllowCache.Get`); `core/edge/agentd/cache.go` (`SafeAllowCache.evictOverflowLocked`) | `TestRetentionProofDIE03` |
+| DI-E03 | retention cleanup | `core/edge/agentd/cache.go` (`SafeAllowCache.Get`); `core/edge/agentd/cache.go` (`SafeAllowCache.evictOverflowLocked`) | open finding PR2-08-F7 |
 | DI-E04 | no cleanup path | none | none: Garbage collection of scan buffers; scanner does not delete source configuration files |
 | DI-C01 | retention cleanup | `core/edge/sweeper.go` (`SessionSweeper.SweepOnce`); `core/edge/store_redis.go` (`RedisStore.DeleteSession`) | `TestRetentionProofDIC01` |
 | DI-C02 | no cleanup path | none | none: No code path deletes approval records at reviewed_at; transitions rewrite records and drop some index refs, while status/principal index refs remain; ApprovalSweeper.SweepOnce only marks past-deadline pending approvals expired; DeleteSession skips approval keys |
@@ -112,10 +112,8 @@ live-key TTL and stream MaxAge do not erase those copies or recipient downloads.
 - Categories are `retention cleanup`, `explicit delete only`, or `no cleanup path`.
 - `no cleanup path` applies exactly when inventory deletion is `none`.
 - Retention and legal-hold Proof cells contain comma-separated references: a
-  backticked existing `Test...` function (optionally `/subtest`),
-  `pending PR2-08-EDGE`, `pending PR2-08-JOBS`, `pending PR2-08-DATA`,
-  `pending PR2-08-SERVICES`, or `open finding PR2-08-F<n>`.
+  backticked existing `Test...` function (optionally `/subtest`) or
+  `open finding PR2-08-F<n>`.
 - Other Proof cells start `none: ` and give the inventory reason.
-- DI-C34 is jointly owned by EDGE and DATA. SERVICES and SERVICES-B fill the
-  same SERVICES label. Replace pending cells only with reviewed proof references.
+- DI-C34 is jointly owned by EDGE and DATA.
 - `TestRetentionProofMapContract` checks ids, categories, references and hold coverage.

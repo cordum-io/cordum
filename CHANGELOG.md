@@ -633,8 +633,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Retention contract (PR2-08): a deletion-proof map, `TestRetentionProofMapContract`
   checker and Redis `tracescan` helper, plus `TestRetentionBackupWindow` pinning
   the 9-day backup window in `deploy/k8s/production` when jobs run on schedule.
-  Pending cleanup proofs land in PR2-08-EDGE, PR2-08-JOBS, PR2-08-DATA and
-  PR2-08-SERVICES; this map claims no deletion guarantee beyond the cited tests.
+  The checker rejects pending cells; this map claims no deletion guarantee
+  beyond the cited tests.
 
 - CI: the required OpenAPI Validate check regenerates the Python client with
   `sdk/python/scripts/generate.sh` and fails when the result differs from the committed
