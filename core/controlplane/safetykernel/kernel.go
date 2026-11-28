@@ -352,8 +352,17 @@ func serverTransportCredentials(ctx context.Context) (grpc.ServerOption, error) 
 }
 
 // RunWithEntitlements starts the Safety Kernel with an optional shared
-// entitlement resolver. Nil falls back to community defaults.
+// entitlement resolver. Nil falls back to community defaults. It runs until
+// SIGINT or SIGTERM.
 func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementResolver) error {
+	return RunWithEntitlementsContext(context.Background(), cfg, resolver)
+}
+
+// RunWithEntitlementsContext is RunWithEntitlements that also stops when ctx
+// is done. It returns after the gRPC and admin servers have stopped and the
+// background loops have exited. Cancelling ctx stops a running kernel; it
+// does not interrupt boot.
+func RunWithEntitlementsContext(ctx context.Context, cfg *config.Config, resolver *licensing.EntitlementResolver) error {
 	if cfg == nil {
 		cfg = config.Load()
 	}
@@ -393,7 +402,7 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 		return fmt.Errorf("listen %s: %w", cfg.SafetyKernelAddr, err)
 	}
 
-	serverCreds, err := serverTransportCredentials(context.Background())
+	serverCreds, err := serverTransportCredentials(ctx)
 	if err != nil {
 		return err
 	}
@@ -556,12 +565,18 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 
 	slog.Info("safety-kernel: listening", "addr", cfg.SafetyKernelAddr)
 
-	// Graceful shutdown: on SIGINT/SIGTERM, drain in-flight RPCs then stop.
-	sigCtx, sigStop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	// Graceful shutdown: on SIGINT/SIGTERM or ctx done, drain in-flight RPCs then stop.
+	sigCtx, sigStop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer sigStop()
+	// stopCtx also wakes the shutdown when Serve fails on its own, without
+	// unregistering the signal handler before the drain ends.
+	stopCtx, stopNow := context.WithCancel(sigCtx)
+	defer stopNow()
+	shutdownDone := make(chan struct{})
 
 	go func() {
-		<-sigCtx.Done()
+		defer close(shutdownDone)
+		<-stopCtx.Done()
 		slog.Info("safety-kernel: shutting down gracefully")
 
 		const shutdownTimeout = 15 * time.Second
@@ -602,9 +617,14 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 			slog.Warn("safety-kernel: forcing gRPC stop after tracer flush")
 			grpcServer.Stop()
 		}
+		if err := adminSrv.Shutdown(shutdownCtx); err != nil {
+			slog.Warn("safety-kernel: admin server shutdown returned error", "error", err)
+		}
 	}()
 
 	serveErr := grpcServer.Serve(lis)
+	stopNow()
+	<-shutdownDone
 	lifecycleCancel()
 	wg.Wait()
 	if serveErr != nil {
