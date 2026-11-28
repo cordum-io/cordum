@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -20,9 +21,8 @@ const (
 	// recomputation, its PrevHash did not match its predecessor, or the
 	// seq numbers skipped a value that falls after the retention boundary.
 	VerifyStatusCompromised VerifyStatus = "compromised"
-	// VerifyStatusPartial means the range contained only events older
-	// than the retention boundary — any "gaps" are trimmed events, not
-	// tampering.
+	// VerifyStatusPartial means linkage or required HMAC authentication
+	// could not be fully checked. Gaps distinguish retention from missing keys.
 	VerifyStatusPartial VerifyStatus = "partial"
 )
 
@@ -47,6 +47,10 @@ const (
 	// by a process without the signing key. Only flagged when an HMAC
 	// key is supplied via VerifyOptions.
 	GapTypeHMACMismatch VerifyGapType = "hmac_mismatch"
+	// GapTypeHMACMissing is an unsigned event at or after activation.
+	GapTypeHMACMissing VerifyGapType = "hmac_missing"
+	// GapTypeHMACUnverified means activated history was read without a key.
+	GapTypeHMACUnverified VerifyGapType = "hmac_unverified"
 )
 
 // VerifyGap is a single gap in the chain walk. AtSeq is the position the
@@ -83,14 +87,20 @@ type VerifyResult struct {
 	// HMACVerified counts events whose HMAC-SHA256 tag was recomputed
 	// and matched. Zero when no HMACKey was supplied in VerifyOptions.
 	HMACVerified int `json:"hmac_verified,omitempty"`
-	// HMACSkipped counts events that carry no HMAC tag (pre-HMAC
-	// events). These are not treated as failures — backward compat.
+	// HMACSkipped counts events without a tag when a key was supplied.
+	// Those at or after activation also produce hmac_missing gaps.
 	HMACSkipped int `json:"hmac_skipped,omitempty"`
 	// HMACSeen is true when at least one event in the scanned range
 	// carried an HMAC tag. Used by the verify handler to detect chains
 	// that need HMAC verification even when the current process has no
 	// key configured (fail-closed safety net).
 	HMACSeen bool `json:"hmac_seen,omitempty"`
+	// HMACActivatedSeq is the durable first sequence requiring a tag, or zero.
+	HMACActivatedSeq int64 `json:"hmac_activated_seq"`
+	// UnauthenticatedEvents counts in-range history before activation.
+	UnauthenticatedEvents int `json:"unauthenticated_events"`
+	// Integrity describes authentication of the activated portion of the range.
+	Integrity string `json:"integrity"`
 }
 
 // maxRetentionTrimmedGaps caps how many retention_trimmed gap entries
@@ -117,9 +127,8 @@ type VerifyOptions struct {
 	RetentionBoundarySeq int64
 	// HMACKey (optional) enables HMAC-SHA256 verification. When non-nil,
 	// every event that carries an HMAC tag is verified against this key.
-	// Events without an HMAC (pre-HMAC era) are counted as HMACSkipped
-	// rather than failed, so mixed chains are gracefully handled during
-	// key rotation or initial HMAC rollout.
+	// Missing tags before activation are counted as HMACSkipped; those at or
+	// after activation fail. Without a key, activated history is unverified.
 	HMACKey []byte
 }
 
@@ -162,11 +171,19 @@ func VerifyChain(ctx context.Context, client redis.UniversalClient, streamKey st
 	if err != nil {
 		return nil, fmt.Errorf("xrange %s: %w", streamKey, err)
 	}
+	// Read after XRANGE: every signed event in this snapshot already had
+	// its activation marker persisted before it was appended.
+	activatedSeq, err := readHMACActivation(ctx, client, streamKey)
+	if err != nil {
+		return nil, err
+	}
 
 	result := &VerifyResult{
 		Status:               VerifyStatusOK,
 		Gaps:                 []VerifyGap{},
 		RetentionBoundarySeq: opts.RetentionBoundarySeq,
+		HMACActivatedSeq:     activatedSeq,
+		Integrity:            "hash_chain_only",
 	}
 
 	if len(entries) == 0 {
@@ -176,9 +193,10 @@ func VerifyChain(ctx context.Context, client redis.UniversalClient, streamKey st
 	}
 
 	var (
-		prevHash string
-		prevSeq  int64
-		hasPrev  bool
+		prevHash       string
+		prevSeq        int64
+		hasPrev        bool
+		hmacUnverified bool
 	)
 	// Cross-window linkage bootstrap: when the caller asked for a
 	// mid-chain slice (SinceMs > 0), read the single entry immediately
@@ -227,6 +245,16 @@ func VerifyChain(ctx context.Context, client redis.UniversalClient, streamKey st
 			continue
 		}
 		result.TotalEvents++
+		requiresHMAC := activatedSeq > 0 && ev.Seq >= activatedSeq
+		if !requiresHMAC {
+			result.UnauthenticatedEvents++
+		} else if len(opts.HMACKey) == 0 && !hmacUnverified {
+			hmacUnverified = true
+			result.Gaps = append(result.Gaps, VerifyGap{AtSeq: ev.Seq, Type: GapTypeHMACUnverified})
+			if result.Status == VerifyStatusOK {
+				result.Status = VerifyStatusPartial
+			}
+		}
 
 		if i == 0 {
 			result.FirstSeq = ev.Seq
@@ -289,6 +317,10 @@ func VerifyChain(ctx context.Context, client redis.UniversalClient, streamKey st
 		if len(opts.HMACKey) > 0 {
 			if ev.HMAC == "" {
 				result.HMACSkipped++
+				if requiresHMAC {
+					result.Status = VerifyStatusCompromised
+					result.Gaps = append(result.Gaps, VerifyGap{AtSeq: ev.Seq, Type: GapTypeHMACMissing})
+				}
 			} else {
 				ok, err := VerifyEventHMAC(&ev, opts.HMACKey)
 				if err != nil || !ok {
@@ -309,7 +341,26 @@ func VerifyChain(ctx context.Context, client redis.UniversalClient, streamKey st
 	if result.Status == VerifyStatusOK && len(result.Gaps) > 0 {
 		result.Status = VerifyStatusPartial
 	}
+	if result.Status == VerifyStatusOK && activatedSeq > 0 && len(opts.HMACKey) > 0 &&
+		result.TotalEvents > result.UnauthenticatedEvents {
+		result.Integrity = "authenticated"
+	}
 	return result, nil
+}
+
+func readHMACActivation(ctx context.Context, client redis.UniversalClient, streamKey string) (int64, error) {
+	raw, err := client.HGet(ctx, chainHMACActivationKey, streamKey).Result()
+	if errors.Is(err, redis.Nil) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("audit chain: read hmac activation: %w", err)
+	}
+	seq, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || seq <= 0 {
+		return 0, errors.New("audit chain: invalid hmac activation sequence")
+	}
+	return seq, nil
 }
 
 // xRevBefore returns a Redis Stream ID usable as the XREVRANGE start
