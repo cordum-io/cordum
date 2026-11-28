@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -13,7 +14,7 @@ import (
 	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
-	"github.com/cordum/cordum/core/infra/redisutil"
+	"github.com/cordum/cordum/core/internal/testredis"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -370,7 +371,7 @@ func TestCreateChild_ParentRevokedByAnotherReplica(t *testing.T) {
 	}
 }
 
-func TestCreateChild_RetryBudgetExhausted(t *testing.T) {
+func TestCreateChild_ParentRewrittenByAnotherReplica(t *testing.T) {
 	store, srv := newTestKeyStore(t)
 	ctx := context.Background()
 	seedManagedKey(ctx, t, store, "tenant-a", "id-1")
@@ -378,8 +379,141 @@ func TestCreateChild_RetryBudgetExhausted(t *testing.T) {
 
 	child, secret := newChildKey(t)
 	err := store.CreateChild(ctx, "id-1", child, secret)
-	if writes := childWrites(ctx, t, store, child); !errors.Is(err, redisutil.ErrMaxAttemptsExceeded) || errors.Is(err, ErrInvalidKey) || writes != 0 {
-		t.Fatalf("CreateChild error = %v, writes = %d; want an exhausted retry budget, not ErrInvalidKey, and none", err, writes)
+	if writes := childWrites(ctx, t, store, child); err != nil || writes != 3 {
+		t.Fatalf("CreateChild error = %v, writes = %d; want nil and 3", err, writes)
+	}
+}
+
+func TestCreateChild_OnCluster(t *testing.T) {
+	for _, revoke := range []bool{false, true} {
+		t.Run(map[bool]string{false: "valid", true: "revoked during create"}[revoke], func(t *testing.T) {
+			ctx := context.Background()
+			srv := newTestMiniredis(t)
+			replica := NewRedisKeyStoreFromClient(newTestRedisClient(t, srv.Addr()))
+			seedManagedKey(ctx, t, replica, "tenant-a", "parent")
+			client := testredis.NewMiniClusterClient(t, srv.Addr())
+			var revoked atomic.Bool
+			client.OnNewNode(func(node *redis.Client) {
+				node.AddHook(oneKeyPerMultiHook{})
+				node.AddHook(afterGetHook{key: keyRecordKey("parent"), fn: func(ctx context.Context) {
+					if revoke && revoked.CompareAndSwap(false, true) {
+						if err := replica.Revoke(ctx, "parent", "tenant-a"); err != nil {
+							t.Errorf("replica Revoke: %v", err)
+						}
+					}
+				}})
+			})
+			store := NewRedisKeyStoreFromClient(client)
+			child, secret := newChildKey(t)
+			err := store.CreateChild(ctx, "parent", child, secret)
+			if revoke {
+				if !errors.Is(err, ErrInvalidKey) || !revoked.Load() || childWrites(ctx, t, store, child) != 0 {
+					t.Fatalf("revoked parent CreateChild = %v; want ErrInvalidKey and no child", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("CreateChild on cluster: %v", err)
+			}
+			if got, err := store.ValidateKey(ctx, secret); err != nil || got == nil || got.ID != child.ID {
+				t.Fatalf("ValidateKey(child) = %v, %v", got, err)
+			}
+			if !slices.Contains(listedIDs(ctx, t, store, child.Tenant), child.ID) {
+				t.Fatal("child absent from tenant list")
+			}
+		})
+	}
+}
+
+// childClusterHook observes or fails commands, including those inside a MULTI.
+type childClusterHook struct {
+	oneKeyPerMultiHook
+	before func(redis.Cmder) error
+}
+
+func (h childClusterHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return h.oneKeyPerMultiHook.ProcessHook(func(ctx context.Context, cmd redis.Cmder) error {
+		if err := h.before(cmd); err != nil {
+			return err
+		}
+		return next(ctx, cmd)
+	})
+}
+
+func (h childClusterHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return h.oneKeyPerMultiHook.ProcessPipelineHook(func(ctx context.Context, cmds []redis.Cmder) error {
+		for _, cmd := range cmds {
+			if err := h.before(cmd); err != nil {
+				return err
+			}
+		}
+		return next(ctx, cmds)
+	})
+}
+
+func TestCreateChild_RefusedParentWritesNothing(t *testing.T) {
+	for _, parent := range []string{"", `{"id":`, `{"revoked":true}`, `{"expires_at":"2000-01-01T00:00:00Z"}`} {
+		t.Run(parent, func(t *testing.T) {
+			store, _ := newTestKeyStore(t)
+			ctx := context.Background()
+			if parent != "" {
+				if err := store.client.Set(ctx, keyRecordKey("parent"), parent, 0).Err(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			writes := 0
+			store.client.AddHook(childClusterHook{before: func(cmd redis.Cmder) error {
+				switch cmd.Name() {
+				case "set", "sadd", "srem", "del":
+					writes++
+				}
+				return nil
+			}})
+			child, secret := newChildKey(t)
+			if err := store.CreateChild(ctx, "parent", child, secret); !errors.Is(err, ErrInvalidKey) || writes != 0 {
+				t.Fatalf("CreateChild = %v, %d writes; want ErrInvalidKey, 0 writes", err, writes)
+			}
+		})
+	}
+}
+
+func TestCreateChild_RedisErrorAfterWrite(t *testing.T) {
+	for _, point := range []string{"tenant sadd", "prefix sadd", "second get", "prefix srem"} {
+		t.Run(point, func(t *testing.T) {
+			store, srv := newTestKeyStore(t)
+			ctx := context.Background()
+			seedManagedKey(ctx, t, store, "tenant-a", "parent")
+			child, secret := newChildKey(t)
+			child.Prefix = secret[:apiKeyPrefixLen]
+			injected := errors.New("injected " + point)
+			gets := 0
+			store.client.AddHook(childClusterHook{before: func(cmd redis.Cmder) error {
+				if cmd.Name() == "get" && cmd.Args()[1] == keyRecordKey("parent") {
+					gets++
+				}
+				if (point == "second get" && cmd.Name() == "get" && gets == 2) ||
+					(point == "tenant sadd" && cmd.Name() == "sadd" && cmd.Args()[1] == keyTenantKey(child.Tenant)) ||
+					(point == "prefix sadd" && cmd.Name() == "sadd" && cmd.Args()[1] == keyPrefixIndexKey(child.Prefix)) ||
+					(point == "prefix srem" && cmd.Name() == "srem" && cmd.Args()[1] == keyPrefixIndexKey(child.Prefix)) {
+					return injected
+				}
+				return nil
+			}})
+			if point == "prefix srem" {
+				replica := NewRedisKeyStoreFromClient(newTestRedisClient(t, srv.Addr()))
+				store.client.AddHook(afterGetHook{key: keyRecordKey("parent"), fn: func(ctx context.Context) {
+					if gets == 1 {
+						if err := replica.Revoke(ctx, "parent", "tenant-a"); err != nil {
+							t.Errorf("replica Revoke: %v", err)
+						}
+					}
+				}})
+			}
+			err := store.CreateChild(ctx, "parent", child, secret)
+			if !errors.Is(err, injected) || errors.Is(err, ErrInvalidKey) != (point == "prefix srem") {
+				t.Fatalf("CreateChild = %v; want injected error, ErrInvalidKey only on removal", err)
+			}
+		})
 	}
 }
 

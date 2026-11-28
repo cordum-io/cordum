@@ -4,19 +4,104 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/cordum/cordum/core/internal/testredis"
 	"github.com/cordum/cordum/core/model"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
 const (
 	clusterProofJobID = "job-cluster-proof"
 	clusterProofPtr   = "res://cluster-proof"
 )
+
+type jobIndexWriteCase struct {
+	name, field, value, index string
+	metaFirst, metaTTL        bool
+	write                     func(*RedisJobStore) error
+}
+
+func TestJobIndexWritesOnCluster(t *testing.T) {
+	ctx := context.Background()
+	deadline := time.Now().Add(time.Minute)
+	for _, tc := range []jobIndexWriteCase{
+		{"trace", metaFieldTraceID, "trace-cluster", "trace:trace-cluster", true, true, func(s *RedisJobStore) error {
+			return s.AddJobToTrace(ctx, "trace-cluster", clusterProofJobID)
+		}},
+		{"worker", metaFieldWorkerID, "worker-cluster", workerJobsKey("worker-cluster"), true, false, func(s *RedisJobStore) error {
+			return s.SetWorkerID(ctx, clusterProofJobID, "worker-cluster")
+		}},
+		{"meta", metaFieldDeadline, "", deadlineIndexKey(), false, true, func(s *RedisJobStore) error {
+			return s.SetJobMeta(ctx, &pb.JobRequest{JobId: clusterProofJobID, Topic: "job.test", Budget: &pb.Budget{DeadlineMs: 60000}})
+		}},
+		{"deadline", metaFieldDeadline, strconv.FormatInt(deadline.UnixMicro(), 10), deadlineIndexKey(), false, false, func(s *RedisJobStore) error {
+			return s.SetDeadline(ctx, clusterProofJobID, deadline)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mr := miniredis.RunT(t)
+			client := testredis.NewMiniClusterClient(t, mr.Addr())
+			s := NewRedisJobStoreFromClient(client)
+			if err := tc.write(s); err != nil {
+				t.Fatalf("cluster write: %v", err)
+			}
+			assertJobIndexWrite(t, mr, tc, s.metaTTL)
+			first, second := tc.index, jobMetaKey(clusterProofJobID)
+			if tc.metaFirst {
+				first, second = second, first
+			}
+			testJobIndexWriteFailure(t, tc.write, first, second)
+		})
+	}
+}
+
+func assertJobIndexWrite(t *testing.T, mr *miniredis.Miniredis, tc jobIndexWriteCase, ttl time.Duration) {
+	t.Helper()
+	value := mr.HGet(jobMetaKey(clusterProofJobID), tc.field)
+	if value == "" || (tc.value != "" && value != tc.value) {
+		t.Fatalf("meta %s = %q; want %q", tc.field, value, tc.value)
+	}
+	if tc.name == "trace" {
+		if ok, err := mr.SIsMember(tc.index, clusterProofJobID); err != nil || !ok {
+			t.Fatalf("trace member = %v, %v", ok, err)
+		}
+	} else {
+		score, err := mr.ZScore(tc.index, clusterProofJobID)
+		if err != nil || score <= 0 || (tc.field == metaFieldDeadline && strconv.FormatInt(int64(score), 10) != value) {
+			t.Fatalf("index score = %v, %v; meta = %q", score, err, value)
+		}
+	}
+	if tc.metaTTL && mr.TTL(jobMetaKey(clusterProofJobID)) != ttl {
+		t.Fatal("meta TTL lost")
+	}
+	if tc.name == "worker" && mr.TTL(tc.index) != ttl {
+		t.Fatal("worker index TTL lost")
+	}
+}
+
+func testJobIndexWriteFailure(t *testing.T, write func(*RedisJobStore) error, first, second string) {
+	t.Helper()
+	for _, key := range []string{first, second} {
+		t.Run("failure-"+key, func(t *testing.T) {
+			mr := miniredis.RunT(t)
+			client := testredis.NewMiniClusterClient(t, mr.Addr())
+			failure := errors.New("write failed")
+			client.AddHook(jobPairFailureHook{key: key, err: failure})
+			if err := write(NewRedisJobStoreFromClient(client)); !errors.Is(err, failure) {
+				t.Fatalf("write error = %v; want %v", err, failure)
+			}
+			if mr.Exists(second) || mr.Exists(first) != (key == second) {
+				t.Fatalf("write order: first exists=%v, second exists=%v", mr.Exists(first), mr.Exists(second))
+			}
+		})
+	}
+}
 
 // The two keys hash to different slots. Each write must stay on one key so
 // go-redis's ClusterClient accepts it, including when backed by miniredis.

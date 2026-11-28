@@ -16,6 +16,7 @@ import (
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/redis/go-redis/v9"
 )
 
 func TestRedisJobStoreStateAndResultPtr(t *testing.T) {
@@ -999,6 +1000,104 @@ func TestRedisJobStoreCancelJob(t *testing.T) {
 	}
 	if state != model.JobStateSucceeded {
 		t.Fatalf("expected terminal state unchanged, got %s", state)
+	}
+}
+
+func TestListExpiredDeadlinesSkipsOrphans(t *testing.T) {
+	t.Run("refreshed-index", testDeadlineRefreshDuringSweep)
+	mr := miniredis.RunT(t)
+	store, err := NewRedisJobStore("redis://" + mr.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	now := time.Now().Truncate(time.Second)
+	for _, tc := range []struct {
+		id, deadline string
+		age          time.Duration
+	}{
+		{"no-meta", "", time.Hour},
+		{"no-deadline", "", time.Hour},
+		{"recent", "", time.Second},
+		{"at-grace", "", time.Minute},
+		{"zero", "0", time.Hour},
+		{"negative", "-1", time.Hour},
+		{"invalid", "invalid", time.Hour},
+		{"expired", fmt.Sprint(now.Add(-time.Minute).UnixMicro()), time.Minute},
+	} {
+		if _, err := mr.ZAdd(deadlineIndexKey(), float64(now.Add(-tc.age).UnixMicro()), tc.id); err != nil {
+			t.Fatal(err)
+		}
+		if tc.deadline != "" {
+			mr.HSet(jobMetaKey(tc.id), metaFieldDeadline, tc.deadline)
+		}
+	}
+	mr.HSet(jobMetaKey("no-deadline"), metaFieldTopic, "job.test")
+	jobs, err := store.ListExpiredDeadlines(context.Background(), now.Unix(), 20)
+	if err != nil || len(jobs) != 1 || jobs[0].ID != "expired" {
+		t.Fatalf("expired jobs = %v, %v; want only expired", jobs, err)
+	}
+	for _, id := range []string{"no-meta", "no-deadline", "zero", "negative"} {
+		if err := store.client.ZScore(context.Background(), deadlineIndexKey(), id).Err(); !errors.Is(err, redis.Nil) {
+			t.Errorf("old orphan %s retained: %v", id, err)
+		}
+	}
+	for _, id := range []string{"recent", "at-grace", "invalid", "expired"} {
+		if err := store.client.ZScore(context.Background(), deadlineIndexKey(), id).Err(); err != nil {
+			t.Errorf("entry %s removed: %v", id, err)
+		}
+	}
+}
+
+func testDeadlineRefreshDuringSweep(t *testing.T) {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	store, err := NewRedisJobStore("redis://" + mr.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	now := time.Now().Truncate(time.Second)
+	future := now.Add(time.Hour).UnixMicro()
+	if _, err := mr.ZAdd(deadlineIndexKey(), float64(now.Add(-time.Hour).UnixMicro()), "refresh"); err != nil {
+		t.Fatal(err)
+	}
+	store.client.AddHook(&deadlineReadHook{key: jobMetaKey("refresh"), after: func() {
+		if _, err := mr.ZAdd(deadlineIndexKey(), float64(future), "refresh"); err != nil {
+			t.Fatal(err)
+		}
+		mr.HSet(jobMetaKey("refresh"), metaFieldDeadline, fmt.Sprint(future))
+	}})
+	jobs, err := store.ListExpiredDeadlines(context.Background(), now.Unix(), 20)
+	if err != nil || len(jobs) != 0 {
+		t.Fatalf("expired jobs = %v, %v; want none", jobs, err)
+	}
+	if score, err := mr.ZScore(deadlineIndexKey(), "refresh"); err != nil || score != float64(future) {
+		t.Fatalf("refreshed index removed: score=%v err=%v", score, err)
+	}
+	if value := mr.HGet(jobMetaKey("refresh"), metaFieldDeadline); value != fmt.Sprint(future) {
+		t.Fatalf("refreshed deadline = %q; want %d", value, future)
+	}
+}
+
+type deadlineReadHook struct {
+	key   string
+	after func()
+	fired bool
+}
+
+func (h *deadlineReadHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+func (h *deadlineReadHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+func (h *deadlineReadHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		err := next(ctx, cmd)
+		if args := cmd.Args(); !h.fired && cmd.Name() == "hget" && len(args) == 3 && args[1] == h.key && args[2] == metaFieldDeadline {
+			h.fired = true
+			h.after()
+		}
+		return err
 	}
 }
 

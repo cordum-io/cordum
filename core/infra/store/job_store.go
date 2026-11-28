@@ -85,6 +85,7 @@ const (
 	metaFieldApprovalPublishedAt   = "approval_published_at"
 	envJobMetaTTL                  = "JOB_META_TTL"
 	envJobMetaTTLSeconds           = "JOB_META_TTL_SECONDS"
+	deadlineOrphanGrace            = time.Minute
 )
 
 var (
@@ -139,6 +140,14 @@ var defaultJobMetaTTL = 7 * 24 * time.Hour
 var releaseLockScript = redis.NewScript(`
 if redis.call('get', KEYS[1]) == ARGV[1] then
   return redis.call('del', KEYS[1])
+end
+return 0
+`)
+
+var removeDeadlineOrphanScript = redis.NewScript(`
+local score = redis.call('zscore', KEYS[1], ARGV[1])
+if score and tonumber(score) == tonumber(ARGV[2]) then
+  return redis.call('zrem', KEYS[1], ARGV[1])
 end
 return 0
 `)
@@ -1006,8 +1015,11 @@ func (s *RedisJobStore) SetJobMeta(ctx context.Context, req *pb.JobRequest) erro
 
 	if budget := req.GetBudget(); budget != nil && budget.GetDeadlineMs() > 0 {
 		deadline := time.Now().Add(time.Duration(budget.GetDeadlineMs()) * time.Millisecond)
+		// Index first: a failed meta write leaves an orphan, not an unenforced deadline.
+		if err := s.client.ZAdd(ctx, deadlineIndexKey(), redis.Z{Score: float64(deadline.UnixMicro()), Member: req.GetJobId()}).Err(); err != nil {
+			return fmt.Errorf("job store set job meta %s: %w", req.GetJobId(), err)
+		}
 		pipe.HSet(ctx, metaKey, metaFieldDeadline, deadline.UnixMicro())
-		pipe.ZAdd(ctx, deadlineIndexKey(), redis.Z{Score: float64(deadline.UnixMicro()), Member: req.GetJobId()})
 	}
 
 	if _, err := pipe.Exec(ctx); err != nil {
@@ -1089,11 +1101,10 @@ func (s *RedisJobStore) SetDeadline(ctx context.Context, jobID string, deadline 
 	if jobID == "" || deadline.IsZero() {
 		return fmt.Errorf("invalid job deadline")
 	}
-	pipe := s.client.TxPipeline()
-	pipe.HSet(ctx, jobMetaKey(jobID), metaFieldDeadline, deadline.UnixMicro())
-	pipe.ZAdd(ctx, deadlineIndexKey(), redis.Z{Score: float64(deadline.UnixMicro()), Member: jobID})
-	_, err := pipe.Exec(ctx)
-	if err != nil {
+	if err := s.client.ZAdd(ctx, deadlineIndexKey(), redis.Z{Score: float64(deadline.UnixMicro()), Member: jobID}).Err(); err != nil {
+		return fmt.Errorf("job store set deadline %s: %w", jobID, err)
+	}
+	if err := s.client.HSet(ctx, jobMetaKey(jobID), metaFieldDeadline, deadline.UnixMicro()).Err(); err != nil {
 		return fmt.Errorf("job store set deadline %s: %w", jobID, err)
 	}
 	return nil
@@ -1107,6 +1118,8 @@ func (s *RedisJobStore) ListExpiredDeadlines(ctx context.Context, nowUnix int64,
 		limit = 100
 	}
 	nowMicros := normalizeTimestampMicrosUpper(nowUnix)
+	// Round down for cleanup so second-precision callers get the full grace.
+	orphanCutoff := time.UnixMicro(nowMicros).Truncate(time.Second).Add(-deadlineOrphanGrace).UnixMicro()
 	members, err := s.client.ZRangeByScoreWithScores(ctx, deadlineIndexKey(), &redis.ZRangeBy{
 		Min:    "-inf",
 		Max:    fmt.Sprintf("%d", nowMicros),
@@ -1121,6 +1134,17 @@ func (s *RedisJobStore) ListExpiredDeadlines(ctx context.Context, nowUnix int64,
 	for _, m := range members {
 		jobID, ok := m.Member.(string)
 		if !ok {
+			continue
+		}
+		deadline, err := s.getDeadline(ctx, jobID)
+		if err != nil && !errors.Is(err, redis.Nil) {
+			continue
+		}
+		if deadline <= 0 {
+			if m.Score < float64(orphanCutoff) {
+				// Best-effort cleanup; a failed removal is retried on the next sweep.
+				_ = removeDeadlineOrphanScript.Run(ctx, s.client, []string{deadlineIndexKey()}, jobID, m.Score).Err()
+			}
 			continue
 		}
 		topic, _ := s.GetTopic(ctx, jobID)
@@ -1322,13 +1346,15 @@ func (s *RedisJobStore) AddJobToTrace(ctx context.Context, traceID, jobID string
 
 	metaKey := jobMetaKey(jobID)
 	pipe := s.client.TxPipeline()
-	pipe.SAdd(ctx, "trace:"+traceID, jobID)
 	pipe.HSet(ctx, metaKey, metaFieldTraceID, traceID)
 	if s.metaTTL > 0 {
 		pipe.Expire(ctx, metaKey, s.metaTTL)
 	}
 	_, err := pipe.Exec(ctx)
 	if err != nil {
+		return fmt.Errorf("job store add job to trace %s: %w", jobID, err)
+	}
+	if err := s.client.SAdd(ctx, "trace:"+traceID, jobID).Err(); err != nil {
 		return fmt.Errorf("job store add job to trace %s: %w", jobID, err)
 	}
 	return nil
@@ -1476,9 +1502,11 @@ func (s *RedisJobStore) SetWorkerID(ctx context.Context, jobID, workerID string)
 	if jobID == "" || workerID == "" {
 		return fmt.Errorf("jobID and workerID required")
 	}
+	if err := s.client.HSet(ctx, jobMetaKey(jobID), metaFieldWorkerID, workerID).Err(); err != nil {
+		return fmt.Errorf("job store set worker_id %s/%s: %w", jobID, workerID, err)
+	}
 	now := nowUnixMicros()
 	pipe := s.client.TxPipeline()
-	pipe.HSet(ctx, jobMetaKey(jobID), metaFieldWorkerID, workerID)
 	wKey := workerJobsKey(workerID)
 	pipe.ZAdd(ctx, wKey, redis.Z{Score: float64(now), Member: jobID})
 	pipe.ZRemRangeByRank(ctx, wKey, 0, -1001) // keep last 1000
