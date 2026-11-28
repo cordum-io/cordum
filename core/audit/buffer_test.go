@@ -7,6 +7,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/stretchr/testify/require"
 )
 
 // mockExporter records Export calls for testing.
@@ -328,6 +331,9 @@ func TestBufferedExporter_ExportWithRetryCancels(t *testing.T) {
 	called := make(chan struct{}, 1)
 	mock := &mockExporter{failNext: defaultMaxRetries, exportCalled: called}
 	buf := &BufferedExporter{exporter: mock}
+	before := testutil.ToFloat64(auditExportBacklog)
+	// This direct retry call represents one already accepted event.
+	auditExportBacklog.Inc()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -349,4 +355,76 @@ func TestBufferedExporter_ExportWithRetryCancels(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("exportWithRetry did not cancel promptly")
 	}
+	require.Equal(t, before, testutil.ToFloat64(auditExportBacklog))
+}
+
+type backlogBlockingExporter struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (b *backlogBlockingExporter) Export(ctx context.Context, _ []SIEMEvent) error {
+	b.once.Do(func() { close(b.started) })
+	select {
+	case <-b.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (b *backlogBlockingExporter) Close() error { return nil }
+
+func TestBufferedExporterExportBacklog(t *testing.T) {
+	t.Run("queued_and_in_flight", testBufferedExporterPendingBacklog)
+	t.Run("retries_exhausted", testBufferedExporterDroppedBacklog)
+	t.Run("no_exporter", testBufferedExporterMissingBacklog)
+}
+
+func testBufferedExporterPendingBacklog(t *testing.T) {
+	t.Setenv("CORDUM_AUDIT_BUFFER_SIZE", "2")
+	before := testutil.ToFloat64(auditExportBacklog)
+	exp := &backlogBlockingExporter{started: make(chan struct{}), release: make(chan struct{})}
+	buf := NewBufferedExporter(exp, WithBatchSize(1), WithFlushInterval(time.Hour))
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(exp.release) }) }
+	t.Cleanup(func() { release(); require.NoError(t, buf.Close()) })
+	buf.Send(testEvent())
+	select {
+	case <-exp.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("export did not start")
+	}
+	buf.Send(testEvent())
+	buf.Send(testEvent())
+	require.Equal(t, before+3, testutil.ToFloat64(auditExportBacklog))
+	buf.Send(testEvent()) // Full channel: the rejected event must not remain counted.
+	require.Equal(t, before+3, testutil.ToFloat64(auditExportBacklog))
+	release()
+	require.Eventually(t, func() bool { return testutil.ToFloat64(auditExportBacklog) == before }, 2*time.Second, time.Millisecond)
+	require.NoError(t, buf.Close())
+	buf.Send(testEvent())
+	require.Equal(t, before, testutil.ToFloat64(auditExportBacklog), "closed sends do not add backlog")
+}
+
+func testBufferedExporterDroppedBacklog(t *testing.T) {
+	t.Setenv("CORDUM_AUDIT_EXPORT_MAX_RETRIES", "3")
+	before := testutil.ToFloat64(auditExportBacklog)
+	drops := testutil.ToFloat64(auditBatchDrops)
+	buf := NewBufferedExporter(&alwaysFailExporter{}, WithBatchSize(1), WithFlushInterval(time.Hour), WithRetryBackoff(time.Millisecond))
+	t.Cleanup(func() { require.NoError(t, buf.Close()) })
+	buf.Send(testEvent())
+	require.Eventually(t, func() bool { return testutil.ToFloat64(auditBatchDrops) == drops+1 }, 2*time.Second, time.Millisecond)
+	require.Eventually(t, func() bool { return testutil.ToFloat64(auditExportBacklog) == before }, 2*time.Second, time.Millisecond)
+}
+
+func testBufferedExporterMissingBacklog(t *testing.T) {
+	before := testutil.ToFloat64(auditExportBacklog)
+	buf := NewBufferedExporter(nil, WithBatchSize(100), WithFlushInterval(time.Hour))
+	t.Cleanup(func() { require.NoError(t, buf.Close()) })
+	buf.Send(testEvent())
+	require.Equal(t, before+1, testutil.ToFloat64(auditExportBacklog))
+	require.NoError(t, buf.Close())
+	require.Equal(t, before, testutil.ToFloat64(auditExportBacklog))
 }

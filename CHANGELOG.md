@@ -596,6 +596,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- Audit: `cordum_audit_export_backlog` counts events accepted by the buffered
+  SIEM exporter that have not yet been exported or dropped, including queued
+  and in-flight events. Under `AUDIT_TRANSPORT=nats`, the broker backlog is the
+  JetStream consumer's pending count; this gauge does not include it
+  (task-75606d62).
+
 - CI: the required OpenAPI Validate check regenerates the Python client with
   `sdk/python/scripts/generate.sh` and fails when the result differs from the committed
   `sdk/python/src/cordum_sdk/_generated`. A spec change that alters the generated client,

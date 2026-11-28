@@ -34,6 +34,11 @@ var auditEventDrops = promauto.NewCounterVec(prometheus.CounterOpts{
 	Help: "Audit events dropped before export, by reason.",
 }, []string{"reason"})
 
+var auditExportBacklog = promauto.NewGauge(prometheus.GaugeOpts{
+	Name: "cordum_audit_export_backlog",
+	Help: "Audit events accepted for SIEM export and not yet exported or dropped.",
+})
+
 func auditMaxRetries() int {
 	if raw := strings.TrimSpace(os.Getenv("CORDUM_AUDIT_EXPORT_MAX_RETRIES")); raw != "" {
 		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
@@ -125,6 +130,7 @@ func NewBufferedExporter(exp Exporter, opts ...BufferOption) *BufferedExporter {
 
 // Send enqueues an event for export. Non-blocking; drops if buffer is full.
 func (b *BufferedExporter) Send(event SIEMEvent) {
+	auditExportBacklog.Inc()
 	reason := ""
 	b.sendMu.RLock()
 	if b.closed {
@@ -139,6 +145,7 @@ func (b *BufferedExporter) Send(event SIEMEvent) {
 		}
 	}
 	b.sendMu.RUnlock()
+	auditExportBacklog.Dec()
 	b.logDroppedEvent(event, reason)
 }
 
@@ -254,6 +261,7 @@ func (b *BufferedExporter) effectiveDrainTimeout() time.Duration {
 }
 
 func (b *BufferedExporter) exportWithRetry(ctx context.Context, events []SIEMEvent) {
+	defer auditExportBacklog.Sub(float64(len(events)))
 	if b.exporter == nil {
 		slog.Warn("audit exporter not configured, dropping batch", "events", len(events))
 		auditEventDrops.WithLabelValues("no_exporter").Add(float64(len(events)))
