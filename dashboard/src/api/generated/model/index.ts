@@ -407,6 +407,8 @@ export * from "./oIDCGroupRoleMappingUpdateRequestOidcGroupRoleMapping.ts";
 export * from "./outputRule.ts";
 export * from "./outputRuleAction.ts";
 export * from "./outputRuleConfig.ts";
+export * from "./outputRuleToggleRequest.ts";
+export * from "./outputRuleToggleResult.ts";
 export * from "./packRecord.ts";
 export * from "./packRecordStatus.ts";
 export * from "./packVerification.ts";

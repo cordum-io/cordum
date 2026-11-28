@@ -42,6 +42,8 @@ import type {
   ListVelocityRules200,
   NotFoundResponse,
   OutputRule,
+  OutputRuleToggleRequest,
+  OutputRuleToggleResult,
   PolicyAnalytics200,
   PolicyAnalyticsBody,
   PolicyAuditEnvelope,
@@ -820,18 +822,37 @@ export function useListOutputRules<
 }
 
 /**
- * @summary Create or update an output policy rule
+ * Sets `enabled` on an existing output rule and writes back the stored
+ * policy bundle that holds it, with an audit entry. Bundles are searched
+ * in key order, and the first one whose content holds the rule id is
+ * changed. This route does not create a rule or change any other rule
+ * field; the policy bundle routes do that.
+ *
+ * Before it writes, the gateway checks the bundle's stored content
+ * against the bundle's stored `_signature` and the policy trust store.
+ * - Under the enforce signature mode, a bundle that verifies is re-signed
+ *   with the configured policy signing key. A bundle that does not
+ *   verify is refused with `409` and nothing is written.
+ * - In warn or off mode, the bundle is re-signed only when its stored
+ *   content verifies and a policy signing key loads. Otherwise the
+ *   toggled content is stored unsigned and any stale `_signature` is
+ *   removed.
+ *
+ * The enforce mode applies when `CORDUM_POLICY_STRICT` is `enforce` or
+ * holds an invalid value. When it is unset, enforce applies in the
+ * production profile or when `SAFETY_POLICY_SIGNATURE_REQUIRED` is true.
+ * @summary Enable or disable an existing output policy rule
  */
 export const upsertOutputRule = (
   id: string,
-  outputRule: OutputRule,
+  outputRuleToggleRequest: OutputRuleToggleRequest,
   signal?: AbortSignal,
 ) => {
-  return apiClient<OutputRule>({
+  return apiClient<OutputRuleToggleResult>({
     url: `/api/v1/policy/output/rules/${id}`,
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    data: outputRule,
+    data: outputRuleToggleRequest,
     signal,
   });
 };
@@ -840,7 +861,11 @@ export const getUpsertOutputRuleMutationKey = () =>
   ["upsertOutputRule"] as const;
 
 export const getUpsertOutputRuleMutationOptions = <
-  TError = Error | UnauthorizedResponse | InternalServerErrorResponse,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -879,19 +904,26 @@ export const getUpsertOutputRuleMutationOptions = <
 export type UpsertOutputRuleMutationResult = NonNullable<
   Awaited<ReturnType<typeof upsertOutputRule>>
 >;
-export type UpsertOutputRuleMutationBody = OutputRule;
+export type UpsertOutputRuleMutationBody = OutputRuleToggleRequest;
 export type UpsertOutputRuleMutationError =
-  Error | UnauthorizedResponse | InternalServerErrorResponse;
+  | Error
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | InternalServerErrorResponse;
 export type UpsertOutputRuleMutationVariables = {
   id: string;
-  data: OutputRule;
+  data: OutputRuleToggleRequest;
 };
 
 /**
- * @summary Create or update an output policy rule
+ * @summary Enable or disable an existing output policy rule
  */
 export const useUpsertOutputRule = <
-  TError = Error | UnauthorizedResponse | InternalServerErrorResponse,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
   TContext = unknown,
 >(
   options?: {
