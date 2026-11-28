@@ -47,6 +47,8 @@ const (
 	EnvHMACOptional = "CORDUM_AUDIT_HMAC_OPTIONAL"
 
 	chainHeadInfix = "head:"
+	// One hash outside the tenant namespace, indexed by the full stream key.
+	chainHMACActivationKey = "audit:chain-meta:hmac-activation"
 	// chainMaxCASRetries caps how many times a single Append will retry
 	// on a contended head pointer. Under 100 concurrent writers on one
 	// tenant the total attempt count is ≈ producers² / 2, so budget
@@ -97,7 +99,8 @@ type Chainer struct {
 	client          redis.UniversalClient
 	cluster         bool // client is a Redis Cluster client: see appendCluster
 	keyPrefix       string
-	hmacKey         []byte // nil = HMAC disabled
+	hmacKey         []byte   // nil = HMAC disabled
+	hmacActivated   sync.Map // stream key -> struct{}; successful marker writes
 	headCacheMu     sync.Mutex
 	headCacheValid  bool
 	headCacheTenant string
@@ -311,6 +314,9 @@ func (c *Chainer) Append(ctx context.Context, event *SIEMEvent) error {
 		if err != nil {
 			return err
 		}
+		if err := c.activateHMAC(ctx, streamKey, event.Seq); err != nil {
+			return err
+		}
 		eventHash := event.EventHash
 
 		res, err := chainAppendScript.Run(ctx, c.client,
@@ -342,6 +348,22 @@ func (c *Chainer) Append(ctx context.Context, event *SIEMEvent) error {
 	}
 
 	return ErrCASExhausted
+}
+
+// activateHMAC persists the requirement before a signed event can commit.
+// A CAS retry may move the event later, but never moves activation later.
+func (c *Chainer) activateHMAC(ctx context.Context, streamKey string, seq int64) error {
+	if len(c.hmacKey) == 0 {
+		return nil
+	}
+	if _, ok := c.hmacActivated.Load(streamKey); ok {
+		return nil
+	}
+	if err := c.client.HSetNX(ctx, chainHMACActivationKey, streamKey, seq).Err(); err != nil {
+		return fmt.Errorf("audit chain: activate hmac: %w", err)
+	}
+	c.hmacActivated.Store(streamKey, struct{}{})
+	return nil
 }
 
 // seal sets the event's EventHash and, with an HMAC key, its HMAC for the Seq
@@ -425,6 +447,9 @@ func (c *Chainer) appendCluster(ctx context.Context, event *SIEMEvent) error {
 		event.Seq = max(tail.Seq, headSeq) + 1
 		payload, err := c.seal(event)
 		if err != nil {
+			return err
+		}
+		if err := c.activateHMAC(ctx, streamKey, event.Seq); err != nil {
 			return err
 		}
 		seq := strconv.FormatInt(event.Seq, 10)
