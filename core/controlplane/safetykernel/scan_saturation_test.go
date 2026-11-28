@@ -3,6 +3,7 @@ package safetykernel
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -218,17 +219,62 @@ func TestInputKeywordSaturationFailsClosed(t *testing.T) {
 }
 
 func TestRedactContentMasksEveryMatch(t *testing.T) {
-	content := "begin fixture\n" + joinLines(100, satCredential) + "\nend fixture"
-	redacted, findings := RedactContent([]byte(content), ContentScanOptions{IncludeSecrets: true, IncludePII: true})
-	if len(findings) < 100 {
-		t.Fatalf("findings = %d, want at least 100", len(findings))
+	for _, tc := range []struct {
+		name string
+		line func(int) string
+		seed func(int) string
+		opts ContentScanOptions
+	}{
+		{"secret", satCredential, satSecret, ContentScanOptions{IncludeSecrets: true, IncludePII: true}},
+		{"pii", satEmail, satEmail, ContentScanOptions{IncludePII: true}},
+		{"keyword", satSecret, satSecret, ContentScanOptions{Keywords: []string{"synthetic-saturation"}}},
+		{"custom", satSecret, satSecret, ContentScanOptions{ExtraPatterns: []NamedContentPattern{
+			{Name: "synthetic", Pattern: regexp.MustCompile(`synthetic-saturation-\d+`)},
+		}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			content := "begin fixture\n" + joinLines(100, tc.line) + "\nend fixture"
+			redacted, findings := RedactContent([]byte(content), tc.opts)
+			if len(findings) != 100 {
+				t.Fatalf("findings = %d, want 100", len(findings))
+			}
+			for i := 0; i < 100; i++ {
+				if strings.Contains(redacted, tc.seed(i)) {
+					t.Fatalf("redacted content contains seeded match %d", i)
+				}
+			}
+			if !strings.HasPrefix(redacted, "begin fixture\n") || !strings.HasSuffix(redacted, "\nend fixture") {
+				t.Fatal("redaction must keep the surrounding text")
+			}
+		})
 	}
-	for i := 0; i < 100; i++ {
-		if strings.Contains(redacted, satSecret(i)) {
-			t.Fatalf("redacted content contains seeded secret %d", i)
+}
+
+func TestScanSaturationAcrossPatterns(t *testing.T) {
+	var patterns []regexPattern
+	for _, pattern := range []string{"alpha", "beta", "gamma", "delta"} {
+		patterns = append(patterns, regexPattern{Expression: regexp.MustCompile(pattern)})
+	}
+	for _, tc := range []struct {
+		name    string
+		scanner OutputScanner
+		content string
+		extra   string
+	}{
+		{"regex", newRegexScanner("synthetic", "custom", patterns), strings.Repeat("alpha beta gamma delta\n", 8), "delta"},
+		{"pii", newPIIScanner(), strings.Repeat("user@example.com\n123-45-6789\n202-555-0123\n"+satCard(99, true)+"\n", 8), satCard(99, true)},
+	} {
+		for _, extra := range []int{0, 1} {
+			t.Run(fmt.Sprintf("%s_%d", tc.name, 32+extra), func(t *testing.T) {
+				content := []byte(tc.content + strings.Repeat(tc.extra, extra))
+				result := runScan(tc.scanner, content, true)
+				if len(result.Findings) != 32 || result.Saturated != (extra == 1) {
+					t.Fatalf("findings=%d saturated=%v, want 32 and %v", len(result.Findings), result.Saturated, extra == 1)
+				}
+				if uncapped := runScan(tc.scanner, content, false); len(uncapped.Findings) != 32+extra || uncapped.Saturated {
+					t.Fatalf("uncapped findings=%d saturated=%v, want %d and false", len(uncapped.Findings), uncapped.Saturated, 32+extra)
+				}
+			})
 		}
-	}
-	if !strings.HasPrefix(redacted, "begin fixture\n") || !strings.HasSuffix(redacted, "\nend fixture") {
-		t.Fatal("redaction must keep the surrounding text")
 	}
 }
