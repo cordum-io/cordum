@@ -40,7 +40,34 @@ const (
 
 type exceptionReadClient interface {
 	ZRevRange(ctx context.Context, key string, start, stop int64) *redis.StringSliceCmd
-	MGet(ctx context.Context, keys ...string) *redis.SliceCmd
+	Pipelined(ctx context.Context, fn func(redis.Pipeliner) error) ([]redis.Cmder, error)
+}
+
+// getExceptionRecords reads each key with its own GET in one plain pipeline,
+// which a cluster client splits per node. Like MGet, it returns one entry per
+// key, in key order, with nil for a missing key.
+func getExceptionRecords(ctx context.Context, client exceptionReadClient, keys []string) ([]any, error) {
+	cmds := make([]*redis.StringCmd, len(keys))
+	if _, err := client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		for i, key := range keys {
+			cmds[i] = pipe.Get(ctx, key)
+		}
+		return nil
+	}); err != nil && !errors.Is(err, redis.Nil) {
+		return nil, err
+	}
+	raws := make([]any, len(keys))
+	for i, cmd := range cmds {
+		val, err := cmd.Result()
+		if errors.Is(err, redis.Nil) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		raws[i] = val
+	}
+	return raws, nil
 }
 
 // exceptionKey returns the per-record JSON key.
@@ -201,7 +228,7 @@ func (s *RedisStore) ListExceptions(ctx context.Context, q ListExceptionsQuery) 
 	for i, id := range ids {
 		keys[i] = exceptionKey(id)
 	}
-	raws, err := s.client.MGet(ctx, keys...).Result()
+	raws, err := getExceptionRecords(ctx, s.client, keys)
 	if err != nil {
 		return ExceptionPage{}, fmt.Errorf("shadow exception: mget: %w", err)
 	}
@@ -376,7 +403,7 @@ func (s *RedisStore) matchActiveExceptions(ctx context.Context, client exception
 	for i, id := range ids {
 		keys[i] = exceptionKey(id)
 	}
-	raws, err := client.MGet(ctx, keys...).Result()
+	raws, err := getExceptionRecords(ctx, client, keys)
 	if err != nil {
 		return nil, fmt.Errorf("shadow exception: mget: %w", err)
 	}

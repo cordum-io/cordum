@@ -721,18 +721,25 @@ func retentionHoldFailureReason(err error) string {
 	return "retention_hold_unverifiable"
 }
 
+// deleteRedisKeysInBatches deletes each batch as one plain pipeline of
+// single-key DELs, which a cluster client splits per node.
 func (s *RedisStore) deleteRedisKeysInBatches(ctx context.Context, keys []string) (int64, error) {
 	var deleted int64
 	for start := 0; start < len(keys); start += sessionCleanupDeleteBatchSize {
-		end := start + sessionCleanupDeleteBatchSize
-		if end > len(keys) {
-			end = len(keys)
+		batch := keys[start:min(start+sessionCleanupDeleteBatchSize, len(keys))]
+		dels := make([]*redis.IntCmd, len(batch))
+		_, err := s.client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+			for i, key := range batch {
+				dels[i] = pipe.Del(ctx, key)
+			}
+			return nil
+		})
+		for _, del := range dels {
+			deleted += del.Val()
 		}
-		count, err := s.client.Del(ctx, keys[start:end]...).Result()
 		if err != nil {
 			return deleted, err
 		}
-		deleted += count
 	}
 	return deleted, nil
 }
