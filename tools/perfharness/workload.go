@@ -117,6 +117,15 @@ func LoadWorkload(path string) (*Workload, error) {
 	if err != nil || closeErr != nil || len(data) > maxContractBytes {
 		return nil, fmt.Errorf("workload %q: file: unreadable or exceeds size limit", name)
 	}
+	// A yaml.Node decode keeps each alias as a pointer, so aliases are refused here, before the
+	// decode below or a json encode in Validate can copy an anchored value once per alias.
+	var document yaml.Node
+	if err := yaml.Unmarshal(data, &document); err != nil {
+		return nil, fmt.Errorf("workload %q: fields: %w", name, err)
+	}
+	if hasAlias(&document) {
+		return nil, fmt.Errorf("workload %q: yaml: aliases are not allowed", name)
+	}
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
 	var w Workload
@@ -134,6 +143,11 @@ func LoadWorkload(path string) (*Workload, error) {
 		return nil, err
 	}
 	return &w, nil
+}
+
+// hasAlias walks Content only. It never follows Node.Alias, so its work is bounded by the file.
+func hasAlias(node *yaml.Node) bool {
+	return node.Kind == yaml.AliasNode || slices.ContainsFunc(node.Content, hasAlias)
 }
 
 func (w *Workload) Validate() error {
@@ -211,8 +225,8 @@ func (w *Workload) validateProfiles() error {
 	return nil
 }
 
-// validateRecordedSize encodes each profile's recorded configuration, aliases expanded, at its
-// depth in a results document (environment.configuration), as WriteResults does.
+// validateRecordedSize encodes each profile's recorded configuration at its depth in a results
+// document (environment.configuration), as WriteResults does.
 func (w *Workload) validateRecordedSize() error {
 	for name, profile := range w.Profiles {
 		config := Configuration{RequestMix: w.RequestMix, ProfileSteps: profile.Steps, Saturation: w.Saturation, QueueDepth: w.QueueDepth}

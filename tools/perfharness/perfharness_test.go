@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -328,7 +329,8 @@ func TestWorkloadRejects(t *testing.T) {
 		{"recorded size indented", "topic: job.perf", "nested: " + strings.Repeat("[", 41) + strings.Repeat("1,", 44999) + "1" + strings.Repeat("]", 41), "recorded configuration"},
 		{"recorded size at depth", "topic: job.perf", "nested: [" + strings.Repeat("1,", 49999) + "1]", "recorded configuration"},
 		{"recorded size escaped", "topic: job.perf", "topic: '" + strings.Repeat("<", 800000) + "'", "recorded configuration"},
-		{"recorded size aliases", "topic: job.perf", "nested: [&a " + strings.Repeat("x", 100000) + strings.Repeat(", *a", 45) + "]", "recorded configuration"},
+		{"aliases", "topic: job.perf", "nested: [&a x, *a]", "aliases are not allowed"},
+		{"aliases in a merge key", "topic: job.perf", "nested: &a {k: v}, merged: {<<: *a}", "aliases are not allowed"},
 		{"env value", "api_key_env: PERF_KEY", "api_key_env: secret-value", "api_key_env"},
 		{"trailing yaml", "p99_pct: 10}", "p99_pct: 10}\n---\nname: second", "trailing"},
 	}
@@ -339,6 +341,25 @@ func TestWorkloadRejects(t *testing.T) {
 				t.Fatalf("want fixture/%s rejection, got %v", tc.rule, err)
 			}
 		})
+	}
+}
+
+// yaml.v3 accepts any number of aliases to one scalar, and each json encode copies the scalar once
+// per alias, so the allocation bound is what shows the refusal comes before any encode.
+func TestWorkloadRefusesAliasFanOut(t *testing.T) {
+	fanOut := "nested: [&a " + strings.Repeat("x", 100000) + strings.Repeat(", *a", 1000) + "]"
+	content := strings.Replace(workloadFixture, "topic: job.perf", fanOut, 1)
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	w, err := loadFixture(t, content)
+	runtime.ReadMemStats(&after)
+	if w != nil || err == nil || !strings.Contains(err.Error(), "aliases are not allowed") || !strings.Contains(err.Error(), "fixture") {
+		t.Errorf("want fixture alias rejection, got %v", err)
+	}
+	allocated := after.TotalAlloc - before.TotalAlloc
+	t.Logf("LoadWorkload allocated %d bytes", allocated)
+	if allocated > 64<<20 {
+		t.Errorf("LoadWorkload allocated %d bytes, want at most %d", allocated, 64<<20)
 	}
 }
 
