@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Benchmark result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "system", "deployment_boundary", "measures"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "system": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {"type": "string", "pattern": "\\S"},
+        "version": {"type": "string", "pattern": "\\S"}
+      }
+    },
+    "deployment_boundary": {"type": "string", "pattern": "\\S"},
+    "measures": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "protection.unauthorized_effects",
+        "protection.mutation_rejection",
+        "protection.replay_rejection",
+        "protection.cross_tenant_rejection",
+        "protection.revocation_rejection",
+        "protection.constraint_enforcement",
+        "protection.bypass_coverage",
+        "protection.evidence_integrity",
+        "protection.recovery_correctness",
+        "utility.legitimate_completion",
+        "utility.false_blocks",
+        "utility.unnecessary_approvals",
+        "utility.reviewer_time",
+        "utility.installation_effort",
+        "utility.upgrade_effort",
+        "utility.sustained_enforced_usage",
+        "operations.latency",
+        "operations.throughput",
+        "operations.outage_behavior",
+        "operations.recovery_time",
+        "operations.unknown_outcome_reconciliation",
+        "operations.support_burden",
+        "operations.deployment_cost"
+      ],
+      "properties": {
+        "protection.unauthorized_effects": {"$ref": "#/$defs/measure"},
+        "protection.mutation_rejection": {"$ref": "#/$defs/measure"},
+        "protection.replay_rejection": {"$ref": "#/$defs/measure"},
+        "protection.cross_tenant_rejection": {"$ref": "#/$defs/measure"},
+        "protection.revocation_rejection": {"$ref": "#/$defs/measure"},
+        "protection.constraint_enforcement": {"$ref": "#/$defs/measure"},
+        "protection.bypass_coverage": {"$ref": "#/$defs/measure"},
+        "protection.evidence_integrity": {"$ref": "#/$defs/measure"},
+        "protection.recovery_correctness": {"$ref": "#/$defs/measure"},
+        "utility.legitimate_completion": {"$ref": "#/$defs/measure"},
+        "utility.false_blocks": {"$ref": "#/$defs/measure"},
+        "utility.unnecessary_approvals": {"$ref": "#/$defs/measure"},
+        "utility.reviewer_time": {"$ref": "#/$defs/measure"},
+        "utility.installation_effort": {"$ref": "#/$defs/measure"},
+        "utility.upgrade_effort": {"$ref": "#/$defs/measure"},
+        "utility.sustained_enforced_usage": {"$ref": "#/$defs/measure"},
+        "operations.latency": {"$ref": "#/$defs/measure"},
+        "operations.throughput": {"$ref": "#/$defs/measure"},
+        "operations.outage_behavior": {"$ref": "#/$defs/measure"},
+        "operations.recovery_time": {"$ref": "#/$defs/measure"},
+        "operations.unknown_outcome_reconciliation": {"$ref": "#/$defs/measure"},
+        "operations.support_burden": {"$ref": "#/$defs/measure"},
+        "operations.deployment_cost": {"$ref": "#/$defs/measure"}
+      }
+    }
+  },
+  "$defs": {
+    "measure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value"],
+      "properties": {
+        "value": {
+          "oneOf": [
+            {"type": "number"},
+            {"enum": ["unsupported", "not measured"]}
+          ]
+        },
+        "note": {"type": "string"}
+      }
+    }
+  }
+}
