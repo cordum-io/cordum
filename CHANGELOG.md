@@ -216,6 +216,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
+- Scheduler: a job's policy constraints require exact `enforces.<kind>` entries in
+  the receiving worker's heartbeat capabilities, except the scheduler-handled
+  `budgets.max_runtime_ms`, `budgets.max_retries` and `budgets.max_concurrent_jobs`.
+  For example, declare `enforces.sandbox.isolated` through the Go SDK's
+  `runtime.Config.Capabilities`. A selected target missing a declaration causes
+  the job to end `DENIED`, with DLQ reason code `constraint_unenforced` and a reason
+  naming the worker and uncovered kinds, rather than dispatching with constraints
+  only passed in `CORDUM_POLICY_CONSTRAINTS`. Cordum does not verify a worker's
+  declaration. Before upgrading, review policies returning sandbox, toolchain,
+  diff, `redaction_level` or `budgets.max_artifact_bytes` constraints, and declare
+  only kinds the worker actually applies (task-c5611f8b).
+
 - Context engine memory is stored per tenant. `BuildWindowRequest` has a new
   `tenant_id` field. `BuildWindow` and `UpdateMemory` use stored memory only
   for a request whose `tenant_id` is set, under the id
