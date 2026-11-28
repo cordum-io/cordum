@@ -3,6 +3,7 @@ package bus
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -19,13 +20,37 @@ const (
 	RawAdmissionRetry
 )
 
+// RawAdmissionOutcome is how an accepted delivery ended.
+type RawAdmissionOutcome uint8
+
+const (
+	// RawAdmissionSucceeded means the message was processed.
+	RawAdmissionSucceeded RawAdmissionOutcome = iota + 1
+	// RawAdmissionFailed means the message ended without success and will not
+	// be delivered again.
+	RawAdmissionFailed
+	// RawAdmissionReleased means the message was not processed and is
+	// redelivered for another attempt.
+	RawAdmissionReleased
+)
+
 // RawAdmissionResult is returned after inspecting the exact transport bytes.
 // Accepted results must include the already decoded and validated packet.
+// Settle, when set on an accepted result, is called at most once with how
+// the delivery ended, so admission can tell a completed message from one
+// that must run again.
 type RawAdmissionResult struct {
 	Disposition RawAdmissionDisposition
 	Packet      *pb.BusPacket
 	Authority   *RawAdmissionAuthority
 	RetryAfter  time.Duration
+	Settle      func(RawAdmissionOutcome)
+}
+
+func (r RawAdmissionResult) settle(outcome RawAdmissionOutcome) {
+	if r.Settle != nil {
+		r.Settle(outcome)
+	}
 }
 
 // RawPacketAdmission verifies raw bytes against the authenticated NATS subject.
@@ -105,11 +130,11 @@ func processInboundWithAdmission(
 	handler func(context.Context, *pb.BusPacket) error,
 	numDelivered uint64,
 ) (msgAction, time.Duration) {
-	packet, authority, action, delay, proceed := preAdmitRawPacket(ctx, admit, subject, data)
+	admission, action, delay, proceed := preAdmitRawPacket(ctx, admit, subject, data)
 	if !proceed {
 		return action, delay
 	}
-	return processAfterRawAdmission(ctx, admit != nil, packet, authority, subject, data, handler, numDelivered)
+	return processAfterRawAdmission(ctx, admit != nil, admission, subject, data, handler, numDelivered)
 }
 
 func preAdmitRawPacket(
@@ -117,18 +142,19 @@ func preAdmitRawPacket(
 	admit RawPacketAdmission,
 	subject string,
 	data []byte,
-) (*pb.BusPacket, *RawAdmissionAuthority, msgAction, time.Duration, bool) {
+) (RawAdmissionResult, msgAction, time.Duration, bool) {
 	if admit == nil {
-		return nil, nil, msgActionAck, 0, true
+		return RawAdmissionResult{}, msgActionAck, 0, true
 	}
-	return evaluateRawAdmission(admit(ctx, subject, data))
+	admission := admit(ctx, subject, data)
+	action, delay, proceed := evaluateRawAdmission(admission)
+	return admission, action, delay, proceed
 }
 
 func processAfterRawAdmission(
 	ctx context.Context,
 	admitted bool,
-	packet *pb.BusPacket,
-	authority *RawAdmissionAuthority,
+	admission RawAdmissionResult,
 	subject string,
 	data []byte,
 	handler func(context.Context, *pb.BusPacket) error,
@@ -137,25 +163,41 @@ func processAfterRawAdmission(
 	if !admitted {
 		return processBusMsgCtx(ctx, subject, data, handler, numDelivered)
 	}
-	return packetHandlerAction(handler(withRawAdmissionAuthority(ctx, authority), packet))
+	err := handler(withRawAdmissionAuthority(ctx, admission.Authority), admission.Packet)
+	admission.settle(handlerOutcome(subject, err))
+	return packetHandlerAction(err)
 }
 
-func evaluateRawAdmission(result RawAdmissionResult) (*pb.BusPacket, *RawAdmissionAuthority, msgAction, time.Duration, bool) {
+// handlerOutcome maps a handler result to the admitted delivery's outcome. The
+// bus acks a non-retryable error, so that error ends the message for good.
+func handlerOutcome(subject string, err error) RawAdmissionOutcome {
+	if err == nil {
+		return RawAdmissionSucceeded
+	}
+	if _, ok := RetryDelay(err); ok {
+		return RawAdmissionReleased
+	}
+	slog.Warn("bus: admitted message failed without retry", "subject", subject, "err", err)
+	return RawAdmissionFailed
+}
+
+func evaluateRawAdmission(result RawAdmissionResult) (msgAction, time.Duration, bool) {
 	switch result.Disposition {
 	case RawAdmissionAccepted:
 		if result.Packet == nil {
-			return nil, nil, msgActionTerm, 0, false
+			result.settle(RawAdmissionFailed)
+			return msgActionTerm, 0, false
 		}
-		return result.Packet, result.Authority, msgActionAck, 0, true
+		return msgActionAck, 0, true
 	case RawAdmissionDuplicate:
-		return nil, nil, msgActionAck, 0, false
+		return msgActionAck, 0, false
 	case RawAdmissionRetry:
 		if result.RetryAfter > 0 {
-			return nil, nil, msgActionNakDelay, result.RetryAfter, false
+			return msgActionNakDelay, result.RetryAfter, false
 		}
-		return nil, nil, msgActionNak, 0, false
+		return msgActionNak, 0, false
 	default:
-		return nil, nil, msgActionTerm, 0, false
+		return msgActionTerm, 0, false
 	}
 }
 

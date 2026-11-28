@@ -216,6 +216,15 @@ func (b *NatsBus) ProductionTransportReady() bool {
 	return b != nil && b.productionTransportReady
 }
 
+// AckWait is how long JetStream waits for an ack before it redelivers a
+// message. A nil receiver reports zero.
+func (b *NatsBus) AckWait() time.Duration {
+	if b == nil {
+		return 0
+	}
+	return b.ackWait
+}
+
 // natsApplyAuth reads auth env vars and appends the appropriate NATS option.
 // Returns true if any auth mechanism was configured.
 func natsApplyAuth(opts *[]nats.Option) bool {
@@ -570,12 +579,13 @@ func (b *NatsBus) jsCallbackCtx(
 				ctx = context.WithValue(ctx, publishedAtKey{}, meta.Timestamp)
 			}
 		}
-		packet, authority, action, delay, proceed := preAdmitRawPacket(ctx, admit, msg.Subject, msg.Data)
+		admission, action, delay, proceed := preAdmitRawPacket(ctx, admit, msg.Subject, msg.Data)
 		if !proceed {
 			b.settleRawAdmission(msg, subject, action, delay)
 			return
 		}
 		if b.terminateMaxDelivery(msg, subject, numDelivered) {
+			admission.settle(RawAdmissionFailed)
 			return
 		}
 
@@ -586,9 +596,11 @@ func (b *NatsBus) jsCallbackCtx(
 			exists, err := b.redis.Exists(rCtx, pKey).Result()
 			rCancel()
 			if err != nil {
+				admission.settle(RawAdmissionReleased)
 				_ = msg.NakWithDelay(2 * time.Second)
 				return
 			} else if exists > 0 {
+				admission.settle(RawAdmissionSucceeded)
 				_ = msg.Ack()
 				return
 			}
@@ -601,7 +613,7 @@ func (b *NatsBus) jsCallbackCtx(
 		}
 
 		action, delay = processAfterRawAdmission(
-			ctx, admit != nil, packet, authority, msg.Subject, msg.Data, handler, numDelivered,
+			ctx, admit != nil, admission, msg.Subject, msg.Data, handler, numDelivered,
 		)
 
 		if b.redis != nil && streamSeq > 0 {
@@ -745,12 +757,13 @@ func (b *NatsBus) subscribe(subject, queue string, handler func(*pb.BusPacket) e
 				streamSeq = meta.Sequence.Stream
 			}
 			ctx := context.Background()
-			packet, authority, action, delay, proceed := preAdmitRawPacket(ctx, admit, msg.Subject, msg.Data)
+			admission, action, delay, proceed := preAdmitRawPacket(ctx, admit, msg.Subject, msg.Data)
 			if !proceed {
 				b.settleRawAdmission(msg, subject, action, delay)
 				return
 			}
 			if b.terminateMaxDelivery(msg, subject, numDelivered) {
+				admission.settle(RawAdmissionFailed)
 				return
 			}
 			if numDelivered > 50 {
@@ -767,10 +780,12 @@ func (b *NatsBus) subscribe(subject, queue string, handler func(*pb.BusPacket) e
 				rCancel()
 				if err != nil {
 					slog.Error("bus: idempotency check failed, nak-ing for retry", "subject", subject, "stream_seq", streamSeq, "err", err)
+					admission.settle(RawAdmissionReleased)
 					_ = msg.NakWithDelay(2 * time.Second)
 					return
 				} else if exists > 0 {
 					// Already processed — just Ack and skip.
+					admission.settle(RawAdmissionSucceeded)
 					if ackErr := msg.Ack(); ackErr != nil {
 						slog.Warn("bus: ack dedup failed", "subject", subject, "stream_seq", streamSeq, "err", ackErr)
 					}
@@ -787,7 +802,7 @@ func (b *NatsBus) subscribe(subject, queue string, handler func(*pb.BusPacket) e
 			}
 
 			action, delay = processAfterRawAdmission(
-				ctx, admit != nil, packet, authority, msg.Subject, msg.Data, contextualHandler(handler), numDelivered,
+				ctx, admit != nil, admission, msg.Subject, msg.Data, contextualHandler(handler), numDelivered,
 			)
 
 			// Clear in-flight tracking after processing.
