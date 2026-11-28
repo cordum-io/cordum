@@ -187,12 +187,59 @@ func (s *EvalRunStore) CreateRun(ctx context.Context, result runner.RunResult) e
 	if ok != 1 {
 		return ErrEvalRunAlreadyExists
 	}
-	// Apply TTL after the atomic create so even on a retry-of-retry the
-	// record + index members converge to the same expiry.
+	// Apply TTL after the atomic create: the record expires after ttl, and
+	// retainIndexes keeps each index key alive at least that long.
 	if s.ttl > 0 {
 		s.client.Expire(ctx, keys[0], s.ttl)
+		s.retainIndexes(ctx, result.Tenant, keys[1:])
 	}
 	return nil
+}
+
+// retainIndexes runs on each create for the run's index keys. It removes the
+// members whose record has expired, then sets the key's TTL to the record TTL,
+// so an index key lives at least as long as the record of the run created
+// last, and a quiet index expires with that record. Candidates are members
+// scored (StartedAt) at or before now minus the TTL, at most cleanupBatchSize
+// per key and create; a candidate whose record still exists is kept. Only
+// single-key commands are used, with no script or transaction. The create has
+// already succeeded, so a failure is logged rather than returned.
+func (s *EvalRunStore) retainIndexes(ctx context.Context, tenant string, indexKeys []string) {
+	cutoff := strconv.FormatInt(time.Now().Add(-s.ttl).UnixMilli(), 10)
+	for _, key := range indexKeys {
+		err := errors.Join(s.pruneExpiredRuns(ctx, tenant, key, cutoff), s.client.Expire(ctx, key, s.ttl).Err())
+		if err != nil {
+			slog.Warn("eval run index retention failed", "component", "store", "tenant", tenant, "error", err)
+		}
+	}
+}
+
+// pruneExpiredRuns removes from one index the candidates whose record is gone.
+func (s *EvalRunStore) pruneExpiredRuns(ctx context.Context, tenant, indexKey, cutoff string) error {
+	ids, err := s.client.ZRangeByScore(ctx, indexKey, &redis.ZRangeBy{
+		Min: "-inf", Max: cutoff, Count: cleanupBatchSize,
+	}).Result()
+	if err != nil || len(ids) == 0 {
+		return err
+	}
+	pipe := s.client.Pipeline()
+	exists := make([]*redis.IntCmd, len(ids))
+	for i, id := range ids {
+		exists[i] = pipe.Exists(ctx, evalRunRecordKey(tenant, id))
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return err
+	}
+	expired := make([]any, 0, len(ids))
+	for i, id := range ids {
+		if exists[i].Val() == 0 {
+			expired = append(expired, id)
+		}
+	}
+	if len(expired) == 0 {
+		return nil
+	}
+	return s.client.ZRem(ctx, indexKey, expired...).Err()
 }
 
 // GetRun loads a run by id within the tenant.

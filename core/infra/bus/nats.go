@@ -1188,8 +1188,9 @@ func (b *NatsBus) initJetStreamFromEnv() {
 			slog.Info("bus: jetstream stream ensured", "stream", name, "subjects", subjects, "max_age", maxAge) // #nosec G706 -- structured slog, name is from internal config
 			return
 		}
-		// Stream may already exist; treat that as success.
-		if _, infoErr := js.StreamInfo(name); infoErr == nil {
+		// The stream already exists: apply the configured retention to it.
+		if info, infoErr := js.StreamInfo(name); infoErr == nil {
+			reconcileStreamMaxAge(js, info, maxAge)
 			return
 		}
 		slog.Error("bus: jetstream ensure stream failed", "stream", name, "err", err)
@@ -1201,6 +1202,23 @@ func (b *NatsBus) initJetStreamFromEnv() {
 	b.jsEnabled = true
 	b.ackWait = ackWait
 	slog.Info("bus: jetstream enabled", "ack_wait", ackWait, "replicas", replicas)
+}
+
+// reconcileStreamMaxAge sets an existing stream's MaxAge to the configured one.
+// UpdateStream edits the stream in place, keeping its messages and sequence
+// numbers; the server then removes only messages older than the new MaxAge.
+// Every other field keeps the stream's current value.
+func reconcileStreamMaxAge(js nats.JetStreamContext, info *nats.StreamInfo, maxAge time.Duration) {
+	if info.Config.MaxAge == maxAge {
+		return
+	}
+	cfg := info.Config
+	cfg.MaxAge = maxAge
+	if _, err := js.UpdateStream(&cfg); err != nil {
+		slog.Error("bus: jetstream stream max age update failed", "stream", cfg.Name, "max_age", maxAge, "err", err)
+		return
+	}
+	slog.Info("bus: jetstream stream max age updated", "stream", cfg.Name, "old_max_age", info.Config.MaxAge, "new_max_age", maxAge)
 }
 
 // isDurableSubject returns true for subjects that need JetStream persistence.

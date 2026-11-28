@@ -5,6 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+- Decision-log index keys expire with `CORDUM_DECISION_LOG_TTL_SECONDS`, refreshed
+  at each append, in the store and the cordumctl governance helper (task-f6a68292).
+
 ### Fixed
 
 - MCP: JSON-RPC errors no longer expose execution ids. Errors caused by
@@ -434,6 +437,37 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- JetStream streams take `NATS_JS_MAX_AGE` at bus start. When `CORDUM_SYS` or
+  `CORDUM_JOBS` exists with another MaxAge, bus init updates that stream in
+  place to the configured value and keeps its messages, sequence numbers and
+  other settings; the server then removes messages older than the new MaxAge.
+  An unchanged setting leaves the streams as they are. If the server refuses
+  the update, bus init logs the error and the stream keeps its MaxAge. The
+  DI-C21 retention proof is `TestRetentionProofDIC21` (PR2-08, task-5c098d99).
+- Copilot: when `COPILOT_SESSION_MAX_MESSAGES` trims a session, its title is derived
+  again from the oldest retained message with text (task-74816afd).
+
+- Eval run index keys follow `CORDUM_EVAL_RUN_TTL_SECONDS`. Each eval run create
+  sets the TTL of the tenant's `eval:run:<tenant>:idx:t` key and of the run's
+  `idx:ds:<dataset>` key to the run TTL, and removes from both keys the runs whose
+  record has expired. A run whose record is present keeps its index entries. The
+  DI-C37 store retention proof is `TestRetentionProofDIC37` (PR2-08,
+  task-397716a3).
+- Job index and event keys follow `JOB_META_TTL`. On each scan the scheduler
+  reconciler removes a job's id from the `job:index:<state>` sets and
+  `job:recent`, and deletes its `job:events:<id>` list, once the job's
+  `job:meta` and `job:state` keys have both expired. A job with either key
+  present keeps its index entries and its events. The DI-C22 and DI-C24
+  retention proofs are `TestRetentionProofDIC22` and `TestRetentionProofDIC24`
+  (PR2-08, task-3d7cab89).
+- Edge shadow findings: every finding write also stores an index record,
+  `edge:shadow:finding-index:<hash>` keyed by a hash of tenant and id, holding
+  the index values the finding was written under and no id or tenant. It expires
+  at the finding's terminal retention plus 90 days. Read-time cleanup of a stale
+  id removes it from every index set the record names, then deletes the record;
+  an id live under another tenant keeps its shared index members. The DI-C31
+  retention proof is `TestRetentionProofDIC31` (PR2-08, task-89109425).
+
 - Login: failed-login counters are kept per tenant. The per-IP and per-username counters key on the login's tenant (base64url-encoded), so failures recorded for a username count only toward that username's limits in that tenant. Counters recorded before this release are not read and expire within the lockout period.
 
 - Velocity rule stats: for callers without cross-tenant access, `GET /api/v1/policy/velocity-rules/stats` counts only buckets recorded under the caller's own tenant. Buckets without a tenant segment count only for callers with cross-tenant access.
@@ -595,6 +629,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   instead of TanStack, without changing table behavior (task-fc8b600a).
 
 ### Added
+
+- Retention contract (PR2-08): a deletion-proof map, `TestRetentionProofMapContract`
+  checker and Redis `tracescan` helper, plus `TestRetentionBackupWindow` pinning
+  the 9-day backup window in `deploy/k8s/production` when jobs run on schedule.
+  The checker rejects pending cells; this map claims no deletion guarantee
+  beyond the cited tests.
 
 - CI: the required OpenAPI Validate check regenerates the Python client with
   `sdk/python/scripts/generate.sh` and fails when the result differs from the committed

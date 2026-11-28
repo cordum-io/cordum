@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -24,24 +25,33 @@ import (
 //	edge:shadow:index:<tenant_id>:risk:<v>       — ZSET, secondary filter
 //	edge:shadow:index:<tenant_id>:agent:<v>      — ZSET, secondary filter
 //	edge:shadow:index:<tenant_id>:owner:<v>      — ZSET, secondary filter
+//	edge:shadow:index:source:<v>                 — ZSET, shared across tenants
+//	edge:shadow:index:cluster:<v>                — ZSET, shared across tenants
+//	edge:shadow:index:repo:<provider>:<repo>     — ZSET, shared across tenants
+//	edge:shadow:index:signal:<v>                 — ZSET, shared across tenants
+//	edge:shadow:finding-index:<hash>             — JSON index fields (string), with TTL
 //
-// All secondary indexes share the same per-tenant scope to prevent
-// cross-tenant index contamination. The tenant index is the broadest
-// fallback; secondaries are used when the query's narrowest filter
-// matches one of (status, risk, agent_product, owner).
+// The tenant-scoped indexes prevent cross-tenant index contamination. The
+// tenant index is the broadest fallback; secondaries are used when the
+// query's narrowest filter matches one of (status, risk, agent_product,
+// owner). The finding-index record holds the index values a finding was
+// written under, so read-time cleanup can remove its id from every index.
 const (
-	redisKeyFinding     = "edge:shadow:finding:"
-	redisKeyIndexTenant = "edge:shadow:index:"
-	redisIndexSegStatus = ":status:"
-	redisIndexSegRisk   = ":risk:"
-	redisIndexSegAgent  = ":agent:"
-	redisIndexSegOwner  = ":owner:"
+	redisKeyFinding         = "edge:shadow:finding:"
+	redisKeyFindingIndexRef = "edge:shadow:finding-index:"
+	redisKeyIndexTenant     = "edge:shadow:index:"
+	redisIndexSegStatus     = ":status:"
+	redisIndexSegRisk       = ":risk:"
+	redisIndexSegAgent      = ":agent:"
+	redisIndexSegOwner      = ":owner:"
 	// EDGE-143.5 — §10.5 NON-tenant-scoped indexes. Multiple tenants
 	// share the same ZSET on these keys (Q7 binding governor ruling,
 	// comment-a17f4f1c on task-de50a293). Tenant isolation is enforced
 	// at read time via the gate in ListFindings; cross-tenant members
-	// are SKIPPED (never deleted) by the indexIsTenantScoped=false
-	// branch — see the data-loss guard there.
+	// are SKIPPED by the indexIsTenantScoped=false branch. Cleanup
+	// removes a member from these sets only when its finding key is
+	// gone, and re-adds the members of a finding created at that id
+	// meanwhile (pruneFindingIndexes).
 	redisIndexKeySource  = "edge:shadow:index:source:"
 	redisIndexKeyCluster = "edge:shadow:index:cluster:"
 	redisIndexKeyRepo    = "edge:shadow:index:repo:"
@@ -248,6 +258,82 @@ func signalIndexKey(signal string) string {
 	return redisIndexKeySignal + signal
 }
 
+// findingIndexRefKey returns the key of a finding's index record, a hash of
+// tenant and id so the key holds neither. Any path that deletes a finding
+// must delete this record with it.
+func findingIndexRefKey(tenant, id string) string {
+	sum := sha256.Sum256([]byte(tenant + "\x00" + id))
+	return redisKeyFindingIndexRef + hex.EncodeToString(sum[:])
+}
+
+// findingIndexFields are the values that place a finding in its index
+// sets. They form the finding's index record, which holds no finding id
+// and no tenant.
+type findingIndexFields struct {
+	Status           FindingStatus `json:"status"`
+	Risk             FindingRisk   `json:"risk"`
+	AgentProduct     string        `json:"agent_product"`
+	OwnerPrincipalID string        `json:"owner_principal_id"`
+	SourceType       string        `json:"source_type"`
+	ClusterID        string        `json:"cluster_id,omitempty"`
+	CIProvider       string        `json:"ci_provider,omitempty"`
+	Repo             string        `json:"repo,omitempty"`
+	SignalSet        []string      `json:"signal_set,omitempty"`
+}
+
+func indexFieldsOf(f *ShadowAgentFinding) findingIndexFields {
+	return findingIndexFields{
+		Status:           f.Status,
+		Risk:             f.Risk,
+		AgentProduct:     f.AgentProduct,
+		OwnerPrincipalID: f.OwnerPrincipalID,
+		SourceType:       f.SourceType,
+		ClusterID:        f.ClusterID,
+		CIProvider:       f.CIProvider,
+		Repo:             f.Repo,
+		SignalSet:        f.SignalSet,
+	}
+}
+
+// findingIndexKeys returns the index sets a finding with these fields is
+// written to: the tenant-scoped sets, then the sets shared across tenants.
+func findingIndexKeys(tenant string, f findingIndexFields) (scoped, shared []string) {
+	scoped = []string{
+		tenantIndexKey(tenant),
+		secondaryIndexKey(tenant, redisIndexSegStatus, string(f.Status)),
+		secondaryIndexKey(tenant, redisIndexSegRisk, string(f.Risk)),
+		secondaryIndexKey(tenant, redisIndexSegAgent, f.AgentProduct),
+		secondaryIndexKey(tenant, redisIndexSegOwner, f.OwnerPrincipalID),
+	}
+	// EDGE-143.5 — §10.5 shared (non-tenant-scoped) indexes.
+	shared = []string{sourceIndexKey(f.SourceType)}
+	if f.ClusterID != "" {
+		shared = append(shared, clusterIndexKey(f.ClusterID))
+	}
+	if f.CIProvider != "" && f.Repo != "" {
+		shared = append(shared, repoIndexKey(f.CIProvider, f.Repo))
+	}
+	for _, sig := range f.SignalSet {
+		if sig != "" {
+			shared = append(shared, signalIndexKey(sig))
+		}
+	}
+	return scoped, shared
+}
+
+// addFindingIndexRefWrite queues f's index record. Its TTL is the
+// finding's terminal retention plus DefaultTerminalRetention, reset on
+// every write, so the record outlives an expiring finding by that grace.
+func (s *RedisStore) addFindingIndexRefWrite(ctx context.Context, pipe redis.Pipeliner, f *ShadowAgentFinding) error {
+	payload, err := json.Marshal(indexFieldsOf(f))
+	if err != nil {
+		return fmt.Errorf("shadow finding: marshal index record: %w", err)
+	}
+	ttl := max(s.retentionFor(f.RetentionClass), 0) + DefaultTerminalRetention
+	pipe.Set(ctx, findingIndexRefKey(f.TenantID, f.FindingID), payload, ttl)
+	return nil
+}
+
 // CreateFinding persists a new finding. Atomicity: the JSON write +
 // every index member add happen inside a Redis pipeline so a single
 // partial failure leaves no orphaned indexes.
@@ -323,7 +409,7 @@ func (s *RedisStore) createFindingAtomically(
 			_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 				pipe.Set(ctx, key, payload, 0)
 				addFindingIndexWrites(ctx, pipe, &candidate, float64(candidate.CreatedAt.UnixMilli()))
-				return nil
+				return s.addFindingIndexRefWrite(ctx, pipe, &candidate)
 			})
 			if err != nil {
 				return fmt.Errorf("shadow finding: create transaction: %w", err)
@@ -370,27 +456,9 @@ func decodeExistingFindingForCreate(raw []byte) (*ShadowAgentFinding, error) {
 }
 
 func addFindingIndexWrites(ctx context.Context, pipe redis.Pipeliner, finding *ShadowAgentFinding, score float64) {
-	pipe.ZAdd(ctx, tenantIndexKey(finding.TenantID), redis.Z{Score: score, Member: finding.FindingID})
-	pipe.ZAdd(ctx, secondaryIndexKey(finding.TenantID, redisIndexSegStatus, string(finding.Status)),
-		redis.Z{Score: score, Member: finding.FindingID})
-	pipe.ZAdd(ctx, secondaryIndexKey(finding.TenantID, redisIndexSegRisk, string(finding.Risk)),
-		redis.Z{Score: score, Member: finding.FindingID})
-	pipe.ZAdd(ctx, secondaryIndexKey(finding.TenantID, redisIndexSegAgent, finding.AgentProduct),
-		redis.Z{Score: score, Member: finding.FindingID})
-	pipe.ZAdd(ctx, secondaryIndexKey(finding.TenantID, redisIndexSegOwner, finding.OwnerPrincipalID),
-		redis.Z{Score: score, Member: finding.FindingID})
-	// EDGE-143.5 — §10.5 shared (non-tenant-scoped) indexes.
-	pipe.ZAdd(ctx, sourceIndexKey(finding.SourceType), redis.Z{Score: score, Member: finding.FindingID})
-	if finding.ClusterID != "" {
-		pipe.ZAdd(ctx, clusterIndexKey(finding.ClusterID), redis.Z{Score: score, Member: finding.FindingID})
-	}
-	if finding.CIProvider != "" && finding.Repo != "" {
-		pipe.ZAdd(ctx, repoIndexKey(finding.CIProvider, finding.Repo), redis.Z{Score: score, Member: finding.FindingID})
-	}
-	for _, sig := range finding.SignalSet {
-		if sig != "" {
-			pipe.ZAdd(ctx, signalIndexKey(sig), redis.Z{Score: score, Member: finding.FindingID})
-		}
+	scoped, shared := findingIndexKeys(finding.TenantID, indexFieldsOf(finding))
+	for _, key := range append(scoped, shared...) {
+		pipe.ZAdd(ctx, key, redis.Z{Score: score, Member: finding.FindingID})
 	}
 }
 
@@ -762,7 +830,7 @@ func (s *RedisStore) commitTransitionFinding(
 				pipe.Expire(ctx, key, ttl)
 			}
 		}
-		return nil
+		return s.addFindingIndexRefWrite(ctx, pipe, f)
 	})
 	if err != nil {
 		return fmt.Errorf("shadow finding: transition: %w", err)
@@ -939,86 +1007,140 @@ func (s *RedisStore) getStaleCleanupStartHook() func(context.Context, string, []
 	return s.staleCleanupStartHook
 }
 
+// staleCleanupScope is cleanupStaleIDTx's decision on which index sets
+// pruneFindingIndexes may remove the id from.
+type staleCleanupScope int
+
+const (
+	// staleCleanupSkip: the finding is live for the tenant, or unreadable.
+	staleCleanupSkip staleCleanupScope = iota
+	// staleCleanupScoped: the finding is live under another tenant, so only
+	// the caller tenant's sets are pruned.
+	staleCleanupScoped
+	// staleCleanupFull: the finding key is gone or past retention.
+	staleCleanupFull
+)
+
 func (s *RedisStore) cleanupStaleID(ctx context.Context, tenant, id string) {
 	key := findingKey(id)
 	for attempt := 0; attempt < staleCleanupMaxTxRetries; attempt++ {
+		scope := staleCleanupSkip
 		err := s.client.Watch(ctx, func(tx *redis.Tx) error {
-			return s.cleanupStaleIDTx(ctx, tx, tenant, id, key)
+			var err error
+			scope, err = s.cleanupStaleIDTx(ctx, tx, tenant, id, key)
+			return err
 		}, key)
 		if errors.Is(err, redis.TxFailedErr) {
 			continue
+		}
+		if err == nil && scope != staleCleanupSkip {
+			s.pruneFindingIndexes(ctx, tenant, id, scope == staleCleanupFull)
 		}
 		return
 	}
 }
 
-func (s *RedisStore) cleanupStaleIDTx(ctx context.Context, tx *redis.Tx, tenant, id, key string) error {
+// cleanupStaleIDTx decides, under a WATCH of the finding key alone, whether
+// id is stale for tenant. On the full path its MULTI deletes only the
+// finding key; pruneFindingIndexes then prunes the index sets.
+func (s *RedisStore) cleanupStaleIDTx(ctx context.Context, tx *redis.Tx, tenant, id, key string) (staleCleanupScope, error) {
 	raw, err := tx.Get(ctx, key).Bytes()
 	if err == nil {
 		var current ShadowAgentFinding
 		if json.Unmarshal(raw, &current) == nil {
 			applyReadDefaults(&current)
 			if current.TenantID != "" && current.TenantID != tenant {
-				return txTenantScopedCleanup(ctx, tx, tenant, id)
+				return staleCleanupScoped, nil
 			}
 			if current.TenantID == tenant && !s.isExpiredTerminal(&current) {
-				return nil
+				return staleCleanupSkip, nil
 			}
 		}
 	} else if !errors.Is(err, redis.Nil) {
-		return nil
+		return staleCleanupSkip, nil
 	}
 	_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 		pipe.Del(ctx, key)
-		addTenantScopedFindingCleanup(ctx, pipe, tenant, id)
-		addSharedFindingCleanup(ctx, pipe, id)
 		return nil
 	})
-	return err
+	return staleCleanupFull, err
 }
 
-func txTenantScopedCleanup(ctx context.Context, tx *redis.Tx, tenant, id string) error {
-	_, err := tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-		addTenantScopedFindingCleanup(ctx, pipe, tenant, id)
-		return nil
-	})
-	return err
-}
-
-func addTenantScopedFindingCleanup(ctx context.Context, pipe redis.Pipeliner, tenant, id string) {
-	pipe.ZRem(ctx, tenantIndexKey(tenant), id)
-	for _, seg := range []string{redisIndexSegStatus, redisIndexSegRisk, redisIndexSegAgent, redisIndexSegOwner} {
-		// We don't know which secondary-index buckets the id lives in
-		// without the original fields. ZREM is idempotent and O(log N),
-		// so blasting every known closed-set value is acceptable.
-		for _, v := range knownEnumValuesForSeg(seg) {
-			pipe.ZRem(ctx, secondaryIndexKey(tenant, seg, v), id)
+// pruneFindingIndexes removes id from the sets the tenant's finding was
+// indexed in and deletes the tenant's index record. The sets are the
+// closed-set values (closedSetIndexKeys) plus every set the index record
+// names, so an expired record still prunes the closed sets. With shared
+// false only tenant-scoped sets are pruned: the id is live under another
+// tenant in the shared sets. It runs one plain pipeline of single-key
+// commands, then repairFindingIndexes re-adds a finding created at id
+// meanwhile.
+func (s *RedisStore) pruneFindingIndexes(ctx context.Context, tenant, id string, shared bool) {
+	refKey := findingIndexRefKey(tenant, id)
+	raw, err := s.client.Get(ctx, refKey).Bytes()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return
+	}
+	keys, sharedKeys := closedSetIndexKeys(tenant)
+	var fields findingIndexFields
+	if err == nil && json.Unmarshal(raw, &fields) == nil {
+		refScoped, refShared := findingIndexKeys(tenant, fields)
+		keys = append(keys, refScoped...)
+		sharedKeys = append(sharedKeys, refShared...)
+	}
+	if shared {
+		keys = append(keys, sharedKeys...)
+	}
+	// A pipeline that reports an error may still have run some of its
+	// commands, so the repair runs either way.
+	_, _ = s.client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		for _, key := range keys {
+			pipe.ZRem(ctx, key, id)
 		}
-	}
-}
-
-func addSharedFindingCleanup(ctx context.Context, pipe redis.Pipeliner, id string) {
-	// EDGE-143.5 — source index is closed-enum, so we blast all values.
-	// cluster/repo/signal indexes are open-set and intentionally leak stale
-	// members; list reads GET the JSON and skip missing records.
-	for _, src := range []string{SourceTypeLocal, SourceTypeKubernetes, SourceTypeCI, SourceTypeNetwork} {
-		pipe.ZRem(ctx, sourceIndexKey(src), id)
-	}
-}
-
-// knownEnumValuesForSeg returns the closed-set values we ZREM during
-// stale-index cleanup. For agent/owner segments the value-space is
-// open — we accept that cleanup leaks a few stale member entries until
-// the next ZADD overwrites them on a re-create.
-func knownEnumValuesForSeg(seg string) []string {
-	switch seg {
-	case redisIndexSegStatus:
-		return []string{string(FindingStatusDetected), string(FindingStatusResolved), string(FindingStatusSuppressed)}
-	case redisIndexSegRisk:
-		return []string{string(FindingRiskLow), string(FindingRiskMedium), string(FindingRiskHigh), string(FindingRiskCritical)}
-	default:
+		pipe.Del(ctx, refKey)
 		return nil
+	})
+	s.repairFindingIndexes(ctx, tenant, id, shared)
+}
+
+// repairFindingIndexes re-applies the index writes and index record of a
+// live finding at id whose sets pruneFindingIndexes may have touched: the
+// caller tenant's, or any tenant's after a shared prune. The ZADDs and the
+// record SET are idempotent; like any finding write, the SET resets the
+// record's TTL.
+func (s *RedisStore) repairFindingIndexes(ctx context.Context, tenant, id string, shared bool) {
+	raw, err := s.client.Get(ctx, findingKey(id)).Bytes()
+	if err != nil {
+		return
 	}
+	var f ShadowAgentFinding
+	if json.Unmarshal(raw, &f) != nil {
+		return
+	}
+	applyReadDefaults(&f)
+	if f.TenantID == "" || (f.TenantID != tenant && !shared) || s.isExpiredTerminal(&f) {
+		return
+	}
+	_, _ = s.client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		addFindingIndexWrites(ctx, pipe, &f, float64(f.CreatedAt.UnixMilli()))
+		return s.addFindingIndexRefWrite(ctx, pipe, &f)
+	})
+}
+
+// closedSetIndexKeys returns the index sets whose values form a closed set,
+// which cleanup prunes even without an index record: the tenant index and
+// each status and risk value, then each source type (shared).
+func closedSetIndexKeys(tenant string) (scoped, shared []string) {
+	scoped = []string{tenantIndexKey(tenant)}
+	for _, v := range []FindingStatus{FindingStatusDetected, FindingStatusResolved, FindingStatusSuppressed} {
+		scoped = append(scoped, secondaryIndexKey(tenant, redisIndexSegStatus, string(v)))
+	}
+	for _, v := range []FindingRisk{FindingRiskLow, FindingRiskMedium, FindingRiskHigh, FindingRiskCritical} {
+		scoped = append(scoped, secondaryIndexKey(tenant, redisIndexSegRisk, string(v)))
+	}
+	for _, src := range []string{SourceTypeLocal, SourceTypeKubernetes, SourceTypeCI, SourceTypeNetwork} {
+		shared = append(shared, sourceIndexKey(src))
+	}
+	return scoped, shared
 }
 
 // chooseIndex picks the narrowest index for the query and returns the
