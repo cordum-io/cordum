@@ -144,15 +144,16 @@ func headerPrincipalFlagRecords(buf *bytes.Buffer) []string {
 func TestPrincipalProvenance_HeaderPrincipalIsAsserted(t *testing.T) {
 	headerPrincipalPinEnv(t, "development", "", "true")
 	b := headerPrincipalProvider(t)
-	for _, tc := range []struct{ name, key string }{
-		{"anonymous", ""},
-		{"unbound-static-key", headerPrincipalUnboundKey},
-		{"managed-key", headerPrincipalManagedKey},
+	// own is the principal the credential carries when no header is honored.
+	for _, tc := range []struct{ name, key, own string }{
+		{"anonymous", "", ""},
+		{"unbound-static-key", headerPrincipalUnboundKey, ""},
+		{"managed-key", headerPrincipalManagedKey, "mk-provenance"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			headerPrincipalAssert(t, headerPrincipalHTTP(t, b, tc.key, "worker-b"), "worker-b", true)
-			headerPrincipalAssert(t, headerPrincipalHTTP(t, b, tc.key, ""), "", false)
-			headerPrincipalAssert(t, headerPrincipalHTTP(t, b, tc.key, " \t "), "", false)
+			headerPrincipalAssert(t, headerPrincipalHTTP(t, b, tc.key, ""), tc.own, false)
+			headerPrincipalAssert(t, headerPrincipalHTTP(t, b, tc.key, " \t "), tc.own, false)
 		})
 	}
 }
@@ -167,8 +168,8 @@ func TestPrincipalProvenance_BoundCredentialsAreNotAsserted(t *testing.T) {
 		headerPrincipalAssert(t, headerPrincipalGRPC(t, b, headerPrincipalBoundKey, "worker-b"), "worker-a", false)
 	})
 	t.Run("managed-key-without-header", func(t *testing.T) {
-		headerPrincipalAssert(t, headerPrincipalHTTP(t, b, headerPrincipalManagedKey, ""), "", false)
-		headerPrincipalAssert(t, headerPrincipalGRPC(t, b, headerPrincipalManagedKey, ""), "", false)
+		headerPrincipalAssert(t, headerPrincipalHTTP(t, b, headerPrincipalManagedKey, ""), "mk-provenance", false)
+		headerPrincipalAssert(t, headerPrincipalGRPC(t, b, headerPrincipalManagedKey, ""), "mk-provenance", false)
 	})
 	t.Run("nil-and-zero-value-contexts", func(t *testing.T) {
 		var nilCtx *AuthContext
@@ -186,8 +187,8 @@ func TestPrincipalProvenance_ProductionManagedKeyIgnoresHeaderByDefault(t *testi
 	headerPrincipalPinEnv(t, "production", "", "")
 	logs := headerPrincipalCaptureLogs(t)
 	b := headerPrincipalProvider(t)
-	headerPrincipalAssert(t, headerPrincipalHTTP(t, b, headerPrincipalManagedKey, "worker-b"), "", false)
-	headerPrincipalAssert(t, headerPrincipalGRPC(t, b, headerPrincipalManagedKey, "worker-b"), "", false)
+	headerPrincipalAssert(t, headerPrincipalHTTP(t, b, headerPrincipalManagedKey, "worker-b"), "mk-provenance", false)
+	headerPrincipalAssert(t, headerPrincipalGRPC(t, b, headerPrincipalManagedKey, "worker-b"), "mk-provenance", false)
 	headerPrincipalAssert(t, headerPrincipalHTTP(t, b, headerPrincipalUnboundKey, "worker-b"), "", false)
 	if records := headerPrincipalFlagRecords(logs); len(records) != 0 {
 		t.Errorf("log records naming %s = %q, want none while the flag is unset", headerPrincipalFlag, records)
@@ -224,4 +225,39 @@ func TestPrincipalProvenance_GRPCMetadataPrincipalIsAsserted(t *testing.T) {
 	t.Run("bound-static-key", func(t *testing.T) {
 		headerPrincipalAssert(t, headerPrincipalGRPC(t, b, headerPrincipalBoundKey, "worker-b"), "worker-a", false)
 	})
+}
+
+// A stored managed key without an id has no principal and no revocation
+// handle, so it is refused in every profile, before any usage is recorded.
+func TestPrincipalProvenance_ManagedKeyWithoutIDIsRefused(t *testing.T) {
+	for _, mode := range []string{"production", "development"} {
+		t.Run(mode, func(t *testing.T) {
+			headerPrincipalPinEnv(t, mode, "", "")
+			b, err := NewBasicAuthProvider("default")
+			if err != nil {
+				t.Fatalf("NewBasicAuthProvider() error = %v, want nil", err)
+			}
+			usage := 0
+			b.SetKeyStore(&fakeKeyStore{
+				validateFn: func(context.Context, string) (*ManagedKey, error) {
+					return &ManagedKey{Name: "no-id", Tenant: "default"}, nil
+				},
+				recordFn: func(context.Context, string) error { usage++; return nil },
+			})
+			r := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", nil)
+			r.Header.Set("X-API-Key", headerPrincipalManagedKey)
+			r.Header.Set("X-Principal-Id", "worker-b")
+			if ac, err := b.AuthenticateHTTP(r); err == nil || ac != nil {
+				t.Errorf("AuthenticateHTTP() = (%+v, %v), want a refusal", ac, err)
+			}
+			md := metadata.Pairs("x-api-key", headerPrincipalManagedKey, "x-principal-id", "worker-b")
+			if ac, err := b.AuthenticateGRPC(metadata.NewIncomingContext(context.Background(), md)); err == nil || ac != nil {
+				t.Errorf("AuthenticateGRPC() = (%+v, %v), want a refusal", ac, err)
+			}
+			b.DrainUsage()
+			if usage != 0 {
+				t.Errorf("usage records = %d, want 0 for a refused key", usage)
+			}
+		})
+	}
 }

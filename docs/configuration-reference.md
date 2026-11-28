@@ -763,14 +763,14 @@ No license = Community tier (3 workers, 3 concurrent jobs, 500 RPS, 7-day audit 
 
 **One-time anonymous pings (opt-out).** Unless `CORDUM_TELEMETRY_MODE=off`, Cordum sends **at most one successful ping per event** over the lifetime of an install — an install ping and a first-use ping. A failed delivery releases its one-time marker and is retried on a later collector start, so total outbound attempts may exceed two while permanent delivery failures may yield fewer than two successful pings:
 
-- **Install ping** — sent once on first collector startup. Contains: `install_id` (salted SHA-256, no PII), `event=install`, `schema_version`, Cordum `version`, `tier`, `mode`, `os`, `arch`. No usage counts, feature flags, or engagement data.
+- **Install ping** — sent once on first collector startup. Contains: `install_id` (a SHA-256 digest that mixes in a random nonce), `event=install`, `schema_version`, Cordum `version`, `tier`, `mode`, `os`, `arch`. No usage counts, feature flags, or engagement data.
 - **First-use ping** — sent once after the first job or workflow completes. Contains the install-ping fields plus `workers`, `jobs_24h`, `workflows_24h`, and `packs_installed`. No per-feature detail or engagement object.
 
 Both pings fire in **both** `local_only` (default) and `anonymous` mode; only `off` suppresses them. Each succeeds at most once per install (idempotent across restarts and HA replicas); a failed send is retried until it succeeds or the install is switched to `off`. Switching to `off` before a ping has successfully fired cancels it.
 
 Ongoing 24h aggregate reports (`event=periodic`) are sent **only** in `anonymous` mode.
 
-Telemetry is independent from licensing. It never collects PII, prompts, secrets, or job content. Operators can opt out of everything (including the one-time pings) at any time via `CORDUM_TELEMETRY_MODE=off` or `POST /api/v1/telemetry/consent`.
+Telemetry is independent from licensing. Telemetry payloads carry installation id, mode, version, tier and platform fields plus aggregated usage and feature signals; no payload field holds prompts, secrets, or job content. The data inventory (`docs/contract/data-inventory.yaml`, DI-C13 to DI-C15) still classes stored telemetry and exported reports as possibly holding personal data. Operators can opt out of everything (including the one-time pings) at any time via `CORDUM_TELEMETRY_MODE=off` or `POST /api/v1/telemetry/consent`.
 
 ### NATS TLS
 
@@ -872,7 +872,7 @@ Read by the gateway's built-in MCP server (`/mcp/*`). The standalone
 |----------|---------|-------------|
 | `CORDUM_API_KEY` | — | Single API key |
 | `API_KEY` | — | Fallback if `CORDUM_API_KEY` not set |
-| `CORDUM_API_KEYS` | — | Multiple keys: comma-separated or JSON array |
+| `CORDUM_API_KEYS` | — | Multiple keys: comma-separated or JSON array. An entry's role `admin`, `operator` or `viewer` is kept as written, and `secops` is an admin alias. Upgrading: an `operator` entry no longer gets admin, so set `role: admin` on any key that needs it |
 | `CORDUM_API_KEYS_PATH` | — | Path to keys file (reloads on change) |
 | `CORDUM_ALLOW_INSECURE_NO_AUTH` | — | Set to `1` for no-auth mode (dev only). In production the gateway refuses to start with it set. |
 | `CORDUM_ALLOW_HEADER_PRINCIPAL` | — | Set to `true` to honour `X-Principal-Id` in production, for static keys without `principal_id` and for managed keys (always honoured outside production). A header principal is recorded for attribution only and never binds identity |

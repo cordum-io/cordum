@@ -196,6 +196,39 @@ func TestAgentdDecisionFromEvaluateMapsAllowQuietlyAndRiskyDenyWithConciseCopy(t
 	}
 }
 
+func TestAgentdDecisionFromEvaluateMapsThrottleToDeny(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, reason, wantReason string
+	}{
+		{"kernel reason", "rate limit reached", "rate limit reached"},
+		{"default reason", "", "Cordum Edge throttled this action; retry later"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			waiter := &fakeApprovalWaiter{}
+			consumeCalls := 0
+			consume := func(context.Context, string) (*EvaluateResponse, error) {
+				consumeCalls++
+				return &EvaluateResponse{Decision: string(edgecore.DecisionAllow)}, nil
+			}
+			decision := AgentdDecisionFromEvaluateResponse(context.Background(), EvaluateResponse{
+				Decision:    string(edgecore.DecisionThrottle),
+				Reason:      tc.reason,
+				ApprovalRef: "unused-approval",
+			}, ApprovalDecisionConfig{
+				PolicyMode:        edgecore.PolicyModeObserve,
+				InlineWaitEnabled: true,
+			}, waiter, consume)
+			if decision.Decision != claude.DecisionDeny || decision.Reason != tc.wantReason {
+				t.Fatalf("decision = %#v, want deny with reason %q", decision, tc.wantReason)
+			}
+			if waiter.calls != 0 || consumeCalls != 0 {
+				t.Fatalf("wait/consume calls = %d/%d, want 0/0", waiter.calls, consumeCalls)
+			}
+		})
+	}
+}
+
 func TestGatewayClientWaitForApprovalPostsTimeoutAndMapsStatuses(t *testing.T) {
 	t.Parallel()
 

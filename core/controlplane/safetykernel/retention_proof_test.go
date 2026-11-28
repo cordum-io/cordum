@@ -3,6 +3,7 @@ package safetykernel
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"slices"
@@ -54,10 +55,10 @@ func kernelRetentionRequire(t *testing.T, hits []string, family string) {
 func TestRetentionProofDIC48Velocity(t *testing.T) {
 	mr, client, marker := kernelRetentionFixture(t)
 	cfg := &config.VelocityConfig{MaxRequests: 10, WindowSeconds: 60, Key: "tenant"}
-	if _, _, err := newVelocityChecker(client).CheckAndRecord(context.Background(), marker+"-rule", marker+"-key", marker+"-request", cfg); err != nil {
+	if _, _, err := newVelocityChecker(client).CheckAndRecord(context.Background(), "dic48-rule", "dic48-tenant", marker+"-key", marker+"-request", cfg); err != nil {
 		t.Fatalf("CheckAndRecord: %v", err)
 	}
-	kernelRetentionRequire(t, kernelRetentionTrace(t, client, marker), "cordum:velocity:"+marker+"-rule:"+marker+"-key")
+	kernelRetentionRequire(t, kernelRetentionTrace(t, client, marker), "cordum:velocity:dic48-rule:"+base64.RawURLEncoding.EncodeToString([]byte("dic48-tenant"))+":"+marker+"-key")
 	mr.FastForward(time.Duration(cfg.WindowSeconds)*time.Second + 60*time.Second + time.Second)
 	if hits := kernelRetentionTrace(t, client, marker); len(hits) != 0 {
 		t.Fatalf("trace remains after cleanup: %v", hits)

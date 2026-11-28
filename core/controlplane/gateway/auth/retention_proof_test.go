@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"slices"
 	"strings"
@@ -35,16 +36,17 @@ func TestRetentionProofDIC39(t *testing.T) {
 	if err := s.StoreSession(ctx, marker+"-token", user, authSessionTTL()); err != nil {
 		t.Fatalf("StoreSession: %v", err)
 	}
-	s.RecordFailedLogin(ctx, user.Username, "203.0.113.7")
+	s.RecordFailedLogin(ctx, user.Tenant, user.Username, "203.0.113.7")
 	if err := s.PutSAMLState(ctx, marker+"-saml", marker+"-request", "/after/"+marker, ttl); err != nil {
 		t.Fatalf("PutSAMLState: %v", err)
 	}
 	if err := (&redisOIDCStateStore{client: client}).Put(ctx, marker+"-oidc", marker+"-nonce", "/after/"+marker, ttl); err != nil {
 		t.Fatalf("oidc Put: %v", err)
 	}
+	tenant := base64.RawURLEncoding.EncodeToString([]byte(user.Tenant))
 	expireJustPast(t, mr, client, ttl, marker,
-		"session:"+marker, "session:user:"+marker, "login:failed:"+marker,
-		"login:failed:global:"+marker, "saml:state:"+marker, "oidc:state:"+marker)
+		"session:"+marker, "session:user:"+marker, "login:failed:"+tenant+":"+marker,
+		"login:failed:global:"+tenant+":"+marker, "saml:state:"+marker, "oidc:state:"+marker)
 	requireNoTrace(t, client, marker)
 }
 

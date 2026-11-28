@@ -2,17 +2,27 @@ package scheduler
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/cordum/cordum/core/infra/store"
 	jobidentity "github.com/cordum/cordum/core/protocol/identity"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/cordum/cordum/tools/certgen"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 )
 
@@ -330,6 +340,147 @@ func TestDecisionFromProto(t *testing.T) {
 		if got := decisionFromProto(dec); got != expect {
 			t.Fatalf("decision %v expected %v got %v", dec, expect, got)
 		}
+	}
+}
+
+type safetyTLSClientTestServer struct {
+	pb.UnimplementedSafetyKernelServer
+	calls atomic.Int32
+}
+
+func (s *safetyTLSClientTestServer) Check(context.Context, *pb.PolicyCheckRequest) (*pb.PolicyCheckResponse, error) {
+	s.calls.Add(1)
+	return &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW}, nil
+}
+
+func safetyTLSClientFixture(t *testing.T) (string, *tls.Config) {
+	t.Helper()
+	dir := t.TempDir()
+	caDir, serverDir := filepath.Join(dir, "ca"), filepath.Join(dir, "server")
+	if err := certgen.GenerateCA(caDir, 1, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := certgen.GenerateServerCert(caDir, serverDir, 1, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := certgen.GenerateClientCert(caDir, filepath.Join(dir, "client"), "test-client", 1, false); err != nil {
+		t.Fatal(err)
+	}
+	cert, err := tls.LoadX509KeyPair(filepath.Join(serverDir, "tls.crt"), filepath.Join(serverDir, "tls.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pem, err := os.ReadFile(filepath.Join(caDir, "ca.crt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		t.Fatal("parse test CA")
+	}
+	return dir, &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		ClientCAs:    pool,
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		MinVersion:   tls.VersionTLS12,
+	}
+}
+
+func startSafetyTLSClientServer(t *testing.T, cfg *tls.Config) (string, *safetyTLSClientTestServer) {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := &safetyTLSClientTestServer{}
+	server := grpc.NewServer(grpc.Creds(credentials.NewTLS(cfg)))
+	pb.RegisterSafetyKernelServer(server, handler)
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(lis) }()
+	t.Cleanup(func() {
+		server.Stop()
+		select {
+		case err := <-done:
+			if err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+				t.Errorf("serve TLS: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("TLS server did not stop")
+		}
+	})
+	return lis.Addr().String(), handler
+}
+
+func TestSafetyTransportClientCertificate(t *testing.T) {
+	dir, cfg := safetyTLSClientFixture(t)
+	addr, handler := startSafetyTLSClientServer(t, cfg)
+	t.Setenv("SAFETY_KERNEL_TLS_CA", filepath.Join(dir, "ca", "ca.crt"))
+	for _, tc := range []struct {
+		name      string
+		withCert  bool
+		wantCode  codes.Code
+		wantCalls int32
+	}{
+		{"without_client_certificate", false, codes.Unavailable, 0},
+		{"with_client_certificate", true, codes.OK, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("SAFETY_KERNEL_TLS_CLIENT_CERT", "")
+			t.Setenv("SAFETY_KERNEL_TLS_CLIENT_KEY", "")
+			if tc.withCert {
+				t.Setenv("SAFETY_KERNEL_TLS_CLIENT_CERT", filepath.Join(dir, "client", "tls.crt"))
+				t.Setenv("SAFETY_KERNEL_TLS_CLIENT_KEY", filepath.Join(dir, "client", "tls.key"))
+			}
+			creds, err := safetyTransportCredentials()
+			if err != nil {
+				t.Fatal(err)
+			}
+			conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := conn.Close(); err != nil {
+					t.Errorf("close TLS client: %v", err)
+				}
+			})
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_, err = pb.NewSafetyKernelClient(conn).Check(ctx, &pb.PolicyCheckRequest{})
+			if code := status.Code(err); code != tc.wantCode {
+				t.Errorf("Check code = %v, want %v: %v", code, tc.wantCode, err)
+			}
+			if calls := handler.calls.Load(); calls != tc.wantCalls {
+				t.Errorf("server calls = %d, want %d", calls, tc.wantCalls)
+			}
+		})
+	}
+}
+
+func TestSafetyTransportClientCertificateConfiguration(t *testing.T) {
+	t.Setenv("CORDUM_ENV", "development")
+	t.Setenv("CORDUM_PRODUCTION", "false")
+	t.Setenv("SAFETY_KERNEL_TLS_REQUIRED", "false")
+	t.Setenv("SAFETY_KERNEL_INSECURE", "true")
+	for _, tc := range []struct {
+		name, cert, key, ca, missing string
+	}{
+		{"certificate_only", "client.crt", "", "ca.crt", "SAFETY_KERNEL_TLS_CLIENT_KEY"},
+		{"key_only", "", "client.key", "ca.crt", "SAFETY_KERNEL_TLS_CLIENT_CERT"},
+		{"pair_without_ca", "client.crt", "client.key", "", "SAFETY_KERNEL_TLS_CA"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("SAFETY_KERNEL_TLS_CLIENT_CERT", tc.cert)
+			t.Setenv("SAFETY_KERNEL_TLS_CLIENT_KEY", tc.key)
+			t.Setenv("SAFETY_KERNEL_TLS_CA", tc.ca)
+			creds, err := safetyTransportCredentials()
+			if err == nil || !strings.Contains(err.Error(), tc.missing) {
+				t.Errorf("credentials error = %v, want missing %s", err, tc.missing)
+			}
+			if creds != nil {
+				t.Error("invalid client configuration returned usable credentials")
+			}
+		})
 	}
 }
 

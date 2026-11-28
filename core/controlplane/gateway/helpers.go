@@ -26,6 +26,7 @@ import (
 	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/locks"
 	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/infra/tlsreload"
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/model"
 	jobidentity "github.com/cordum/cordum/core/protocol/identity"
@@ -572,6 +573,10 @@ func gatewayGRPCClientKeepaliveParams() keepalive.ClientParameters {
 
 func safetyTransportCredentials() (credentials.TransportCredentials, error) {
 	caPath := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_TLS_CA"))
+	clientCertPath, clientKeyPath, err := safetyClientCertificatePaths(caPath)
+	if err != nil {
+		return nil, err
+	}
 	requireTLS := env.IsProduction() || env.Bool("SAFETY_KERNEL_TLS_REQUIRED")
 	insecureAllowed := env.Bool("SAFETY_KERNEL_INSECURE")
 
@@ -601,7 +606,32 @@ func safetyTransportCredentials() (credentials.TransportCredentials, error) {
 	if env.TLSMinVersion() == tls.VersionTLS13 {
 		cfg.MinVersion = tls.VersionTLS13
 	}
+	if clientCertPath != "" {
+		reloader, err := tlsreload.NewCertReloader(clientCertPath, clientKeyPath, "safety-kernel-client")
+		if err != nil {
+			return nil, fmt.Errorf("safety kernel tls client certificate: %w", err)
+		}
+		cfg.GetClientCertificate = reloader.GetClientCertificate
+		go reloader.WatchLoop(context.Background(), 30*time.Second)
+	}
 	return credentials.NewTLS(cfg), nil
+}
+
+// safetyClientCertificatePaths reads the optional client keypair the Safety
+// Kernel clients present. Both paths or neither, and only with a CA.
+func safetyClientCertificatePaths(caPath string) (string, string, error) {
+	clientCertPath := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_TLS_CLIENT_CERT"))
+	clientKeyPath := strings.TrimSpace(os.Getenv("SAFETY_KERNEL_TLS_CLIENT_KEY"))
+	if clientCertPath != "" && clientKeyPath == "" {
+		return "", "", fmt.Errorf("safety kernel client certificate: SAFETY_KERNEL_TLS_CLIENT_KEY is not set")
+	}
+	if clientKeyPath != "" && clientCertPath == "" {
+		return "", "", fmt.Errorf("safety kernel client certificate: SAFETY_KERNEL_TLS_CLIENT_CERT is not set")
+	}
+	if (clientCertPath != "" || clientKeyPath != "") && caPath == "" {
+		return "", "", fmt.Errorf("safety kernel client certificate: SAFETY_KERNEL_TLS_CA is not set")
+	}
+	return clientCertPath, clientKeyPath, nil
 }
 
 func parsePriority(priority string) pb.JobPriority {
@@ -1479,19 +1509,42 @@ func isNilStore(v any) bool {
 	return rv.Kind() == reflect.Ptr && rv.IsNil()
 }
 
+// jobTenantAllowed reports whether the caller may use a job stored under
+// tenant. A job whose tenant is empty is open only to callers with
+// cross-tenant access, or to every caller when no auth provider is set.
+func (s *server) jobTenantAllowed(r *http.Request, tenant string) bool {
+	if strings.TrimSpace(tenant) != "" {
+		return s.requireTenantAccess(r, tenant) == nil
+	}
+	if s == nil || s.auth == nil {
+		return true
+	}
+	ac := auth.FromRequest(r)
+	return ac != nil && ac.AllowCrossTenant
+}
+
 // requireJobTenantAccess verifies the caller has access to the tenant that
-// owns the given job. Returns false (and writes 403) if denied.
+// owns the given job. It writes 503 when the tenant lookup fails, 404 when the
+// job has no tenant the caller may use, and 403 for another tenant's job, and
+// returns false after writing.
 func (s *server) requireJobTenantAccess(w http.ResponseWriter, r *http.Request, jobID string) bool {
 	if s.jobStore == nil {
 		return true
 	}
-	if tenant, _ := s.jobStore.GetTenant(r.Context(), jobID); tenant != "" {
-		if err := s.requireTenantAccess(r, tenant); err != nil {
-			writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
-			return false
-		}
+	tenant, err := s.jobStore.GetTenant(r.Context(), jobID)
+	if err != nil && !errors.Is(err, redis.Nil) {
+		writeErrorJSON(w, http.StatusServiceUnavailable, "job store unavailable")
+		return false
 	}
-	return true
+	if s.jobTenantAllowed(r, tenant) {
+		return true
+	}
+	if strings.TrimSpace(tenant) == "" {
+		writeErrorJSON(w, http.StatusNotFound, "job not found")
+		return false
+	}
+	writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
+	return false
 }
 
 // requirePathParam extracts a path parameter and writes a 400 error if empty.

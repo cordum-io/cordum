@@ -6,6 +6,7 @@ package store
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"testing"
 
@@ -259,5 +260,65 @@ func TestBeginDispatch_ConcurrentAttemptsAreAllUnique(t *testing.T) {
 	}
 	if len(seenAttempts) != n {
 		t.Fatalf("expected %d unique monotonic attempts, got %d (lost increment under concurrency)", n, len(seenAttempts))
+	}
+}
+
+// TestGetDispatchAssignment reads the worker and tenant of a job's current
+// dispatch from the runtime hash, falling back per field to the legacy job
+// meta, and creates or removes no key.
+func TestGetDispatchAssignment(t *testing.T) {
+	ctx := context.Background()
+	type seed func(t *testing.T, s *RedisJobStore, jobID string)
+	var legacy seed = func(t *testing.T, s *RedisJobStore, jobID string) {
+		if err := s.client.HSet(ctx, jobMetaKey(jobID), metaFieldDispatchWorkerID, "worker-legacy",
+			metaFieldDispatchTenant, "tenant-legacy").Err(); err != nil {
+			t.Fatalf("seed legacy meta: %v", err)
+		}
+	}
+	var dispatch seed = func(t *testing.T, s *RedisJobStore, jobID string) {
+		if _, _, err := s.BeginDispatch(ctx, jobID, "worker-1", "tenant-a"); err != nil {
+			t.Fatalf("BeginDispatch: %v", err)
+		}
+	}
+	cases := []struct {
+		name                   string
+		seeds                  []seed
+		wantWorker, wantTenant string
+	}{
+		{name: "no_record"},
+		{name: "begin_dispatch", seeds: []seed{dispatch}, wantWorker: "worker-1", wantTenant: "tenant-a"},
+		{name: "legacy_meta_only", seeds: []seed{legacy}, wantWorker: "worker-legacy", wantTenant: "tenant-legacy"},
+		// BeginDispatch copies the legacy fields into the runtime hash, then
+		// overwrites them there; the legacy meta keeps the older values.
+		{name: "runtime_over_legacy", seeds: []seed{legacy, dispatch}, wantWorker: "worker-1", wantTenant: "tenant-a"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newDispatchFencingTestStore(t)
+			const jobID = "job-1"
+			if err := s.SetState(ctx, jobID, model.JobStateRunning); err != nil {
+				t.Fatalf("SetState: %v", err)
+			}
+			for _, apply := range tc.seeds {
+				apply(t, s, jobID)
+			}
+			keys := func() []string {
+				k, err := s.client.Keys(ctx, "*").Result()
+				if err != nil {
+					t.Fatalf("keys: %v", err)
+				}
+				slices.Sort(k)
+				return k
+			}
+			before := keys()
+			worker, tenant, err := s.GetDispatchAssignment(ctx, jobID)
+			if err != nil || worker != tc.wantWorker || tenant != tc.wantTenant {
+				t.Fatalf("GetDispatchAssignment = (%q, %q, %v), want (%q, %q, nil)",
+					worker, tenant, err, tc.wantWorker, tc.wantTenant)
+			}
+			if after := keys(); !slices.Equal(before, after) {
+				t.Fatalf("keys before %v, after %v", before, after)
+			}
+		})
 	}
 }

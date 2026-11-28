@@ -41,10 +41,17 @@ func (d submitPolicyDecision) auditExtra(topic string, labels map[string]string)
 	return mergeStringMap(base, config.DelegationAuditExtras(config.DelegationContextFromLabels(labels)))
 }
 
+// submitAuditNotStored answers a submit whose "submit" audit entry was not
+// stored. The job is set FAILED and never dispatched.
+const submitAuditNotStored = "job not submitted: its audit entry was not stored"
+
+// appendSubmitSafetyDecisionAudit stores a submit-time policy decision in the
+// policy audit log and returns appendPolicyAudit's error.
 func (s *server) appendSubmitSafetyDecisionAudit(
 	ctx context.Context,
 	action string,
 	jobID string,
+	tenant string,
 	topic string,
 	actorID string,
 	role string,
@@ -56,11 +63,12 @@ func (s *server) appendSubmitSafetyDecisionAudit(
 	agentID string,
 	agentName string,
 	agentRiskTier string,
-) {
-	_ = s.appendPolicyAudit(ctx, policybundles.PolicyAuditEntry{
+) error {
+	return s.appendPolicyAudit(ctx, policybundles.PolicyAuditEntry{
 		Action:         action,
 		ResourceType:   "job",
 		ResourceID:     strings.TrimSpace(jobID),
+		Tenant:         strings.TrimSpace(tenant),
 		ResourceName:   strings.TrimSpace(topic),
 		ActorID:        strings.TrimSpace(actorID),
 		Role:           strings.TrimSpace(role),

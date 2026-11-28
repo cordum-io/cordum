@@ -13,6 +13,7 @@ import (
 	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
+	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -60,6 +61,30 @@ func (h conflictHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 }
 
 func (h conflictHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+
+// afterGetHook runs fn right after each GET of key on the hooked client.
+type afterGetHook struct {
+	key string
+	fn  func(context.Context)
+}
+
+func (h afterGetHook) DialHook(next redis.DialHook) redis.DialHook {
+	return next
+}
+
+func (h afterGetHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		err := next(ctx, cmd)
+		if args := cmd.Args(); strings.EqualFold(cmd.Name(), "get") && len(args) > 1 && args[1] == h.key {
+			h.fn(ctx)
+		}
+		return err
+	}
+}
+
+func (h afterGetHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
 	return next
 }
 
@@ -244,6 +269,117 @@ func TestRevoke_MaxRetries(t *testing.T) {
 
 	if err := store.Revoke(ctx, "id-1", "tenant-a"); err == nil || !strings.Contains(err.Error(), "too many retries") {
 		t.Fatalf("expected max retries error, got %v", err)
+	}
+}
+
+// newChildKey returns an unsaved key in tenant-a and its secret.
+func newChildKey(t *testing.T) (*ManagedKey, string) {
+	t.Helper()
+	t.Setenv("CORDUM_BCRYPT_COST", "4")
+	secret, err := GenerateRawKey()
+	if err != nil {
+		t.Fatalf("generate raw key: %v", err)
+	}
+	return &ManagedKey{Name: "child", Tenant: "tenant-a", Scopes: []string{"read"}, CreatedAt: time.Now().UTC()}, secret
+}
+
+// childWrites counts the child's record, prefix-index entry and tenant-index
+// entry in Redis.
+func childWrites(ctx context.Context, t *testing.T, store *RedisKeyStore, child *ManagedKey) int64 {
+	t.Helper()
+	n, err := store.client.Exists(ctx, keyRecordKey(child.ID)).Result()
+	if err != nil {
+		t.Fatalf("exists child record: %v", err)
+	}
+	for _, set := range []string{keyPrefixIndexKey(child.Prefix), keyTenantKey(child.Tenant)} {
+		member, err := store.client.SIsMember(ctx, set, child.ID).Result()
+		if err != nil {
+			t.Fatalf("sismember %s: %v", set, err)
+		}
+		if member {
+			n++
+		}
+	}
+	return n
+}
+
+func TestCreateChild_ParentState(t *testing.T) {
+	future := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	past := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	for _, tc := range []struct {
+		name, parent string // parent is the parent's stored record; "" stores none
+		stored       bool
+	}{
+		{"valid", `{"id":"parent","tenant":"tenant-a"}`, true},
+		{"expires later", `{"id":"parent","tenant":"tenant-a","expires_at":"` + future + `"}`, true},
+		{"revoked", `{"id":"parent","tenant":"tenant-a","revoked":true}`, false},
+		{"expired", `{"id":"parent","tenant":"tenant-a","expires_at":"` + past + `"}`, false},
+		{"unreadable", `{"id":`, false},
+		{"missing", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, _ := newTestKeyStore(t)
+			ctx := context.Background()
+			if tc.parent != "" {
+				if err := store.client.Set(ctx, keyRecordKey("parent"), tc.parent, 0).Err(); err != nil {
+					t.Fatalf("seed parent: %v", err)
+				}
+			}
+			child, secret := newChildKey(t)
+			err := store.CreateChild(ctx, "parent", child, secret)
+			want, wantErr := int64(0), ErrInvalidKey
+			if tc.stored {
+				want, wantErr = 3, nil
+			}
+			if writes := childWrites(ctx, t, store, child); !errors.Is(err, wantErr) || writes != want {
+				t.Fatalf("CreateChild error = %v, writes = %d; want %v and %d", err, writes, wantErr, want)
+			}
+			if !tc.stored {
+				return
+			}
+			if got, err := store.ValidateKey(ctx, secret); err != nil || got.ID != child.ID {
+				t.Fatalf("ValidateKey(child) = %+v, %v; want the child", got, err)
+			}
+		})
+	}
+}
+
+// A Revoke on another replica, between CreateChild's read of the parent and
+// its EXEC, leaves no child.
+func TestCreateChild_ParentRevokedByAnotherReplica(t *testing.T) {
+	store, srv := newTestKeyStore(t)
+	ctx := context.Background()
+	seedManagedKey(ctx, t, store, "tenant-a", "id-1")
+	replica := NewRedisKeyStoreFromClient(newTestRedisClient(t, srv.Addr()))
+	var revoked atomic.Bool
+	store.client.AddHook(afterGetHook{key: keyRecordKey("id-1"), fn: func(ctx context.Context) {
+		if revoked.CompareAndSwap(false, true) {
+			if err := replica.Revoke(ctx, "id-1", "tenant-a"); err != nil {
+				t.Errorf("replica Revoke: %v", err)
+			}
+		}
+	}})
+
+	child, secret := newChildKey(t)
+	err := store.CreateChild(ctx, "id-1", child, secret)
+	if writes := childWrites(ctx, t, store, child); !errors.Is(err, ErrInvalidKey) || writes != 0 {
+		t.Fatalf("CreateChild error = %v, writes = %d; want ErrInvalidKey and none", err, writes)
+	}
+	if !revoked.Load() {
+		t.Fatal("the replica Revoke never ran")
+	}
+}
+
+func TestCreateChild_RetryBudgetExhausted(t *testing.T) {
+	store, srv := newTestKeyStore(t)
+	ctx := context.Background()
+	seedManagedKey(ctx, t, store, "tenant-a", "id-1")
+	store.client.AddHook(conflictHook{key: keyRecordKey("id-1"), client: newTestRedisClient(t, srv.Addr()), always: true})
+
+	child, secret := newChildKey(t)
+	err := store.CreateChild(ctx, "id-1", child, secret)
+	if writes := childWrites(ctx, t, store, child); !errors.Is(err, redisutil.ErrMaxAttemptsExceeded) || errors.Is(err, ErrInvalidKey) || writes != 0 {
+		t.Fatalf("CreateChild error = %v, writes = %d; want an exhausted retry budget, not ErrInvalidKey, and none", err, writes)
 	}
 }
 

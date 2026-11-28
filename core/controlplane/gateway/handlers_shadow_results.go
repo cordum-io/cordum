@@ -40,7 +40,8 @@ const shadowResultsStreamField = "event"
 
 // scanShadowEvents walks the given tenant's audit stream between the
 // `since` and `until` unix-ms bounds and returns every shadow_eval
-// event whose Extra[bundle_id] matches bundleID.
+// event whose Extra[bundle_id] matches bundleID; an empty bundleID
+// matches every bundle.
 //
 // Returns:
 //   - events: in stream-arrival order (oldest first)
@@ -147,7 +148,7 @@ func scanShadowEventsPaged(
 			if ev.EventType != audit.EventShadowEval {
 				continue
 			}
-			if gotBundle := ev.Extra["bundle_id"]; gotBundle != bundleID {
+			if gotBundle := ev.Extra["bundle_id"]; bundleID != "" && gotBundle != bundleID {
 				continue
 			}
 			out = append(out, ev)

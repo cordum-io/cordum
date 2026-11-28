@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/infra/redisutil"
+	"github.com/cordum/cordum/core/infra/store"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/redis/go-redis/v9"
 )
@@ -75,8 +76,11 @@ type historyEvent struct {
 }
 
 // BuildWindow assembles model-ready messages from logical payload and stored memory.
+// Stored memory is read under the tenant-qualified id (store.TenantMemoryID);
+// when the id cannot be bound to the request's tenant, the window holds the
+// logical payload only.
 func (s *Service) BuildWindow(ctx context.Context, req *pb.BuildWindowRequest) (*pb.BuildWindowResponse, error) {
-	memoryID := req.GetMemoryId()
+	memoryID, _ := store.TenantMemoryID(req.GetTenantId(), req.GetMemoryId())
 	mode := req.GetMode()
 	if mode == pb.ContextMode_CONTEXT_MODE_UNSPECIFIED {
 		mode = pb.ContextMode_CONTEXT_MODE_RAW
@@ -166,7 +170,8 @@ func (s *Service) BuildWindow(ctx context.Context, req *pb.BuildWindowRequest) (
 	}, nil
 }
 
-// UpdateMemory appends user/assistant exchanges to history for chat/RAG modes.
+// UpdateMemory appends user/assistant exchanges to history for chat/RAG modes,
+// under the tenant-qualified id (store.TenantMemoryID).
 func (s *Service) UpdateMemory(ctx context.Context, req *pb.UpdateMemoryRequest) (*pb.UpdateMemoryResponse, error) {
 	memoryID := req.GetMemoryId()
 	if memoryID == "" {
@@ -181,6 +186,12 @@ func (s *Service) UpdateMemory(ctx context.Context, req *pb.UpdateMemoryRequest)
 	}
 	if mode == pb.ContextMode_CONTEXT_MODE_RAW {
 		return &pb.UpdateMemoryResponse{}, nil
+	}
+	// A chat or RAG write whose id cannot be bound to the writer's tenant is
+	// refused with the same sentinel as a cross-tenant shared write.
+	memoryID, ok := store.TenantMemoryID(req.GetTenantId(), memoryID)
+	if !ok {
+		return nil, ErrSharedWriteTenantMismatch
 	}
 
 	userMsg := s.extractUserMessage(req.GetLogicalPayload())

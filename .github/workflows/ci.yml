@@ -614,13 +614,13 @@ jobs:
     # uploaded under it are auto-resolved when they disappear from the SARIF.
     - name: Upload SARIF (core)
       if: always() && hashFiles('gosec-core.cleaned.sarif') != ''
-      uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
+      uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4
       with:
         sarif_file: gosec-core.cleaned.sarif
 
     - name: Upload SARIF (sdk)
       if: always() && hashFiles('gosec-sdk.cleaned.sarif') != ''
-      uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
+      uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4
       with:
         sarif_file: gosec-sdk.cleaned.sarif
         category: gosec-sdk
@@ -761,3 +761,18 @@ jobs:
       run: make openapi-validate
       env:
         OPENAPI_BASE_REF: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || format('origin/{0}', github.base_ref || 'main') }}
+
+    # The generated Python client must match the spec. This job is a required check and ci.yml has no
+    # paths filter, so these steps run whatever a PR changes. sdk-python.yml's filter leaves out
+    # spec-only PRs, and it reads only a PR's first 300 files.
+    - name: Set up Python for the Python SDK generator
+      uses: actions/setup-python@v7
+      with:
+        python-version: '3.12'
+
+    - name: Check the generated Python client is current
+      run: |
+        python -m venv sdk/python/.venv
+        sdk/python/.venv/bin/python -m pip install --disable-pip-version-check -e "./sdk/python[generator]"
+        bash sdk/python/scripts/check-generated.sh
+        bash sdk/python/scripts/check-generated.test.sh

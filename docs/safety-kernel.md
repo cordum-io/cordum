@@ -100,6 +100,12 @@ order:
 
 A request with no MCP labels passes the tenant and overlay checks.
 
+The caller sets the MCP labels of a job. They add the MCP checks above. They
+do not change which other rules apply: a job with MCP labels is checked
+against every rule, in the order the policy lists them, the same as a job
+without them. Do not use a `match.mcp` allow rule as the only gate for a
+topic.
+
 MCP list matching is case-insensitive exact match. Topic matching supports glob patterns; MCP fields do not currently use glob pattern matching.
 
 Example:

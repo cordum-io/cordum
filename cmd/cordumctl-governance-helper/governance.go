@@ -18,9 +18,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/policysign"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/nats-io/nats.go"
 	"github.com/redis/go-redis/v9"
-	"google.golang.org/protobuf/encoding/protowire"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -49,6 +52,8 @@ const (
 	governanceVerdictRequire       = "REQUIRE_APPROVAL"
 	governanceVerdictThrottle      = "THROTTLE"
 )
+
+var errGovernancePublisherRefused = errors.New("audit publisher service token refused")
 
 type governanceRuntime struct {
 	redisURL    string
@@ -83,6 +88,7 @@ type governanceTailSummary struct {
 	CompletedAt     string `json:"completed_at"`
 	Processed       int    `json:"processed"`
 	Ignored         int    `json:"ignored"`
+	Refused         int    `json:"refused"`
 	SkippedExisting int    `json:"skipped_existing"`
 	Appended        int    `json:"appended"`
 	Errors          int    `json:"errors"`
@@ -330,14 +336,28 @@ func runGovernanceBackfill(ctx context.Context, runtime *governanceRuntime, cfg 
 func runGovernanceTail(ctx context.Context, subscriber governanceAuditSubscriber, runtime *governanceRuntime, progress io.Writer) (governanceTailSummary, error) {
 	summary := governanceTailSummary{StartedAt: time.Now().UTC().Format(time.RFC3339)}
 	defer func() { summary.CompletedAt = time.Now().UTC().Format(time.RFC3339) }()
+	controlPlane, err := policysign.LoadTrustStoreFromEnv()
+	if err != nil {
+		return summary, fmt.Errorf("governance tail trust: %w", err)
+	}
+	publishers, err := audit.LoadPublisherTrustFromEnv()
+	if err != nil {
+		return summary, fmt.Errorf("governance tail trust: %w", err)
+	}
+	authorized := audit.PublisherAuthorizer(controlPlane, publishers)
 
 	var mu sync.Mutex
 	if err := subscriber.Subscribe(func(data []byte) error {
-		record, ignore, err := governanceDecisionRecordFromAuditMessage(data)
+		record, ignore, err := governanceDecisionRecordFromAuditMessage(data, authorized)
 		mu.Lock()
 		defer mu.Unlock()
 		if ignore {
 			summary.Ignored++
+			return nil
+		}
+		if errors.Is(err, errGovernancePublisherRefused) {
+			summary.Refused++
+			governanceWriteProgress(progress, "tail refused audit packet: service_token\n")
 			return nil
 		}
 		if err != nil {
@@ -362,7 +382,7 @@ func runGovernanceTail(ctx context.Context, subscriber governanceAuditSubscriber
 		summary.Processed++
 		summary.Appended++
 		if summary.Processed == 1 || summary.Processed%25 == 0 {
-			governanceWriteProgress(progress, fmt.Sprintf("tail progress: processed=%d appended=%d skipped_existing=%d ignored=%d\n", summary.Processed, summary.Appended, summary.SkippedExisting, summary.Ignored))
+			governanceWriteProgress(progress, fmt.Sprintf("tail progress: processed=%d appended=%d skipped_existing=%d ignored=%d refused=%d\n", summary.Processed, summary.Appended, summary.SkippedExisting, summary.Ignored, summary.Refused))
 		}
 		return nil
 	}); err != nil {
@@ -370,7 +390,9 @@ func runGovernanceTail(ctx context.Context, subscriber governanceAuditSubscriber
 	}
 
 	<-ctx.Done()
-	governanceWriteProgress(progress, fmt.Sprintf("tail stopped: processed=%d appended=%d skipped_existing=%d ignored=%d errors=%d\n", summary.Processed, summary.Appended, summary.SkippedExisting, summary.Ignored, summary.Errors))
+	mu.Lock()
+	defer mu.Unlock()
+	governanceWriteProgress(progress, fmt.Sprintf("tail stopped: processed=%d appended=%d skipped_existing=%d ignored=%d refused=%d errors=%d\n", summary.Processed, summary.Appended, summary.SkippedExisting, summary.Ignored, summary.Refused, summary.Errors))
 	return summary, ctx.Err()
 }
 
@@ -541,16 +563,20 @@ func governanceDecisionRecordFromJob(req *governanceJobRequest, safety governanc
 	return record, governanceValidateDecisionRecord(record)
 }
 
-func governanceDecisionRecordFromAuditMessage(data []byte) (governanceDecisionLogRecord, bool, error) {
-	message, source, ignore, err := governanceExtractAlert(data)
-	if ignore || err != nil {
-		return governanceDecisionLogRecord{}, ignore, err
+func governanceDecisionRecordFromAuditMessage(data []byte, authorized func(string, time.Time) bool) (governanceDecisionLogRecord, bool, error) {
+	var packet pb.BusPacket
+	if err := proto.Unmarshal(data, &packet); err != nil {
+		return governanceDecisionLogRecord{}, false, err
 	}
-	if strings.TrimSpace(source) != "audit-export" {
+	alert := packet.GetAlert()
+	if alert == nil || strings.TrimSpace(alert.SourceComponent) != "audit-export" {
 		return governanceDecisionLogRecord{}, true, nil
 	}
+	if !authorized(packet.GetAuthToken(), time.Now()) {
+		return governanceDecisionLogRecord{}, false, errGovernancePublisherRefused
+	}
 	var event governanceAuditEvent
-	if err := json.Unmarshal([]byte(message), &event); err != nil {
+	if err := json.Unmarshal([]byte(alert.Message), &event); err != nil {
 		return governanceDecisionLogRecord{}, false, fmt.Errorf("decode audit event: %w", err)
 	}
 	if strings.TrimSpace(event.EventType) != "safety.decision" {
@@ -578,71 +604,6 @@ func governanceDecisionRecordFromAuditMessage(data []byte) (governanceDecisionLo
 		return governanceDecisionLogRecord{}, false, err
 	}
 	return record, false, nil
-}
-
-func governanceExtractAlert(data []byte) (message string, source string, ignore bool, err error) {
-	for len(data) > 0 {
-		num, typ, n := protowire.ConsumeTag(data)
-		if n < 0 {
-			return "", "", false, protowire.ParseError(n)
-		}
-		data = data[n:]
-		if num == 13 {
-			if typ != protowire.BytesType {
-				return "", "", false, fmt.Errorf("unexpected alert wire type %d", typ)
-			}
-			payload, m := protowire.ConsumeBytes(data)
-			if m < 0 {
-				return "", "", false, protowire.ParseError(m)
-			}
-			return governanceExtractSystemAlert(payload)
-		}
-		m := protowire.ConsumeFieldValue(num, typ, data)
-		if m < 0 {
-			return "", "", false, protowire.ParseError(m)
-		}
-		data = data[m:]
-	}
-	return "", "", true, nil
-}
-
-func governanceExtractSystemAlert(data []byte) (message string, source string, ignore bool, err error) {
-	for len(data) > 0 {
-		num, typ, n := protowire.ConsumeTag(data)
-		if n < 0 {
-			return "", "", false, protowire.ParseError(n)
-		}
-		data = data[n:]
-		switch num {
-		case 2:
-			if typ != protowire.BytesType {
-				return "", "", false, fmt.Errorf("unexpected alert.message wire type %d", typ)
-			}
-			value, m := protowire.ConsumeString(data)
-			if m < 0 {
-				return "", "", false, protowire.ParseError(m)
-			}
-			message = value
-			data = data[m:]
-		case 7:
-			if typ != protowire.BytesType {
-				return "", "", false, fmt.Errorf("unexpected alert.source_component wire type %d", typ)
-			}
-			value, m := protowire.ConsumeString(data)
-			if m < 0 {
-				return "", "", false, protowire.ParseError(m)
-			}
-			source = value
-			data = data[m:]
-		default:
-			m := protowire.ConsumeFieldValue(num, typ, data)
-			if m < 0 {
-				return "", "", false, protowire.ParseError(m)
-			}
-			data = data[m:]
-		}
-	}
-	return message, source, false, nil
 }
 
 func parseGovernanceDate(raw string, endOfDay bool) (*time.Time, error) {

@@ -207,9 +207,12 @@ func TestRetentionProofDIC54(t *testing.T) {
 		}
 	}
 	withBundles := func(note string) {
-		bundles := map[string]any{"proof": map[string]any{"enabled": true}}
-		if id, err := s.capturePolicyBundleSnapshotWithBundles(ctx, bundles, note); err != nil || id == "" {
-			t.Fatalf("capturePolicyBundleSnapshotWithBundles(%q): id=%q err=%v", note, id, err)
+		snap, err := buildPolicyBundleSnapshot(map[string]any{"proof": map[string]any{"enabled": true}}, note)
+		if err == nil {
+			err = s.storePolicyBundleSnapshots(ctx, snap)
+		}
+		if err != nil || snap.ID == "" {
+			t.Fatalf("storePolicyBundleSnapshots(%q): id=%q err=%v", note, snap.ID, err)
 		}
 	}
 	for _, site := range []struct {

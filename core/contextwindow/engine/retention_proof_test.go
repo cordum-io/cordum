@@ -36,7 +36,7 @@ func TestRetentionProofDIC12(t *testing.T) {
 	update := func(prompt, response string) {
 		t.Helper()
 		if _, err := svc.UpdateMemory(ctx, &pb.UpdateMemoryRequest{
-			MemoryId: "memory-dic12", Mode: pb.ContextMode_CONTEXT_MODE_CHAT,
+			MemoryId: "memory-dic12", TenantId: "tenant-dic12", Mode: pb.ContextMode_CONTEXT_MODE_CHAT,
 			LogicalPayload: []byte(fmt.Sprintf(`{"prompt":%q}`, prompt)), ModelResponse: []byte(response),
 		}); err != nil {
 			t.Fatalf("UpdateMemory: %v", err)
@@ -55,9 +55,9 @@ func TestRetentionProofDIC12(t *testing.T) {
 	// events as the oldest two of twenty, the tenth trims them.
 	for i := 0; i < 10; i++ {
 		if hits := trace(); !slices.ContainsFunc(hits, func(hit string) bool {
-			return strings.HasPrefix(hit, "mem:memory-dic12:events:")
+			return strings.HasPrefix(hit, "mem:tenant-dic12/memory-dic12:events:")
 		}) {
-			t.Fatalf("after %d later updates: no mem:memory-dic12:events:* trace; hits=%v", i, hits)
+			t.Fatalf("after %d later updates: no mem:tenant-dic12/memory-dic12:events:* trace; hits=%v", i, hits)
 		}
 		update(fmt.Sprintf("prompt later-%d", i), fmt.Sprintf("answer later-%d", i))
 	}
