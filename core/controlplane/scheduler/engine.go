@@ -1819,6 +1819,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 		return nil
 	}
 
+	neededConstraintKinds := requiredWorkerConstraintKinds(record.Constraints)
 	if maxRetries := maxRetriesFromConstraints(record.Constraints); maxRetries > 0 && e.jobStore != nil {
 		ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
 		attempts, err := e.jobStore.GetAttempts(ctx, jobID)
@@ -1907,7 +1908,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			err = fmt.Errorf("%w: no trusted worker authorized for topic %q", ErrNoWorkers, topic)
 			break
 		}
-		subject, err = e.strategy.PickSubject(req, workers, readiness)
+		subject, err = e.strategy.PickSubject(req, workersDeclaringConstraints(workers, neededConstraintKinds), readiness)
 		if err != nil {
 			break
 		}
@@ -1976,6 +1977,9 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 		return nil
 	}
 
+	if denied, err := e.denyMissingDispatchConstraints(lockCtx, req, subject, workers, neededConstraintKinds); denied {
+		return err
+	}
 	if err := e.setJobState(lockCtx, jobID, JobStateScheduled); err != nil {
 		return RetryAfter(err, retryDelayStore)
 	}
