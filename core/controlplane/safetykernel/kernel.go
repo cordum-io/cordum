@@ -853,9 +853,9 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	input.SecretsPresent = secretsPresent(input.Meta, req.GetLabels())
 	s.enrichAgentContext(ctx, tenant, req.GetLabels(), &input)
 
-	// Action-layer gates run BEFORE legacy rule evaluation. The pipeline
-	// short-circuits on the first non-ALLOW decision; an empty result
-	// falls through to the existing evaluator. Both the extractor and the
+	// Action-layer gates run BEFORE legacy rule evaluation. Approval waits
+	// for the remaining deny sources; an empty result falls through to the
+	// existing evaluator. Both the extractor and the
 	// pipeline are nil for clients running without the in-process gateway
 	// wiring, so the legacy path is unchanged for plain gRPC consumers.
 	s.mu.RLock()
@@ -866,13 +866,18 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	if gateExtractor != nil {
 		input.Action = gateExtractor(ctx, req)
 	}
+	var gateApproval *pb.PolicyCheckResponse
 	if gatePipeline != nil && input.Action != nil {
 		if gateDec, fired := gatePipeline.Run(ctx, &input); fired {
 			resp := actionGateResponse(gateDec, snapshot)
 			if gateAuditSink != nil {
 				gateAuditSink(ctx, actionGateAuditEvent(req, &input, gateDec))
 			}
-			return resp, nil
+			if gateDec.Decision != pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN {
+				return resp, nil
+			}
+			gateApproval = resp
+			cacheKey = "" // A gate-fired request must be re-evaluated next time.
 		}
 	}
 
@@ -1064,7 +1069,11 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 		}
 	}
 
-	approvalRequired := policyDecision.ApprovalRequired || decision == pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN
+	if gateApproval != nil && decision != pb.DecisionType_DECISION_TYPE_DENY {
+		return gateApproval, nil
+	}
+
+	approvalRequired := decision == pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN
 	approvalRef := ""
 	if approvalRequired {
 		approvalRef = req.GetJobId()
