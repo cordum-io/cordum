@@ -42,6 +42,10 @@ type approvalDepthCounter interface {
 	CountJobsByState(ctx context.Context, state JobState) (int64, error)
 }
 
+type jobIndexSweeper interface {
+	SweepExpiredJobIndexes(ctx context.Context, now time.Time) (int64, error)
+}
+
 type approvalRepairStore interface {
 	InspectApprovalRepair(ctx context.Context, jobID string) (*infraStore.ApprovalRepairSnapshot, error)
 	ApplyApprovalRepair(ctx context.Context, params infraStore.ApprovalRepairApplyParams) (*infraStore.ApprovalRepairResult, error)
@@ -139,6 +143,24 @@ func (r *Reconciler) tick(ctx context.Context) {
 	r.handleTimeouts(ctx, JobStateRunning, now.Add(-runningTimeout), runningTimeout)
 	r.handleDeadlineExpirations(ctx, now)
 	r.handleApprovalRepairs(ctx, now)
+	r.sweepExpiredJobIndexes(ctx, now)
+}
+
+// sweepExpiredJobIndexes removes expired jobs from the job indexes once per
+// scan when the store supports it; a failed sweep is retried next scan.
+func (r *Reconciler) sweepExpiredJobIndexes(ctx context.Context, now time.Time) {
+	sweeper, ok := r.store.(jobIndexSweeper)
+	if !ok {
+		return
+	}
+	removed, err := sweeper.SweepExpiredJobIndexes(ctx, now)
+	if err != nil {
+		slog.Warn("job index sweep failed", "removed", removed, "error", err)
+		return
+	}
+	if removed > 0 {
+		slog.Info("job index sweep removed expired job ids", "removed", removed)
+	}
 }
 
 // UpdateTimeouts replaces dispatch/running timeouts at runtime.
