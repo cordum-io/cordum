@@ -17,9 +17,10 @@ func TestProductionRawBoundaryRejectsNegativeLimits(t *testing.T) {
 	session := productionTestSession()
 	raw := signProductionTestPacket(t, key, productionTestPacket(session.Identity, productionTestMessageID(29)))
 	for name, mutate := range map[string]func(*ProductionRawBoundary){
-		"lifetime":   func(boundary *ProductionRawBoundary) { boundary.MaxLifetime = -time.Second },
-		"clock skew": func(boundary *ProductionRawBoundary) { boundary.ClockSkew = -time.Second },
-		"raw bytes":  func(boundary *ProductionRawBoundary) { boundary.MaxRawBytes = -1 },
+		"lifetime":    func(boundary *ProductionRawBoundary) { boundary.MaxLifetime = -time.Second },
+		"clock skew":  func(boundary *ProductionRawBoundary) { boundary.ClockSkew = -time.Second },
+		"raw bytes":   func(boundary *ProductionRawBoundary) { boundary.MaxRawBytes = -1 },
+		"claim lease": func(boundary *ProductionRawBoundary) { boundary.ClaimLease = -time.Second },
 	} {
 		t.Run(name, func(t *testing.T) {
 			boundary := productionTestBoundary(key, capsdk.NewInMemoryReplayStore())

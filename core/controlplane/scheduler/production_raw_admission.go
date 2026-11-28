@@ -10,6 +10,7 @@ import (
 	capsdk "github.com/cordum-io/cap/v2/sdk/go"
 	"github.com/cordum/cordum/core/auth/servicetoken"
 	"github.com/cordum/cordum/core/infra/bus"
+	"github.com/cordum/cordum/core/infra/replay"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -42,6 +43,10 @@ type ProductionRawBoundary struct {
 	MaxLifetime time.Duration
 	ClockSkew   time.Duration
 	MaxRawBytes int
+	// ClaimLease is how long an accepted delivery owns its message before a
+	// redelivery may take it over, when Replay is a *replay.RedisReplayStore.
+	// Zero means the bus AckWait once installed, else 10 minutes.
+	ClaimLease time.Duration
 }
 
 // ProductionSessionResolver derives session authority without trusting packet
@@ -65,7 +70,11 @@ func InstallProductionRawAdmission(
 		boundary.ResolveKey == nil || boundary.Replay == nil {
 		return ErrProductionAdmissionUnavailable
 	}
-	return target.SetRawPacketAdmission(NewProductionRawAdmissionHook(boundary, resolveSession))
+	installed := *boundary
+	if installed.ClaimLease == 0 {
+		installed.ClaimLease = target.AckWait()
+	}
+	return target.SetRawPacketAdmission(NewProductionRawAdmissionHook(&installed, resolveSession))
 }
 
 // NewProductionRawAdmissionHook adapts the production boundary to NatsBus.
@@ -85,6 +94,9 @@ func NewProductionRawAdmissionHook(
 			return productionRawAdmissionError(err)
 		}
 		session = snapshotAuthenticatedProductionSession(session)
+		if claims, ok := frozenBoundary.Replay.(*replay.RedisReplayStore); ok {
+			return frozenBoundary.claimVerified(ctx, subject, session, raw, claims)
+		}
 		verified, outcome, err := frozenBoundary.admitVerified(ctx, subject, session, raw)
 		if err != nil {
 			return productionRawAdmissionError(err)
@@ -95,20 +107,26 @@ func NewProductionRawAdmissionHook(
 		if outcome != capsdk.ReplayOutcomeFirst || !verified.IsVerified() {
 			return bus.RawAdmissionResult{Disposition: bus.RawAdmissionRetry}
 		}
-		packet := verified.Packet()
-		digest := verified.SignedBodyDigest()
-		return bus.RawAdmissionResult{
-			Disposition: bus.RawAdmissionAccepted,
-			Packet:      packet,
-			Authority: &bus.RawAdmissionAuthority{
-				ActualSubject:  verified.Subject(),
-				SessionSubject: verified.Sender(),
-				TenantID:       verified.Tenant(),
-				Identity:       session.Identity,
-				MessageID:      verified.MessageID(),
-				UnsignedDigest: append([]byte(nil), digest[:]...),
-			},
-		}
+		return acceptedProductionResult(verified, session)
+	}
+}
+
+func acceptedProductionResult(
+	verified capsdk.VerifiedProductionPacket,
+	session AuthenticatedProductionSession,
+) bus.RawAdmissionResult {
+	digest := verified.SignedBodyDigest()
+	return bus.RawAdmissionResult{
+		Disposition: bus.RawAdmissionAccepted,
+		Packet:      verified.Packet(),
+		Authority: &bus.RawAdmissionAuthority{
+			ActualSubject:  verified.Subject(),
+			SessionSubject: verified.Sender(),
+			TenantID:       verified.Tenant(),
+			Identity:       session.Identity,
+			MessageID:      verified.MessageID(),
+			UnsignedDigest: append([]byte(nil), digest[:]...),
+		},
 	}
 }
 
@@ -156,41 +174,51 @@ func (b *ProductionRawBoundary) admitVerified(
 	session AuthenticatedProductionSession,
 	raw []byte,
 ) (capsdk.VerifiedProductionPacket, capsdk.ReplayOutcome, error) {
-	if err := b.validateInputs(ctx, actualSubject, session, raw); err != nil {
+	verified, replayExpiry, err := b.verify(ctx, actualSubject, session, raw)
+	if err != nil {
 		return capsdk.VerifiedProductionPacket{}, 0, err
+	}
+	outcome, err := b.admitReplay(verified, replayExpiry)
+	return verified, outcome, err
+}
+
+// verify checks raw against the boundary and returns the verified packet and
+// the time its replay record must outlive.
+func (b *ProductionRawBoundary) verify(
+	ctx context.Context,
+	actualSubject string,
+	session AuthenticatedProductionSession,
+	raw []byte,
+) (capsdk.VerifiedProductionPacket, time.Time, error) {
+	if err := b.validateInputs(ctx, actualSubject, session, raw); err != nil {
+		return capsdk.VerifiedProductionPacket{}, time.Time{}, err
 	}
 	trust := b.trust(actualSubject, session)
 	verified, err := capsdk.VerifyTrustedProductionPacket(raw, trust)
 	if err != nil {
-		return capsdk.VerifiedProductionPacket{}, 0, err
+		return capsdk.VerifiedProductionPacket{}, time.Time{}, err
 	}
 	packet := verified.Packet()
 	if err := capsdk.ValidateBusPacket(packet); err != nil {
-		return capsdk.VerifiedProductionPacket{}, 0, err
+		return capsdk.VerifiedProductionPacket{}, time.Time{}, err
 	}
 	if err := validateAuthenticatedProductionIdentity(packet, session); err != nil {
-		return capsdk.VerifiedProductionPacket{}, 0, err
+		return capsdk.VerifiedProductionPacket{}, time.Time{}, err
 	}
-	outcome, err := b.admitReplay(verified, packet, trust.ClockSkew)
-	return verified, outcome, err
+	return verified, packet.GetSignatureMetadata().GetExpiresAt().AsTime().Add(trust.ClockSkew), nil
 }
 
 func (b *ProductionRawBoundary) admitReplay(
 	verified capsdk.VerifiedProductionPacket,
-	packet *agentv1.BusPacket,
-	clockSkew time.Duration,
+	replayExpiry time.Time,
 ) (capsdk.ReplayOutcome, error) {
 	digest := verified.SignedBodyDigest()
-	replayExpiry := packet.GetSignatureMetadata().GetExpiresAt().AsTime().Add(clockSkew)
 	outcome, err := b.Replay.Admit(
 		verified.Tenant(), verified.Subject(), verified.Sender(),
 		verified.MessageID(), digest[:], replayExpiry,
 	)
 	if err != nil {
-		if errors.Is(err, capsdk.ErrReplayConflict) {
-			return 0, capsdk.ErrReplayConflict
-		}
-		return 0, capsdk.ErrReplayStoreUnavailable
+		return 0, replayAdmissionError(err)
 	}
 	if outcome != capsdk.ReplayOutcomeFirst && outcome != capsdk.ReplayOutcomeDuplicate {
 		return 0, ErrProductionAdmissionUnavailable
@@ -226,7 +254,7 @@ func (b *ProductionRawBoundary) validateInputs(
 	if len(raw) > limit {
 		return ErrProductionPacketTooLarge
 	}
-	if b.MaxLifetime < 0 || b.ClockSkew < 0 || b.MaxRawBytes < 0 {
+	if b.MaxLifetime < 0 || b.ClockSkew < 0 || b.MaxRawBytes < 0 || b.ClaimLease < 0 {
 		return ErrProductionAdmissionUnavailable
 	}
 	return nil
