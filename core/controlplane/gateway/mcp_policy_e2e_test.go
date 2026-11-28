@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -114,13 +116,12 @@ func TestMCPPolicyGateE2E_OversizedPayloadLandsInArtifactStore(t *testing.T) {
 	}
 }
 
-// TestMCPPolicyGateE2E_FakeDispatcherAWCPostEventCarriesConstraints covers
-// the compatibility data plane only: when a fake/test dispatcher fires
-// ALLOW_WITH_CONSTRAINTS, the post event landing on edge.RedisStore records
-// Decision=DecisionConstrain plus the structured Constraints map. Production
-// action gates are blockers-only and do not emit enforceable generic
-// constraints; policy-bundle typed constraints are tested separately.
-func TestMCPPolicyGateE2E_FakeDispatcherAWCPostEventCarriesConstraints(t *testing.T) {
+// TestMCPPolicyGateE2E_UnappliedConstraintsBlockedOnRealEdgeStore: when a
+// dispatcher returns ALLOW_WITH_CONSTRAINTS with kinds the MCP path does not
+// apply, the call is refused, the tool is never called, and edge.RedisStore
+// holds exactly one blocked deny event that keeps the constraint map.
+// Production action gates do not emit constraints, so a fake stands in.
+func TestMCPPolicyGateE2E_UnappliedConstraintsBlockedOnRealEdgeStore(t *testing.T) {
 	t.Parallel()
 	deps, ctx, tenantID, sessionID, executionID := bootMCPPolicyGateE2E(t)
 	constraints := map[string]any{
@@ -128,35 +129,34 @@ func TestMCPPolicyGateE2E_FakeDispatcherAWCPostEventCarriesConstraints(t *testin
 		"redaction": "strict",
 	}
 	deps.Pipeline = fakeAWCDispatcher{constraints: constraints}
-	deps.Upstream = upstreamCallerAdapter{upstream: &fakeUpstreamToolCaller{result: "ok"}}
+	upstream := &fakeUpstreamToolCaller{result: "ok"}
+	deps.Upstream = upstreamCallerAdapter{upstream: upstream}
 
-	if _, err := mcp.InvokeToolWithPolicy(ctx, deps, mcp.ToolCallParams{
+	_, err := mcp.InvokeToolWithPolicy(ctx, deps, mcp.ToolCallParams{
 		Name:      "fs.read_file",
 		Arguments: json.RawMessage(`{"path":"/etc/hostname"}`),
-	}, "cordum.builtin"); err != nil {
-		t.Fatalf("InvokeToolWithPolicy returned err: %v", err)
+	}, "cordum.builtin")
+	var denied *mcp.NotAuthorized
+	if !errors.As(err, &denied) {
+		t.Fatalf("InvokeToolWithPolicy err = %v, want *mcp.NotAuthorized", err)
+	}
+	if upstream.calls != 0 {
+		t.Fatalf("upstream.calls = %d, want 0", upstream.calls)
 	}
 
-	page, err := waitForEdgeEvents(t.Context(), t, deps.EventEmitter, tenantID, sessionID, executionID, 2)
+	page, err := waitForEdgeEvents(t.Context(), t, deps.EventEmitter, tenantID, sessionID, executionID, 1)
 	if err != nil {
 		t.Fatalf("ListEvents: %v", err)
 	}
-	if len(page.Items) < 2 {
-		t.Fatalf("edge stream has %d events; want >=2 for AWC pre+post", len(page.Items))
+	if len(page.Items) != 1 {
+		t.Fatalf("edge stream has %d events; want exactly 1 blocked deny", len(page.Items))
 	}
-	post := page.Items[1]
-	if post.Kind != edgecore.EventKindMCPToolPost {
-		t.Fatalf("event[1].Kind = %q, want %q", post.Kind, edgecore.EventKindMCPToolPost)
+	evt := page.Items[0]
+	if evt.Kind != edgecore.EventKindMCPToolFailed || evt.Status != edgecore.ActionStatusBlocked || evt.Decision != edgecore.DecisionDeny {
+		t.Fatalf("event kind/status/decision = %q/%q/%q, want failed/blocked/deny", evt.Kind, evt.Status, evt.Decision)
 	}
-	if post.Decision != edgecore.DecisionConstrain {
-		t.Fatalf("post.Decision = %q on AWC; want %q (bundled task-3d5c4f37 contract)",
-			post.Decision, edgecore.DecisionConstrain)
-	}
-	if got, want := post.Constraints["max_bytes"], constraints["max_bytes"]; got != want {
-		t.Fatalf("post.Constraints[max_bytes] = %#v, want %#v", got, want)
-	}
-	if got, want := post.Constraints["redaction"], constraints["redaction"]; got != want {
-		t.Fatalf("post.Constraints[redaction] = %#v, want %#v", got, want)
+	if !reflect.DeepEqual(evt.Constraints, constraints) {
+		t.Fatalf("event constraints = %#v, want %#v", evt.Constraints, constraints)
 	}
 }
 
@@ -301,9 +301,9 @@ func waitForEdgeEventsByKind(ctx context.Context, t *testing.T, emitter mcp.Even
 
 // fakeAWCDispatcher returns ALLOW_WITH_CONSTRAINTS with a fixed constraint
 // map. Production action gates do not emit this decision; this fake stands in
-// to exercise the compatibility propagation data path through the production
-// emitter + artifact store. The Pipeline interface lets tests inject the fake
-// while keeping the rest of the boot-wired deps real.
+// to drive the refusal of constraints the MCP path does not apply through the
+// production emitter + artifact store. The Pipeline interface lets tests
+// inject the fake while keeping the rest of the boot-wired deps real.
 type fakeAWCDispatcher struct {
 	constraints map[string]any
 }

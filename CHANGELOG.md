@@ -171,6 +171,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   those kinds. An approved action whose consumed ALLOW still carries such a kind blocks
   the same way. The hook applies none of the five kinds (budgets, sandbox, toolchain,
   diff, redaction level) yet (task-aa7ceb05).
+- MCP: a tool call whose policy decision carries a constraint kind the MCP tool-call
+  path cannot apply is refused before the tool runs. The client gets JSON-RPC `-32098`
+  (`not authorized`) with `error.data.sub_reason` `unenforceable_constraints` and
+  `error.data.constraint_kinds` naming the kinds, and the Edge event records a blocked
+  deny that keeps the constraint map. This covers ALLOW, ALLOW_WITH_CONSTRAINTS and
+  REQUIRE_HUMAN decisions; an empty constraint map still runs the tool. The MCP path
+  applies none of the five kinds (budgets, sandbox, toolchain, diff, redaction level)
+  yet. The built-in action-gate pipeline emits no constraints, so only a deployment
+  whose own `mcp.PolicyDispatcher` returns constraints sees these refusals; review such
+  a dispatcher before upgrading (task-bcd5a28a).
 - Edge sessions: the session create, get, list, end and export responses, and the
   session started and ended audit events, carry a server-derived `assurance_state`
   (compatibility, hook-mediated, unsupported or stale). Get, list and export derive it
