@@ -725,8 +725,8 @@ func (s *MCPApprovalStore) Resolve(ctx context.Context, id string, decision mode
 // returned nextCursor is zero when the scan is complete.
 //
 // limit caps the records returned per call so the HTTP handler can
-// bound response size. The Redis SCAN cursor is advanced until we have
-// either limit matches or reach cursor=0.
+// bound response size. The cursor is an offset into sorted record keys,
+// not a Redis SCAN cursor. Deletions between calls may shift that offset.
 func (s *MCPApprovalStore) ListByStatus(ctx context.Context, status string, cursor uint64, limit int64) ([]*MCPApprovalRecord, uint64, error) {
 	if s == nil || s.client == nil {
 		return nil, 0, errors.New("mcp approval: store is not initialised")
@@ -736,34 +736,35 @@ func (s *MCPApprovalStore) ListByStatus(ctx context.Context, status string, curs
 	}
 	wantStatus := strings.ToLower(strings.TrimSpace(status))
 	out := make([]*MCPApprovalRecord, 0, limit)
-	next := cursor
-	for int64(len(out)) < limit {
-		keys, c, err := s.client.Scan(ctx, next, mcpApprovalKeyPrefix+"*", limit).Result()
-		if err != nil {
-			return nil, 0, fmt.Errorf("mcp approval: list scan: %w", err)
-		}
-		for _, key := range keys {
+	var keys []string
+	err := redisutil.ScanKeys(ctx, s.client, mcpApprovalKeyPrefix+"*", 100, func(batch []string) error {
+		for _, key := range batch {
 			// Skip index keys — they share the same prefix.
-			if strings.HasPrefix(key, mcpApprovalIndexKeyPrefix) {
-				continue
-			}
-			id := strings.TrimPrefix(key, mcpApprovalKeyPrefix)
-			rec, err := s.Get(ctx, id)
-			if err != nil {
-				continue
-			}
-			if wantStatus != "" && strings.ToLower(string(rec.Status)) != wantStatus {
-				continue
-			}
-			out = append(out, rec)
-			if int64(len(out)) >= limit {
-				break
+			if !strings.HasPrefix(key, mcpApprovalIndexKeyPrefix) {
+				keys = append(keys, key)
 			}
 		}
-		next = c
-		if next == 0 {
-			break
+		return nil
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("mcp approval: list scan: %w", err)
+	}
+	sort.Strings(keys)
+	next := cursor
+	for next < uint64(len(keys)) && int64(len(out)) < limit {
+		id := strings.TrimPrefix(keys[next], mcpApprovalKeyPrefix)
+		next++
+		rec, err := s.Get(ctx, id)
+		if err != nil {
+			continue
 		}
+		if wantStatus != "" && strings.ToLower(string(rec.Status)) != wantStatus {
+			continue
+		}
+		out = append(out, rec)
+	}
+	if next >= uint64(len(keys)) {
+		next = 0
 	}
 	return out, next, nil
 }
@@ -779,14 +780,9 @@ func (s *MCPApprovalStore) SweepExpired(ctx context.Context, now time.Time) (int
 	if s == nil || s.client == nil {
 		return 0, nil
 	}
-	cursor := uint64(0)
 	matched := 0
 	deadline := now.UnixMicro()
-	for {
-		keys, next, err := s.client.Scan(ctx, cursor, mcpApprovalKeyPrefix+"*", 100).Result()
-		if err != nil {
-			return matched, fmt.Errorf("mcp approval: scan: %w", err)
-		}
+	err := redisutil.ScanKeys(ctx, s.client, mcpApprovalKeyPrefix+"*", 100, func(keys []string) error {
 		for _, key := range keys {
 			if strings.HasPrefix(key, mcpApprovalIndexKeyPrefix) {
 				continue
@@ -799,10 +795,10 @@ func (s *MCPApprovalStore) SweepExpired(ctx context.Context, now time.Time) (int
 				s.emitAudit(rec, "expired", "", audit.SeverityMedium)
 			}
 		}
-		if next == 0 {
-			break
-		}
-		cursor = next
+		return nil
+	})
+	if err != nil {
+		return matched, fmt.Errorf("mcp approval: scan: %w", err)
 	}
 	return matched, nil
 }

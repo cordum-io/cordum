@@ -16,6 +16,7 @@ import (
 
 	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 	"github.com/cordum/cordum/core/infra/env"
+	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/cordum/cordum/core/packs/signing"
 	"github.com/redis/go-redis/v9"
 )
@@ -286,59 +287,61 @@ func loadGatewayPackTrustKeyring(ctx context.Context, client redis.UniversalClie
 	// Redis keyring — scan the prefix so we don't care how many keys
 	// are registered (KEYS is O(N) but acceptable here because this
 	// runs per install and admins register O(10) publisher keys).
-	keyIter := client.Scan(ctx, 0, gatewayTrustedKeysRedisPrefix+"*", 0).Iterator()
-	for keyIter.Next(ctx) {
-		key := keyIter.Val()
-		kid := strings.TrimPrefix(key, gatewayTrustedKeysRedisPrefix)
-		if kid == "" {
-			continue
+	err := redisutil.ScanKeys(ctx, client, gatewayTrustedKeysRedisPrefix+"*", 0, func(keys []string) error {
+		for _, key := range keys {
+			kid := strings.TrimPrefix(key, gatewayTrustedKeysRedisPrefix)
+			if kid == "" {
+				continue
+			}
+			val, err := client.Get(ctx, key).Result()
+			if err != nil {
+				continue
+			}
+			pub, err := base64.StdEncoding.DecodeString(strings.TrimSpace(val))
+			if err != nil || len(pub) != ed25519.PublicKeySize {
+				continue
+			}
+			// Env takes precedence if already loaded.
+			if _, exists := out.Keys[kid]; exists {
+				continue
+			}
+			out.Keys[kid] = ed25519.PublicKey(pub)
 		}
-		val, err := client.Get(ctx, key).Result()
-		if err != nil {
-			continue
-		}
-		pub, err := base64.StdEncoding.DecodeString(strings.TrimSpace(val))
-		if err != nil || len(pub) != ed25519.PublicKeySize {
-			continue
-		}
-		// Env takes precedence if already loaded.
-		if _, exists := out.Keys[kid]; exists {
-			continue
-		}
-		out.Keys[kid] = ed25519.PublicKey(pub)
-	}
-	if err := keyIter.Err(); err != nil {
+		return nil
+	})
+	if err != nil {
 		attachPublisherFallback(out)
 		return out, fmt.Errorf("scan %s*: %w", gatewayTrustedKeysRedisPrefix, err)
 	}
 	// Redis publisher metadata — best-effort, errors are non-fatal.
 	// A missing publisher record is handled by attachPublisherFallback
 	// below, which synthesises a record from the kid itself.
-	pubIter := client.Scan(ctx, 0, gatewayPackPublisherRedisPrefix+"*", 0).Iterator()
-	for pubIter.Next(ctx) {
-		key := pubIter.Val()
-		kid := strings.TrimPrefix(key, gatewayPackPublisherRedisPrefix)
-		if kid == "" {
-			continue
+	_ = redisutil.ScanKeys(ctx, client, gatewayPackPublisherRedisPrefix+"*", 0, func(keys []string) error {
+		for _, key := range keys {
+			kid := strings.TrimPrefix(key, gatewayPackPublisherRedisPrefix)
+			if kid == "" {
+				continue
+			}
+			val, err := client.Get(ctx, key).Result()
+			if err != nil {
+				continue
+			}
+			var record gatewayPublisherRecord
+			if err := json.Unmarshal([]byte(val), &record); err != nil {
+				continue
+			}
+			record.KID = kid
+			if record.PublisherID == "" {
+				continue
+			}
+			// Env takes precedence if already loaded.
+			if _, exists := out.Publishers[kid]; exists {
+				continue
+			}
+			out.Publishers[kid] = record
 		}
-		val, err := client.Get(ctx, key).Result()
-		if err != nil {
-			continue
-		}
-		var record gatewayPublisherRecord
-		if err := json.Unmarshal([]byte(val), &record); err != nil {
-			continue
-		}
-		record.KID = kid
-		if record.PublisherID == "" {
-			continue
-		}
-		// Env takes precedence if already loaded.
-		if _, exists := out.Publishers[kid]; exists {
-			continue
-		}
-		out.Publishers[kid] = record
-	}
+		return nil
+	})
 	attachPublisherFallback(out)
 	return out, nil
 }
