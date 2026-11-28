@@ -159,8 +159,10 @@ degraded where possible and do not rewrite a fresh Gateway decision.
 Agentd's evidence-event id is in a DISTINCT namespace from the gateway's
 authoritative `event_id` — agentd records carry an `agentd-`-prefixed id
 and link to the gateway record via `parent_event_id`. The dual-witness
-audit invariant is: exactly one gateway record + AT MOST one agentd
-evidence record per decision. See
+audit design aims for one gateway record and at most one agentd
+evidence record per decision; that end-to-end count is not measured.
+`TestEvaluatorCallsGatewayAndRecordsDecisionEvidence` checks the fresh
+`agentd-` ID namespace and one local evidence event for its probe. See
 [Edge identity contract](identity-contract.md) for the full ID-namespace
 + approval-lifecycle reference.
 
