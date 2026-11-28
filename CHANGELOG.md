@@ -9,6 +9,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 - Edge: a session delete that stopped partway now leaves nothing behind once it is retried.
 
+- Redis Cluster: instance listing, eval-run index cleanup, the admin lock list, velocity rule keys, the pack trust keyring, the MCP approval list and expiry sweep, the all-tenant legal hold list, the user tenant-index backfill, and the Edge session-retention and pending-approval sweeps now see keys on every master.
+
 - Gateway: key, user, RBAC and legal-hold stores now close the client they opened when its first ping fails, so its connections and dial retries do not stay behind when the gateway keeps running.
 
 - Edge: listing and matching shadow-agent exceptions, and deleting a session, now use single-key commands on Redis Cluster.
