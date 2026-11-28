@@ -276,6 +276,7 @@ var (
 	curlRe   = regexp.MustCompile(`(^|[\s(|;&])curl(\s|$)`)
 	xFlagRe  = regexp.MustCompile(`(^|\s)(-X|--request)[\s=]*([A-Za-z]+)`)
 	dataRe   = regexp.MustCompile(`(^|\s)(-d|--data[\w-]*|-F|--form)([\s=]|$)`)
+	getRe    = regexp.MustCompile(`(^|\s)(-G|--get)(\s|$)`)
 )
 
 // ScanContract returns every endpoint example in the whole text of a
@@ -327,12 +328,14 @@ func commandAround(ls []Line, k int) string {
 	return strings.Join(parts, " ")
 }
 
-// curlMethod is the -X value, else POST when data is sent, else GET.
+// curlMethod is the -X value, else GET under -G or --get (data then goes in
+// the query), else POST when data is sent, else GET. Combined short flags
+// such as -sG are not parsed.
 func curlMethod(cmd string) string {
 	if m := xFlagRe.FindStringSubmatch(cmd); m != nil {
 		return strings.ToUpper(m[3])
 	}
-	if dataRe.MatchString(cmd) {
+	if !getRe.MatchString(cmd) && dataRe.MatchString(cmd) {
 		return "POST"
 	}
 	return "GET"

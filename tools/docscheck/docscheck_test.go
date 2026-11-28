@@ -240,6 +240,25 @@ func TestScanContract(t *testing.T) {
 	}
 }
 
+func TestCurlMethod(t *testing.T) {
+	const url = " https://h/api/v1/things"
+	cases := []struct{ cmd, want string }{
+		{"curl --get --data 'limit=1'" + url, "GET"},
+		{"curl -G -d x" + url, "GET"},
+		{"curl -G -X POST -d x" + url, "POST"},
+		{"curl -d x" + url, "POST"},
+		{"curl" + url, "GET"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.cmd, func(t *testing.T) {
+			got := endpointsIn("c.md", []Line{{No: 1, Text: tc.cmd}})
+			if len(got) != 1 || got[0].Method != tc.want {
+				t.Fatalf("endpoints = %#v, want one %s", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestPathMatches(t *testing.T) {
 	const tmpl = "/api/v1/things/{id}"
 	cases := []struct {
