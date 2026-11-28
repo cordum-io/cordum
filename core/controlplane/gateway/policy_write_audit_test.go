@@ -285,7 +285,7 @@ var gatewayConfigWriters = map[string]string{
 	"restoreConfigOverlay":             "pack config overlay; only the pools and timeouts keys",
 	"savePackRegistry":                 "writes the pack registry",
 	"savePolicySnapshots":              "stores snapshots after the entry naming them is stored",
-	"appendPolicyAudit":                "writes the policy audit log itself",
+	"storePolicyAudit":                 "writes the policy audit log itself",
 	"commitPolicyWithAudit":            "stores system/policy together with its audit entry",
 	"handleCreatePool":                 "writes the pools config in system/default",
 	"handleUpdatePool":                 "writes the pools config in system/default",
