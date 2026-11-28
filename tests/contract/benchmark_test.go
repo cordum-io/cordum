@@ -144,7 +144,7 @@ func editBenchmarkJSON(t *testing.T, data []byte, path []string, value json.RawM
 	}
 	if len(path) > 1 {
 		fields[path[0]] = editBenchmarkJSON(t, fields[path[0]], path[1:], value)
-	} else if value == nil {
+	} else if len(value) == 0 {
 		delete(fields, path[0])
 	} else {
 		fields[path[0]] = value
