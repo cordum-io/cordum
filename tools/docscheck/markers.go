@@ -50,7 +50,7 @@ const minReasonLen = 10
 var (
 	markerRe   = regexp.MustCompile(`^\s*<!--\s*docscheck:(.*?)-->\s*$`)
 	tokenRe    = regexp.MustCompile(`([A-Za-z_]+)=(?:"([^"]*)"|'([^']*)')|(\S+)`)
-	fenceRe    = regexp.MustCompile("^\\s{0,3}(`{3,}|~{3,})")
+	fenceRe    = regexp.MustCompile("^ {0,3}(`{3,}|~{3,})") // a tab is 4 columns
 	sepRe      = regexp.MustCompile(`^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?$`)
 	knownKinds = map[string]bool{"env": true, "endpoints": true, "command": true, "skip": true}
 )
@@ -193,11 +193,12 @@ func UnmarkedCommandBlocks(path string) ([]Line, error) {
 }
 
 // fenceEnd returns the index of the line closing the fence opened at start,
-// or len(lines) and false when it is never closed.
+// or len(lines) and false when it is never closed. As in CommonMark, only
+// spaces or tabs may follow a closing run.
 func fenceEnd(lines []string, start int, fence string) (int, bool) {
 	for k := start + 1; k < len(lines); k++ {
-		s := strings.TrimSpace(lines[k])
-		if len(s) >= len(fence) && strings.Trim(s, fence[:1]) == "" {
+		m := fenceRe.FindStringSubmatch(lines[k])
+		if m != nil && strings.HasPrefix(m[1], fence) && strings.TrimRight(lines[k][len(m[0]):], " \t") == "" {
 			return k, true
 		}
 	}

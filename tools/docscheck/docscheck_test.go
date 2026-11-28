@@ -1,6 +1,7 @@
 package docscheck
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -118,6 +119,44 @@ func TestParseMarkers(t *testing.T) {
 			t.Fatalf("CRLF blocks differ:\n%#v\n%#v", crlf, lf)
 		}
 	})
+
+	// A marker after a line that closes the fence is real; otherwise it is content.
+	closers := []struct {
+		name, line string
+		closes     bool
+	}{
+		{"no indent", "```", true},
+		{"one space", " ```", true},
+		{"three spaces", "   ```", true},
+		{"longer run and trailing blanks", "````` \t", true},
+		{"four spaces", "    ```", false},
+		{"tab", "\t```", false},
+		{"text after the run", "``` x", false},
+		{"other fence character", "~~~", false},
+	}
+	for _, tc := range closers {
+		t.Run("closing fence "+tc.name, func(t *testing.T) {
+			path := writeDoc(t, "c.md", "```md\nx\n"+tc.line+"\n<!-- docscheck: bogus -->\n```\n")
+			blocks, err := Parse(path)
+			want := "<nil>"
+			if tc.closes {
+				want = path + `:4: unknown docscheck kind "bogus"`
+			}
+			if got := fmt.Sprint(err); len(blocks) != 0 || got != want {
+				t.Fatalf("blocks = %#v, err = %s; want err %s", blocks, got, want)
+			}
+		})
+	}
+
+	for name, opener := range map[string]string{"four spaces": "    ```", "tab": "\t```"} {
+		t.Run("opening fence "+name+" opens nothing", func(t *testing.T) {
+			path := writeDoc(t, "o.md", opener+"\n<!-- docscheck: bogus -->\n")
+			want := path + `:2: unknown docscheck kind "bogus"`
+			if _, err := Parse(path); err == nil || err.Error() != want {
+				t.Fatalf("err = %v, want %q", err, want)
+			}
+		})
+	}
 
 	errCases := []struct{ name, doc, want string }{
 		{"command missing exit", "<!-- docscheck: command -->\n```sh\ntrue\n```\n", `:1: command needs exit="0" through exit="255"`},
