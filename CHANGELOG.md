@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+- Add a qualification pin manifest schema, writer, validator, and image-digest comparison library; no qualification was run.
+
 ### Fixed
 
 - MCP: JSON-RPC errors no longer expose execution ids. Errors caused by

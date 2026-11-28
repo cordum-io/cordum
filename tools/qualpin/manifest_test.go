@@ -115,3 +115,34 @@ func TestVerify(t *testing.T) {
 		})
 	}
 }
+
+func TestAssembleRoundTrip(t *testing.T) {
+	m, err := Parse(validJSON(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, valid := range []bool{true, false} {
+		pins := m.Pins
+		if !valid {
+			pins.Policy.Version = ""
+		}
+		got, err := Assemble(m.Record, pins)
+		if !valid {
+			if err == nil || got != nil {
+				t.Fatalf("released manifest=%+v error=%v", got, err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := json.Marshal(got)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parsed, err := Parse(data)
+		if err != nil || !reflect.DeepEqual(parsed, m) {
+			t.Fatalf("round trip=%+v error=%v", parsed, err)
+		}
+	}
+}
