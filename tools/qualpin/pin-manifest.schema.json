@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "qualification", "record", "policy", "executor", "deployment", "corpus"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "record": {"type": "object", "description": "Validated by tools/releasequal.Parse against qualification-record.schema.json and record cross-references."},
+    "qualification": {
+      "type": "object", "additionalProperties": false, "required": ["id", "combination"],
+      "properties": {"id": {"$ref": "#/definitions/text"}, "combination": {"$ref": "#/definitions/text"}}
+    },
+    "policy": {
+      "type": "object", "additionalProperties": false, "required": ["bundle", "version", "authority_version"],
+      "properties": {
+        "bundle": {"$ref": "#/definitions/text"}, "version": {"$ref": "#/definitions/text"},
+        "authority_version": {"$ref": "#/definitions/text"}
+      }
+    },
+    "executor": {
+      "type": "object", "additionalProperties": false, "required": ["kind", "version", "platform"],
+      "properties": {
+        "kind": {"$ref": "#/definitions/text"}, "version": {"$ref": "#/definitions/text"},
+        "platform": {
+          "type": "object", "additionalProperties": false, "required": ["os", "arch", "version"],
+          "properties": {"os": {"$ref": "#/definitions/text"}, "arch": {"$ref": "#/definitions/text"}, "version": {"$ref": "#/definitions/text"}}
+        }
+      }
+    },
+    "deployment": {
+      "type": "object", "additionalProperties": false, "required": ["profile", "config_digest"],
+      "properties": {"profile": {"$ref": "#/definitions/text"}, "config_digest": {"$ref": "#/definitions/digest"}}
+    },
+    "corpus": {
+      "type": "object", "additionalProperties": false, "required": ["name", "version", "digest"],
+      "properties": {"name": {"$ref": "#/definitions/text"}, "version": {"$ref": "#/definitions/text"}, "digest": {"$ref": "#/definitions/digest"}}
+    }
+  },
+  "definitions": {
+    "text": {"type": "string", "pattern": "\\S"},
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}
